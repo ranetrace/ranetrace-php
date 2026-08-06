@@ -6,6 +6,8 @@
 
 It is a **library**, not an application. No framework, no container, no globals beyond the ones a plain PHP host already has. Everything it needs to know about its host arrives through `Ranetrace\Php\Config`: the environment name, the project root, the framework identity, how to resolve the current user. If you find yourself wanting to detect something about the host, add a config key instead.
 
+This file is for working **on** the package. An agent working in an application that merely uses it wants `AGENTS.md` at the repo root: the config table, the required wiring and the pitfalls, with none of the internals below. Keep the two in step when the public surface changes.
+
 Its sibling is `ranetrace/ranetrace-laravel` (working copy at `../ranetrace-laravel`), which does the same job inside Laravel. Several classes here are direct ports from it and say so in their docblock. **A port's semantics must not drift.** If you change what one of them does, the two SDKs start producing different payloads for the same input, and the difference will surface as backend validation failures rather than as a test failure here.
 
 ## The wire contract is sacred
