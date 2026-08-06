@@ -33,6 +33,9 @@
         "phpstan/phpstan-deprecation-rules": "^2.0",
         "phpstan/phpstan-phpunit": "^2.0"
     },
+    "bin": [
+        "bin/ranetrace-flush"
+    ],
     "autoload": {
         "psr-4": {
             "Ranetrace\\Php\\": "src/"

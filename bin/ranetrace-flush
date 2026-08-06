@@ -1,0 +1,106 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Drain the Ranetrace buffer once. Intended for cron:
+ *
+ *     * * * * * /path/to/vendor/bin/ranetrace-flush >/dev/null 2>&1
+ *
+ * A minute is the right cadence: the API allows 60 requests per minute per
+ * endpoint per key, and one run sends at most one batch per type. Configuration
+ * comes entirely from the environment, because a cron entry has no application
+ * bootstrap to read a config array from; `Ranetrace\Php\Config` resolves every
+ * `RANETRACE_*` variable itself.
+ *
+ * The command never throws and never prints anything on success, so a cron
+ * mailer stays quiet unless something is actually wrong. Exit codes: 0 drained,
+ * 1 could not run.
+ */
+
+use Ranetrace\Php\Ranetrace;
+
+(static function (array $argv): never {
+    $autoloader = null;
+
+    $candidates = [];
+
+    // Composer's binary proxy sets this, which is the only reliable answer when
+    // the package is installed with a relocated vendor directory.
+    if (isset($GLOBALS['_composer_autoload_path']) && is_string($GLOBALS['_composer_autoload_path'])) {
+        $candidates[] = $GLOBALS['_composer_autoload_path'];
+    }
+
+    // Installed as a dependency (vendor/ranetrace/ranetrace-php/bin) and run
+    // directly rather than through the proxy.
+    $candidates[] = __DIR__.'/../../../autoload.php';
+
+    // Every vendor/autoload.php from here to the filesystem root, which covers
+    // the standalone checkout and any nesting in between.
+    for ($directory = __DIR__; $directory !== dirname($directory); $directory = dirname($directory)) {
+        $candidates[] = $directory.'/vendor/autoload.php';
+    }
+
+    foreach ($candidates as $candidate) {
+        if (is_file($candidate)) {
+            $autoloader = $candidate;
+
+            break;
+        }
+    }
+
+    if ($autoloader === null) {
+        fwrite(STDERR, "ranetrace-flush: could not locate Composer's autoloader.\n");
+
+        exit(1);
+    }
+
+    require $autoloader;
+
+    $type = null;
+
+    foreach (array_slice($argv, 1) as $argument) {
+        if ($argument === '--help' || $argument === '-h') {
+            fwrite(STDOUT, "Usage: ranetrace-flush [--type=errors|events|logs|javascript_errors]\n");
+
+            exit(0);
+        }
+
+        if (str_starts_with($argument, '--type=')) {
+            $type = substr($argument, 7);
+
+            continue;
+        }
+
+        fwrite(STDERR, sprintf("ranetrace-flush: unknown argument [%s].\n", $argument));
+
+        exit(1);
+    }
+
+    try {
+        // Config layers the RANETRACE_* environment over its defaults, so
+        // nothing else has to be passed. The shutdown flush is turned off
+        // explicitly: this process exists to flush once, and a second drain on
+        // exit would only compete with the next cron run for the buffer lock.
+        $ranetrace = new Ranetrace(['flush_on_shutdown' => false]);
+
+        if ($type !== null && ! in_array($type, $ranetrace->buffer()->types(), true)) {
+            fwrite(STDERR, sprintf(
+                "ranetrace-flush: unknown type [%s]. Expected one of: %s.\n",
+                $type,
+                implode(', ', $ranetrace->buffer()->types()),
+            ));
+
+            exit(1);
+        }
+
+        $ranetrace->flush($type);
+    } catch (Throwable $failure) {
+        fwrite(STDERR, 'ranetrace-flush: '.$failure->getMessage()."\n");
+
+        exit(1);
+    }
+
+    exit(0);
+})($argv ?? []);
