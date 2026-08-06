@@ -1,0 +1,12 @@
+/vendor
+/build
+composer.lock
+.phpunit.cache
+.phpunit.result.cache
+.phpstan.cache
+.DS_Store
+.idea
+.vscode
+.fleet
+.phpactor.json
+auth.json
