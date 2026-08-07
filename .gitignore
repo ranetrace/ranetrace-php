@@ -10,3 +10,4 @@ composer.lock
 .fleet
 .phpactor.json
 auth.json
+.mcp.json
