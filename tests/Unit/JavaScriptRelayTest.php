@@ -227,6 +227,7 @@ test('it reports the fields that failed validation', function (array $overrides,
     'column not an integer' => [['column' => 1.5], ['column']],
     'url too long' => [['url' => 'https://app.test/'.str_repeat('a', 2001)], ['url']],
     'timestamp not a string' => [['timestamp' => 1754472000], ['timestamp']],
+    'timestamp too long' => [['timestamp' => str_repeat('a', 65)], ['timestamp']],
     'breadcrumbs not an array' => [['breadcrumbs' => 'nope'], ['breadcrumbs']],
     'context not an array' => [['context' => 'nope'], ['context']],
     'browser_info not an array' => [['browser_info' => 'nope'], ['browser_info']],
@@ -248,6 +249,19 @@ test('it validates every breadcrumb by its index', function (): void {
             'breadcrumbs.1.message',
             'breadcrumbs.1.data',
         ]);
+});
+
+test('it rejects an oversized breadcrumb timestamp', function (): void {
+    // Nothing downstream bounds these, so an unbounded field lets one request
+    // buffer an item limited only by post_max_size.
+    $response = relay(new ArrayBuffer)->handleRequest(relayServer(), relayPayload([
+        'breadcrumbs' => [
+            ['timestamp' => str_repeat('a', 65), 'category' => 'user', 'message' => 'Click'],
+        ],
+    ]));
+
+    expect($response->status)->toBe(422)
+        ->and(array_keys($response->body['errors']))->toBe(['breadcrumbs.0.timestamp']);
 });
 
 test('it validates the browser info fields', function (): void {
@@ -375,6 +389,18 @@ test('it scrubs the stack and the query string of the reported url', function ()
 
     expect($item['stack'])->toBe('Error: failed with api_key=[REDACTED] at app.js:1:1')
         ->and($item['url'])->toBe('https://app.test/reset/abc123?token=[REDACTED]&page=2');
+});
+
+test('it scrubs the message the way it scrubs the stack', function (): void {
+    // The bundled snippet's unhandledrejection handler JSON.stringifies the
+    // rejection value into `message`, so a rejected API response lands here.
+    $buffer = new ArrayBuffer;
+
+    relay($buffer)->handleRequest(relayServer(), relayPayload([
+        'message' => '{"api_key":"sk_live_secret","status":"error"}',
+    ]));
+
+    expect(firstJavascriptError($buffer)['message'])->not->toContain('sk_live_secret');
 });
 
 test('it redacts host declared sensitive path segments from the reported url', function (): void {

@@ -59,6 +59,26 @@ final class SecretScrubber
     ];
 
     /**
+     * Characters allowed in the path of a relative reference: RFC 3986 pchar
+     * (unreserved, percent-encoded, sub-delims, `:` and `@`) plus the separator
+     * itself. Deliberately narrower than "anything without whitespace", since
+     * it is what keeps prose, JSON and code snippets out of the URL path.
+     */
+    private const string URL_PATH_CHARS = "A-Za-z0-9._~%!$&'()*+,;=:@/-";
+
+    /**
+     * Characters allowed in a query parameter NAME: pchar without `=` (which
+     * separates the pair) and without `&` (which separates pairs).
+     */
+    private const string URL_KEY_CHARS = "A-Za-z0-9._~%!$'()*+,;:@-";
+
+    /**
+     * Characters allowed in a query parameter VALUE: as the name, plus `=` and
+     * `/`, both legal unencoded in a query.
+     */
+    private const string URL_VALUE_CHARS = "A-Za-z0-9._~%!$'()*+,;:@=/-";
+
+    /**
      * Built-in fragments merged with the user-configured extensions, resolved
      * once per instance.
      *
@@ -365,13 +385,21 @@ final class SecretScrubber
 
     /**
      * Recursively apply {@see scrubUrl()} to every string value that looks like
-     * an absolute http(s) URL, leaving all other values untouched. Operates on
-     * the already-depth-bounded output of {@see DataSanitizer}.
+     * a URL, leaving all other values untouched. A relative reference counts:
+     * a signed download link recorded as `/exports/42/download?signature=…`
+     * carries its secret in exactly the same place an absolute one does.
+     *
+     * Note this scrubs the QUERY only. The Laravel SDK also redacts secrets in
+     * the URL PATH here, because its router can say which segment is a token;
+     * this SDK has no such oracle, so path secrets stay the caller's job via
+     * {@see scrubUrlPath()}.
+     *
+     * Operates on the already-depth-bounded output of {@see DataSanitizer}.
      */
     private function scrubUrlValues(mixed $data): mixed
     {
         if (is_string($data)) {
-            return str_starts_with($data, 'http://') || str_starts_with($data, 'https://')
+            return $this->isScrubbableUrl($data)
                 ? ($this->scrubUrl($data) ?? $data)
                 : $data;
         }
@@ -383,6 +411,51 @@ final class SecretScrubber
         }
 
         return $data;
+    }
+
+    /**
+     * Whether a string value should be treated as a URL and scrubbed.
+     *
+     * Absolute http(s) URLs always qualify. A relative reference qualifies only
+     * on a strict shape, because these values are free-form: it must carry a
+     * path separator or a query, must not contain a character that only turns
+     * up in prose, JSON or code, and its query, when it has one, must be a run
+     * of `key=value` pairs. That structure is what keeps a JSON payload or a
+     * code snippet with a question mark in it out of {@see scrubUrl()}, whose
+     * rewrite would otherwise truncate the value at its first `?`.
+     */
+    private function isScrubbableUrl(string $value): bool
+    {
+        if ($value === '') {
+            return false;
+        }
+
+        if (str_starts_with($value, 'http://') || str_starts_with($value, 'https://')) {
+            return true;
+        }
+
+        if (preg_match('/[\s"`{}<>\\\\|^\[\]]/', $value) === 1) {
+            return false;
+        }
+
+        if (! str_contains($value, '/') && ! str_contains($value, '?')) {
+            return false;
+        }
+
+        [$beforeFragment] = explode('#', $value, 2);
+        [$path, $query] = array_pad(explode('?', $beforeFragment, 2), 2, null);
+
+        if (preg_match('#^(?:\.{0,2}/)?['.self::URL_PATH_CHARS.']*$#', $path) !== 1) {
+            return false;
+        }
+
+        if ($query === null) {
+            return true;
+        }
+
+        $pair = '['.self::URL_KEY_CHARS.']+=['.self::URL_VALUE_CHARS.']*';
+
+        return preg_match('#^'.$pair.'(?:&'.$pair.')*$#', $query) === 1;
     }
 
     /**

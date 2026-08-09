@@ -245,7 +245,7 @@ final class Relay
         $url = (string) $payload['url'];
 
         return [
-            'message' => $message,
+            'message' => $this->scrubber->scrubString($message),
             'stack' => is_string($stack) ? $this->scrubber->scrubString($stack) : null,
             'type' => isset($payload['type']) && is_string($payload['type']) ? $payload['type'] : 'Error',
             'filename' => isset($payload['filename']) && is_string($payload['filename']) ? $payload['filename'] : null,
@@ -411,7 +411,7 @@ final class Relay
         $this->assertInteger($errors, $payload, 'line');
         $this->assertInteger($errors, $payload, 'column');
         $this->assertString($errors, $payload, 'url', true, 2000);
-        $this->assertString($errors, $payload, 'timestamp', false, null);
+        $this->assertString($errors, $payload, 'timestamp', false, 64);
         $this->assertArrayValue($errors, $payload, 'breadcrumbs');
         $this->assertArrayValue($errors, $payload, 'context');
         $this->assertArrayValue($errors, $payload, 'browser_info');
@@ -422,7 +422,7 @@ final class Relay
             foreach ($breadcrumbs as $index => $breadcrumb) {
                 $crumb = is_array($breadcrumb) ? $breadcrumb : [];
 
-                $this->assertString($errors, $crumb, "breadcrumbs.{$index}.timestamp", true, null, 'timestamp');
+                $this->assertString($errors, $crumb, "breadcrumbs.{$index}.timestamp", true, 64, 'timestamp');
                 $this->assertString($errors, $crumb, "breadcrumbs.{$index}.category", true, 100, 'category');
                 $this->assertString($errors, $crumb, "breadcrumbs.{$index}.message", true, 500, 'message');
                 $this->assertArrayValue($errors, $crumb, "breadcrumbs.{$index}.data", 'data');
