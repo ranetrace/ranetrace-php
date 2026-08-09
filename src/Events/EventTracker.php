@@ -149,7 +149,13 @@ final class EventTracker
         try {
             $this->buffer->addItem(self::BUFFER_TYPE, [
                 'event_name' => $name,
-                'properties' => $this->scrubber->scrubDeep(DataSanitizer::sanitizeForSerialization($properties)),
+                // The host's declared path secrets are passed through, so a URL
+                // property loses its `{token}` segment the same way the event's
+                // own `url` field does.
+                'properties' => $this->scrubber->scrubDeep(
+                    DataSanitizer::sanitizeForSerialization($properties),
+                    $this->sensitivePathValues
+                ),
                 'user' => $this->resolveUser($userId),
                 'timestamp' => (new DateTimeImmutable)->format('c'),
                 'url' => $this->currentUrl(),

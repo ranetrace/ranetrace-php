@@ -413,6 +413,30 @@ test('it redacts host declared sensitive path segments from the reported url', f
     expect(firstJavascriptError($buffer)['url'])->toBe('https://app.test/reset/[REDACTED]?page=2');
 });
 
+test('it redacts host declared sensitive path segments from breadcrumb and context URLs', function (): void {
+    // Otherwise the same payload redacts the secret in the top-level url field
+    // and ships it in a breadcrumb the tracker recorded from the same page.
+    $buffer = new ArrayBuffer;
+
+    $relay = relay($buffer);
+    $relay->setSensitivePathValues(['abc123']);
+    $relay->handleRequest(relayServer(), relayPayload([
+        'url' => 'https://app.test/reset/abc123',
+        'context' => ['page' => 'https://app.test/reset/abc123'],
+        'breadcrumbs' => [[
+            'timestamp' => '2026-08-06T10:00:00+00:00',
+            'category' => 'navigation',
+            'message' => 'Page loaded',
+            'data' => ['url' => '/reset/abc123?next=/account'],
+        ]],
+    ]));
+
+    $item = firstJavascriptError($buffer);
+
+    expect($item['context']['page'])->toBe('https://app.test/reset/[REDACTED]')
+        ->and($item['breadcrumbs'][0]['data']['url'])->toBe('/reset/[REDACTED]?next=/account');
+});
+
 test('it keeps only the last breadcrumbs and rebuilds each as the four wire keys', function (): void {
     $buffer = new ArrayBuffer;
 

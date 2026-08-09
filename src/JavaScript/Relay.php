@@ -635,11 +635,19 @@ final class Relay
      * Sanitize for serialization, then redact secret-keyed values and secrets
      * hiding in URL-shaped values.
      *
+     * The host's declared path secrets are passed through, so a reset link the
+     * tracker recorded as a navigation breadcrumb loses its `{token}` segment
+     * the same way the top-level `url` field does — otherwise the same payload
+     * would redact the secret in one field and ship it in another.
+     *
      * @return array<array-key, mixed>
      */
     private function scrubbedArray(mixed $value): array
     {
-        $scrubbed = $this->scrubber->scrubDeep(DataSanitizer::sanitizeForSerialization($value));
+        $scrubbed = $this->scrubber->scrubDeep(
+            DataSanitizer::sanitizeForSerialization($value),
+            $this->sensitivePathValues
+        );
 
         return is_array($scrubbed) ? $scrubbed : [];
     }

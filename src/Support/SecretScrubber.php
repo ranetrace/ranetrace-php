@@ -104,18 +104,30 @@ final class SecretScrubber
     }
 
     /**
-     * Like {@see scrub()} (key-based redaction), but ALSO scrubs sensitive
-     * query-string params inside URL-shaped string VALUES, catching a secret
-     * in an innocuously-keyed URL (e.g. a breadcrumb `data.endpoint` of
-     * `https://api/x?token=…`) that key-based scrubbing alone would miss.
+     * Like {@see scrub()} (key-based redaction), but ALSO scrubs secrets inside
+     * URL-shaped string VALUES, catching a secret in an innocuously-keyed URL
+     * (e.g. a breadcrumb `data.endpoint` of `https://api/x?token=…`) that
+     * key-based scrubbing alone would miss.
+     *
+     * Both halves of a URL can carry one. The QUERY is always scrubbed. The
+     * PATH is scrubbed only when the caller supplies the segment values that
+     * are secret, because a path segment carries no marker saying "this is a
+     * token" and this SDK has no router to ask — the Laravel SDK resolves them
+     * from the matched route. A host that knows its own routes should pass
+     * {@see sensitiveRouteParameterValues()} here, otherwise a reset link
+     * recorded as a navigation breadcrumb keeps its live token: the top-level
+     * `url` field is already path-redacted, so leaving this null redacts the
+     * same secret in one field and ships it in another.
      *
      * Intended for free-form, untrusted breadcrumb/context data. Composes with
      * the `mixed` return of {@see DataSanitizer::sanitizeForSerialization()},
      * which has already bounded the recursion depth.
+     *
+     * @param  array<int, string>|null  $sensitiveValues
      */
-    public function scrubDeep(mixed $data): mixed
+    public function scrubDeep(mixed $data, ?array $sensitiveValues = null): mixed
     {
-        return $this->scrubUrlValues($this->scrub($data));
+        return $this->scrubUrlValues($this->scrub($data), $sensitiveValues ?? []);
     }
 
     /**
@@ -389,24 +401,30 @@ final class SecretScrubber
      * a signed download link recorded as `/exports/42/download?signature=…`
      * carries its secret in exactly the same place an absolute one does.
      *
-     * Note this scrubs the QUERY only. The Laravel SDK also redacts secrets in
-     * the URL PATH here, because its router can say which segment is a token;
-     * this SDK has no such oracle, so path secrets stay the caller's job via
-     * {@see scrubUrlPath()}.
+     * The QUERY is always scrubbed. The PATH is scrubbed only for the segment
+     * values the caller declared secret-bearing, since this SDK has no router
+     * to resolve them from; an empty list means query-only, which is the
+     * correct behaviour for a host that cannot say which segments are secret.
      *
      * Operates on the already-depth-bounded output of {@see DataSanitizer}.
+     *
+     * @param  array<int, string>  $sensitiveValues
      */
-    private function scrubUrlValues(mixed $data): mixed
+    private function scrubUrlValues(mixed $data, array $sensitiveValues): mixed
     {
         if (is_string($data)) {
-            return $this->isScrubbableUrl($data)
-                ? ($this->scrubUrl($data) ?? $data)
-                : $data;
+            if (! $this->isScrubbableUrl($data)) {
+                return $data;
+            }
+
+            $scrubbed = $this->scrubUrl($data) ?? $data;
+
+            return $this->scrubUrlPath($scrubbed, $sensitiveValues) ?? $scrubbed;
         }
 
         if (is_array($data)) {
             foreach ($data as $key => $value) {
-                $data[$key] = $this->scrubUrlValues($value);
+                $data[$key] = $this->scrubUrlValues($value, $sensitiveValues);
             }
         }
 
