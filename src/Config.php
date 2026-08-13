@@ -146,6 +146,35 @@ final class Config
     }
 
     /**
+     * The directory every on-disk artefact of the SDK lives in: the spool files
+     * and their locks, the pause store, the worker state and the internal log.
+     *
+     * The schema default cannot carry this on its own. It only applies when the
+     * key is absent, and a host that passes `buffer_path` explicitly as null or
+     * an empty string gets that value back untouched, so the fallback is
+     * repeated here. The trailing slash is trimmed because every caller appends
+     * `/name`, and a configured `/var/spool/` would otherwise produce `//`.
+     */
+    public function bufferPath(): string
+    {
+        $path = $this->get('buffer_path');
+
+        return is_string($path) && $path !== '' ? mb_rtrim($path, '/') : sys_get_temp_dir().'/ranetrace-buffer';
+    }
+
+    /**
+     * Seconds to keep retrying a contended spool lock. Anything unusable, and
+     * anything at or below zero, means a single non-blocking attempt: waiting is
+     * an optimisation, and a host that asks for no wait must not get one.
+     */
+    public function lockWait(): float
+    {
+        $wait = $this->get('batch.lock_wait', 1);
+
+        return is_numeric($wait) && (float) $wait > 0 ? (float) $wait : 0.0;
+    }
+
+    /**
      * The whole resolved config, defaults and unknown keys included. For
      * diagnostics; the API key is returned as stored, so never log this.
      *

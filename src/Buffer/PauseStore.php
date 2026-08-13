@@ -6,6 +6,9 @@ namespace Ranetrace\Php\Buffer;
 
 use DateTimeImmutable;
 use Ranetrace\Php\Config;
+use Ranetrace\Php\Support\FileLock;
+use Ranetrace\Php\Support\JsonFile;
+use Ranetrace\Php\Support\Quietly;
 use Throwable;
 
 /**
@@ -31,8 +34,6 @@ use Throwable;
  */
 final class PauseStore
 {
-    private const int LOCK_RETRY_MICROSECONDS = 10_000;
-
     public function __construct(private readonly Config $config) {}
 
     public function pauseGlobal(int $seconds, string $reason): void
@@ -186,7 +187,7 @@ final class PauseStore
             return ['global' => null, 'features' => []];
         }
 
-        $contents = $this->quietly(fn (): mixed => file_get_contents($file));
+        $contents = Quietly::call(static fn (): mixed => file_get_contents($file));
 
         if (! is_string($contents) || $contents === '') {
             return ['global' => null, 'features' => []];
@@ -215,21 +216,25 @@ final class PauseStore
     }
 
     /**
-     * Read, apply, prune and persist under an exclusive lock. Writes go through
-     * a temp file and a `rename` so a concurrent reader sees the whole old file
-     * or the whole new one.
+     * Read, apply, prune and persist under an exclusive lock. The write goes
+     * through `JsonFile`, so a concurrent reader sees the whole old file or the
+     * whole new one.
      *
      * @param  callable(array{global: array{paused_until: string, reason: string}|null, features: array<string, array{paused_until: string, reason: string}>}): array{global: array{paused_until: string, reason: string}|null, features: array<string, array{paused_until: string, reason: string}>}  $mutation
      */
     private function mutate(callable $mutation): void
     {
-        if (! $this->ensureDirectory()) {
+        if (! JsonFile::ensureDirectory($this->directory())) {
             return;
         }
 
-        $handle = $this->lock();
+        $lock = new FileLock($this->directory().'/pauses.lock', $this->config->lockWait());
+        $handle = $lock->acquire();
 
         if ($handle === null) {
+            // Silently, and without a logger: the holder of the lock is writing
+            // a pause too, and losing this one costs at most one wasted request
+            // on the next run.
             return;
         }
 
@@ -237,72 +242,10 @@ final class PauseStore
             [$data] = self::prune($this->load());
             [$data] = self::prune($mutation($data));
 
-            $encoded = json_encode($data);
-
-            if (! is_string($encoded)) {
-                return;
-            }
-
-            $file = $this->file();
-            $temp = $file.'.'.bin2hex(random_bytes(6)).'.tmp';
-
-            if ($this->quietly(fn (): mixed => file_put_contents($temp, $encoded)) === false) {
-                $this->quietly(fn (): bool => unlink($temp));
-
-                return;
-            }
-
-            if ($this->quietly(fn (): bool => rename($temp, $file)) !== true) {
-                $this->quietly(fn (): bool => unlink($temp));
-            }
+            JsonFile::write($this->file(), $data);
         } finally {
-            $this->quietly(function () use ($handle): bool {
-                flock($handle, LOCK_UN);
-
-                return fclose($handle);
-            });
+            $lock->release($handle);
         }
-    }
-
-    /**
-     * @return resource|null
-     */
-    private function lock(): mixed
-    {
-        $handle = $this->quietly(fn (): mixed => fopen($this->directory().'/pauses.lock', 'c'));
-
-        if (! is_resource($handle)) {
-            return null;
-        }
-
-        $deadline = microtime(true) + $this->lockWait();
-
-        while (true) {
-            if ($this->quietly(fn (): bool => flock($handle, LOCK_EX | LOCK_NB)) === true) {
-                return $handle;
-            }
-
-            if (microtime(true) >= $deadline) {
-                $this->quietly(fn (): bool => fclose($handle));
-
-                return null;
-            }
-
-            usleep(self::LOCK_RETRY_MICROSECONDS);
-        }
-    }
-
-    private function ensureDirectory(): bool
-    {
-        $directory = $this->directory();
-
-        if (is_dir($directory)) {
-            return true;
-        }
-
-        $this->quietly(fn (): bool => mkdir($directory, 0770, true));
-
-        return is_dir($directory);
     }
 
     private function file(): string
@@ -312,34 +255,6 @@ final class PauseStore
 
     private function directory(): string
     {
-        $path = $this->config->get('buffer_path');
-
-        return is_string($path) && $path !== '' ? mb_rtrim($path, '/') : sys_get_temp_dir().'/ranetrace-buffer';
-    }
-
-    private function lockWait(): float
-    {
-        $wait = $this->config->get('batch.lock_wait', 1);
-
-        return is_numeric($wait) && (float) $wait > 0 ? (float) $wait : 0.0;
-    }
-
-    /**
-     * Run a filesystem call with PHP's error reporting muted, for the same
-     * reason `FileBuffer` does: an unwritable buffer directory is handled by a
-     * return value here, and must never surface as a warning the host might
-     * route back into Ranetrace.
-     */
-    private function quietly(callable $callback): mixed
-    {
-        set_error_handler(static fn (): bool => true);
-
-        try {
-            return $callback();
-        } catch (Throwable) {
-            return false;
-        } finally {
-            restore_error_handler();
-        }
+        return $this->config->bufferPath();
     }
 }

@@ -261,6 +261,11 @@ final class InternalLogger
      * own failures must not surface anywhere the host might route back into
      * Ranetrace. An unwritable buffer directory is expected and handled by the
      * return value, not by a warning.
+     *
+     * Deliberately not `Support\Quietly`, which swallows a `Throwable` into
+     * `false`. Here a throwing sink has to reach `log()`'s catch so the record
+     * still gets its stderr fallback, so this copy only mutes the error handler
+     * and lets exceptions through.
      */
     private function quietly(callable $callback): mixed
     {
@@ -275,8 +280,6 @@ final class InternalLogger
 
     private function directory(): string
     {
-        $path = $this->config->get('buffer_path');
-
-        return is_string($path) && $path !== '' ? mb_rtrim($path, '/') : sys_get_temp_dir().'/ranetrace-buffer';
+        return $this->config->bufferPath();
     }
 }

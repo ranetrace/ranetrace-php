@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Ranetrace\Php\Buffer;
 
 use Ranetrace\Php\Config;
+use Ranetrace\Php\Support\FileLock;
 use Ranetrace\Php\Support\InternalLogger;
-use Throwable;
+use Ranetrace\Php\Support\JsonFile;
+use Ranetrace\Php\Support\Quietly;
 
 /**
  * The default spool: one JSON file per buffer type, guarded by `flock`.
@@ -22,11 +24,11 @@ use Throwable;
  * Three invariants carry the correctness:
  *
  * 1. Every read-modify-write happens under an exclusive `flock` on a sidecar
- *    `.lock` file. The lock is on a sidecar rather than the data file because
- *    writes replace the data file by `rename`, which swaps the inode out from
- *    under any lock held on it.
- * 2. Writes are temp-file-plus-rename, so a concurrent reader sees either the
- *    whole old buffer or the whole new one, never a half-written file.
+ *    `.lock` file, taken through `Support\FileLock`, which records why the lock
+ *    is on a sidecar rather than on the data file.
+ * 2. Writes are temp-file-plus-rename through `Support\JsonFile`, so a
+ *    concurrent reader sees either the whole old buffer or the whole new one,
+ *    never a half-written file.
  * 3. `take()` removes items before anything is sent. Delivery is therefore
  *    at-least-once: a failed send re-buffers through `addItems()`, and the worst
  *    case is a duplicate rather than a silent loss.
@@ -43,13 +45,6 @@ final class FileBuffer implements BufferInterface
      * @var list<string>
      */
     private const array TYPES = ['errors', 'events', 'logs', 'javascript_errors'];
-
-    /**
-     * Poll interval while waiting for a contended lock. `flock()` has no
-     * timeout, so a blocking wait is spelled as non-blocking attempts plus
-     * sleeps.
-     */
-    private const int LOCK_RETRY_MICROSECONDS = 10_000;
 
     public function __construct(
         private readonly Config $config,
@@ -75,7 +70,8 @@ final class FileBuffer implements BufferInterface
             return false;
         }
 
-        $handle = $this->lock($type);
+        $lock = $this->lock($type);
+        $handle = $lock->acquire();
 
         if ($handle === null) {
             // The item is not buffered. Callers treat a false return as a silent
@@ -114,7 +110,7 @@ final class FileBuffer implements BufferInterface
 
             return $this->write($type, $buffer);
         } finally {
-            $this->unlock($handle);
+            $lock->release($handle);
         }
     }
 
@@ -128,7 +124,8 @@ final class FileBuffer implements BufferInterface
             return [];
         }
 
-        $handle = $this->lock($type);
+        $lock = $this->lock($type);
+        $handle = $lock->acquire();
 
         if ($handle === null) {
             // Harmless for a drain: the items stay spooled and the next run
@@ -166,7 +163,7 @@ final class FileBuffer implements BufferInterface
 
             return $taken;
         } finally {
-            $this->unlock($handle);
+            $lock->release($handle);
         }
     }
 
@@ -207,7 +204,7 @@ final class FileBuffer implements BufferInterface
             return;
         }
 
-        $this->quietly(fn (): bool => unlink($this->file($type)));
+        JsonFile::delete($this->file($type));
         $this->clearOverflowFlag($type);
     }
 
@@ -268,13 +265,13 @@ final class FileBuffer implements BufferInterface
                 'ttl' => $this->bufferTtl(),
             ]);
 
-            $this->quietly(fn (): bool => unlink($file));
+            JsonFile::delete($file);
             $this->clearOverflowFlag($type);
 
             return [];
         }
 
-        $contents = $this->quietly(fn (): mixed => file_get_contents($file));
+        $contents = Quietly::call(static fn (): mixed => file_get_contents($file));
 
         if (! is_string($contents) || $contents === '') {
             return [];
@@ -285,7 +282,7 @@ final class FileBuffer implements BufferInterface
         if (! is_array($decoded)) {
             $this->log->error('Buffer file was unreadable and has been discarded', ['type' => $type]);
 
-            $this->quietly(fn (): bool => unlink($file));
+            JsonFile::delete($file);
 
             return [];
         }
@@ -297,9 +294,14 @@ final class FileBuffer implements BufferInterface
     }
 
     /**
-     * Persist a buffer atomically: write a temp file in the same directory, then
-     * `rename` it over the target. `rename` within one filesystem is atomic, so
-     * a concurrent reader never observes a partial write.
+     * Persist a buffer atomically through `JsonFile`. An empty buffer is spelled
+     * as no file at all rather than as `[]`, so a drained type stops refreshing
+     * an mtime the idle TTL reads.
+     *
+     * The encode happens here rather than inside `JsonFile::write()` because an
+     * unencodable buffer is the one failure worth naming in the diagnostics log:
+     * it means a captured payload carries something JSON cannot express, which
+     * no amount of retrying fixes.
      *
      * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $envelopes
      */
@@ -308,7 +310,7 @@ final class FileBuffer implements BufferInterface
         $file = $this->file($type);
 
         if ($envelopes === []) {
-            $this->quietly(fn (): bool => unlink($file));
+            JsonFile::delete($file);
 
             return true;
         }
@@ -321,21 +323,7 @@ final class FileBuffer implements BufferInterface
             return false;
         }
 
-        $temp = $file.'.'.bin2hex(random_bytes(6)).'.tmp';
-
-        if ($this->quietly(fn (): mixed => file_put_contents($temp, $encoded)) === false) {
-            $this->quietly(fn (): bool => unlink($temp));
-
-            return false;
-        }
-
-        if ($this->quietly(fn (): bool => rename($temp, $file)) !== true) {
-            $this->quietly(fn (): bool => unlink($temp));
-
-            return false;
-        }
-
-        return true;
+        return JsonFile::writeEncoded($file, $encoded);
     }
 
     /**
@@ -352,7 +340,7 @@ final class FileBuffer implements BufferInterface
             return;
         }
 
-        $this->quietly(fn (): mixed => file_put_contents($flag, (string) time()));
+        Quietly::call(static fn (): mixed => file_put_contents($flag, (string) time()));
 
         $this->log->warning('Ranetrace buffer overflow — oldest items dropped', [
             'type' => $type,
@@ -366,69 +354,24 @@ final class FileBuffer implements BufferInterface
         $flag = $this->overflowFlagFile($type);
 
         if (is_file($flag)) {
-            $this->quietly(fn (): bool => unlink($flag));
+            JsonFile::delete($flag);
         }
     }
 
     /**
-     * Take the exclusive lock for a type, waiting up to `batch.lock_wait`
-     * seconds. `flock()` offers no timeout, so a bounded wait is spelled as
-     * non-blocking attempts with a short sleep between them. A wait of 0 means a
-     * single attempt.
-     *
-     * @return resource|null
+     * The exclusive lock guarding one type's spool file, waiting up to
+     * `batch.lock_wait` seconds for it.
      */
-    private function lock(string $type): mixed
+    private function lock(string $type): FileLock
     {
-        $handle = $this->quietly(fn (): mixed => fopen($this->lockFile($type), 'c'));
-
-        if (! is_resource($handle)) {
-            return null;
-        }
-
-        $deadline = microtime(true) + $this->lockWait();
-
-        while (true) {
-            if ($this->quietly(fn (): bool => flock($handle, LOCK_EX | LOCK_NB)) === true) {
-                return $handle;
-            }
-
-            if (microtime(true) >= $deadline) {
-                $this->quietly(fn (): bool => fclose($handle));
-
-                return null;
-            }
-
-            usleep(self::LOCK_RETRY_MICROSECONDS);
-        }
-    }
-
-    /**
-     * @param  resource  $handle
-     */
-    private function unlock(mixed $handle): void
-    {
-        $this->quietly(function () use ($handle): bool {
-            flock($handle, LOCK_UN);
-
-            return fclose($handle);
-        });
+        return new FileLock($this->lockFile($type), $this->config->lockWait());
     }
 
     private function ensureDirectory(): bool
     {
         $directory = $this->directory();
 
-        if (is_dir($directory)) {
-            return true;
-        }
-
-        // 0770: the buffer holds captured payloads, which can contain request
-        // data. Group-readable so a web process and a cron worker running as
-        // different members of one group can share it; never world-readable.
-        $this->quietly(fn (): bool => mkdir($directory, 0770, true));
-
-        if (is_dir($directory)) {
+        if (JsonFile::ensureDirectory($directory)) {
             return true;
         }
 
@@ -445,7 +388,7 @@ final class FileBuffer implements BufferInterface
             return false;
         }
 
-        $modified = $this->quietly(fn (): mixed => filemtime($file));
+        $modified = Quietly::call(static fn (): mixed => filemtime($file));
 
         return is_int($modified) && $modified + $ttl < time();
     }
@@ -480,9 +423,7 @@ final class FileBuffer implements BufferInterface
 
     private function directory(): string
     {
-        $path = $this->config->get('buffer_path');
-
-        return is_string($path) && $path !== '' ? mb_rtrim($path, '/') : sys_get_temp_dir().'/ranetrace-buffer';
+        return $this->config->bufferPath();
     }
 
     private function maxBufferSize(): int
@@ -497,35 +438,5 @@ final class FileBuffer implements BufferInterface
         $ttl = $this->config->get('batch.buffer_ttl', 3600);
 
         return is_numeric($ttl) ? (int) $ttl : 3600;
-    }
-
-    private function lockWait(): float
-    {
-        $wait = $this->config->get('batch.lock_wait', 1);
-
-        return is_numeric($wait) && (float) $wait > 0 ? (float) $wait : 0.0;
-    }
-
-    /**
-     * Run a filesystem call with PHP's error reporting muted.
-     *
-     * The `@` operator is not enough: it still invokes whatever error handler the
-     * host installed, and an unwritable buffer directory would then surface as a
-     * warning in the host's logs. Worse, a host that routes its logs back into
-     * Ranetrace would capture that warning, buffer it, and fail to write it for
-     * the same reason. Every failure here is expected and handled by a return
-     * value instead.
-     */
-    private function quietly(callable $callback): mixed
-    {
-        set_error_handler(static fn (): bool => true);
-
-        try {
-            return $callback();
-        } catch (Throwable) {
-            return false;
-        } finally {
-            restore_error_handler();
-        }
     }
 }

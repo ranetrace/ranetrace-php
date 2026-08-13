@@ -9,6 +9,8 @@ use Ranetrace\Php\Buffer\PauseStore;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Http\ApiClient;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\JsonFile;
+use Ranetrace\Php\Support\Quietly;
 use Throwable;
 
 /**
@@ -472,34 +474,19 @@ final class Worker
      * Record a successful drain. Kept in `state.json` beside the buffer, for the
      * same reason the buffer itself is a file: a cache store is not shared
      * across the processes that need to agree on this.
+     *
+     * Deliberately unlocked, unlike the buffer and the pause store. The value is
+     * one timestamp per type that only ever moves forward, nothing reads it to
+     * decide anything, and the atomic `rename` already rules out a torn file. A
+     * lost update means a diagnostics stamp is a run behind, which is not worth
+     * a lock on the success path of every batch.
      */
     private function stampLastBatch(string $type): void
     {
         $state = $this->readState();
         $state[$type] = time();
 
-        $encoded = json_encode($state);
-
-        if (! is_string($encoded)) {
-            return;
-        }
-
-        $file = $this->stateFile();
-        $temp = $file.'.'.bin2hex(random_bytes(6)).'.tmp';
-
-        $this->quietly(function () use ($temp, $file, $encoded): bool {
-            if (file_put_contents($temp, $encoded) === false) {
-                return false;
-            }
-
-            if (! rename($temp, $file)) {
-                unlink($temp);
-
-                return false;
-            }
-
-            return true;
-        });
+        JsonFile::write($this->stateFile(), $state);
     }
 
     /**
@@ -513,7 +500,7 @@ final class Worker
             return [];
         }
 
-        $contents = $this->quietly(fn (): mixed => file_get_contents($file));
+        $contents = Quietly::call(static fn (): mixed => file_get_contents($file));
 
         if (! is_string($contents) || $contents === '') {
             return [];
@@ -524,34 +511,17 @@ final class Worker
         return is_array($decoded) ? $decoded : [];
     }
 
+    /**
+     * The state file's path, creating the buffer directory when it is missing.
+     * A failed creation is not reported: the write that follows fails on its
+     * own, and a missing stamp is a diagnostics gap rather than lost telemetry.
+     */
     private function stateFile(): string
     {
-        $path = $this->config->get('buffer_path');
-        $directory = is_string($path) && $path !== '' ? mb_rtrim($path, '/') : sys_get_temp_dir().'/ranetrace-buffer';
+        $directory = $this->config->bufferPath();
 
-        if (! is_dir($directory)) {
-            $this->quietly(fn (): bool => mkdir($directory, 0770, true));
-        }
+        JsonFile::ensureDirectory($directory);
 
         return $directory.'/state.json';
-    }
-
-    /**
-     * Run a filesystem call with PHP's error reporting muted, for the same
-     * reason `FileBuffer` does: these failures are handled by return values and
-     * must never reach a host error handler that might route back into
-     * Ranetrace.
-     */
-    private function quietly(callable $callback): mixed
-    {
-        set_error_handler(static fn (): bool => true);
-
-        try {
-            return $callback();
-        } catch (Throwable) {
-            return false;
-        } finally {
-            restore_error_handler();
-        }
     }
 }
