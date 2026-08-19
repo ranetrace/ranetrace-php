@@ -37,7 +37,7 @@ function eventTracker(ArrayBuffer $buffer, array $overrides = []): EventTracker
     return new EventTracker(
         $config,
         $buffer,
-        new SecretScrubber($config),
+        new SecretScrubber($config, new InternalLogger($config)),
         new FingerprintGenerator($config),
         new InternalLogger($config),
     );

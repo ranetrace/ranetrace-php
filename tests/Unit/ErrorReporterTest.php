@@ -49,7 +49,7 @@ function errorReporter(ArrayBuffer $buffer, array $overrides = []): ErrorReporte
         $overrides,
     ));
 
-    return new ErrorReporter($config, $buffer, new SecretScrubber($config), new InternalLogger($config));
+    return new ErrorReporter($config, $buffer, new SecretScrubber($config, new InternalLogger($config)), new InternalLogger($config));
 }
 
 /**

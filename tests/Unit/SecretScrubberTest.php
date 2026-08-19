@@ -2,11 +2,21 @@
 
 declare(strict_types=1);
 
+use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\SecretScrubber;
 
 function scrubber(array $overrides = []): SecretScrubber
 {
-    return new SecretScrubber(testConfig($overrides));
+    $config = testConfig($overrides);
+
+    return new SecretScrubber($config, new InternalLogger($config));
+}
+
+function scrubberInternalLog(string $directory): string
+{
+    $files = glob($directory.'/internal-*.log') ?: [];
+
+    return $files === [] ? '' : (string) file_get_contents($files[0]);
 }
 
 test('it redacts values under sensitive keys', function (): void {
@@ -284,6 +294,97 @@ test('scrubDeep redacts relative URL shapes that carry no leading slash', functi
     'query only' => ['?token=SECRET', '?token=[REDACTED]'],
     'sub-delimiter in a sibling param' => ['/download?ids=1,2&signature=SECRET', '/download?ids=1,2&signature=[REDACTED]'],
     'unencoded @ in the path' => ['/users/@rutger/files?token=SECRET', '/users/@rutger/files?token=[REDACTED]'],
+]);
+
+test('scrubString redacts the whole value when PCRE gives up, and says so in the internal log', function (): void {
+    // A PCRE limit failure used to return the input unscrubbed. Losing the
+    // string beats leaking it, and the give-up must never be silent.
+    $directory = tempDirectory();
+    $scrubber = scrubber(['buffer_path' => $directory]);
+    $value = str_repeat('token', 400);
+
+    $limit = ini_get('pcre.backtrack_limit');
+
+    try {
+        ini_set('pcre.backtrack_limit', '100');
+
+        $result = $scrubber->scrubString($value);
+    } finally {
+        ini_set('pcre.backtrack_limit', $limit === false ? '1000000' : $limit);
+    }
+
+    expect($result)->toBe('[REDACTED]')
+        ->and($result)->not->toBe($value)
+        ->and(scrubberInternalLog($directory))->toContain('WARNING')
+        ->toContain('Backtrack limit');
+});
+
+test('scrubUrl redacts a query-shaped fragment', function (string $url, string $expected): void {
+    // The OAuth implicit flow puts the grant in the fragment, where nothing
+    // used to look for it.
+    expect(scrubber()->scrubUrl($url))->toBe($expected);
+})->with([
+    'no query before it' => [
+        'https://app.test/callback#access_token=abc&expires_in=3600',
+        'https://app.test/callback#access_token=[REDACTED]&expires_in=3600',
+    ],
+    'query before it' => [
+        'https://app.test/callback?state=xyz#access_token=abc&expires_in=3600',
+        'https://app.test/callback?state=xyz#access_token=[REDACTED]&expires_in=3600',
+    ],
+    'sensitive in both halves' => [
+        'https://app.test/callback?token=q#access_token=f',
+        'https://app.test/callback?token=[REDACTED]#access_token=[REDACTED]',
+    ],
+    'relative reference' => [
+        '/callback#access_token=abc',
+        '/callback#access_token=[REDACTED]',
+    ],
+]);
+
+test('scrubUrl returns a fragment that is not query-shaped byte-for-byte', function (string $url): void {
+    expect(scrubber()->scrubUrl($url))->toBe($url);
+})->with([
+    'anchor after a query' => ['https://app.test/docs?page=2#section-2'],
+    'plain anchor' => ['/path#anchor'],
+    'hash route' => ['/app#/reset/abc123'],
+    'empty fragment' => ['https://app.test/docs#'],
+]);
+
+test('scrubDeep redacts a declared sensitive value inside an SPA hash route', function (): void {
+    // `/app#/reset/abc123` puts the token in a path-shaped fragment; segment
+    // matching is exact, so this is safe on any fragment.
+    expect(scrubber()->scrubDeep(['url' => '/app#/reset/abc123'], ['abc123']))
+        ->toBe(['url' => '/app#/reset/[REDACTED]']);
+});
+
+test('scrubUrlPath redacts a sensitive segment in a path-shaped fragment', function (): void {
+    expect(scrubber()->scrubUrlPath('https://app.test/app#/reset/abc123', ['abc123']))
+        ->toBe('https://app.test/app#/reset/[REDACTED]');
+});
+
+test('scrubUrlPath redacts the path even when the query or fragment carries an absolute url', function (string $url, string $expected): void {
+    // An unencoded `https://` in the query used to be mistaken for the URL's
+    // own scheme, which moved the path window into the query and shipped the
+    // live token untouched.
+    expect(scrubber()->scrubUrlPath($url, ['TOKEN']))->toBe($expected)
+        ->and(scrubber()->scrubDeep(['url' => $url], ['TOKEN']))->toBe(['url' => $expected]);
+})->with([
+    'no query' => ['/reset-password/TOKEN', '/reset-password/[REDACTED]'],
+    'relative next' => ['/reset-password/TOKEN?next=/account', '/reset-password/[REDACTED]?next=/account'],
+    'absolute next' => [
+        '/reset-password/TOKEN?next=https://app.test/dashboard',
+        '/reset-password/[REDACTED]?next=https://app.test/dashboard',
+    ],
+    'absolute return in the fragment' => [
+        '/reset-password/TOKEN#ret=https://app.test/x',
+        '/reset-password/[REDACTED]#ret=https://app.test/x',
+    ],
+    'absolute url with an absolute next' => [
+        'https://app.test/reset-password/TOKEN?next=https://other/x',
+        'https://app.test/reset-password/[REDACTED]?next=https://other/x',
+    ],
+    'protocol-relative' => ['//app.test/reset-password/TOKEN', '//app.test/reset-password/[REDACTED]'],
 ]);
 
 test('scrubDeep leaves free-form values that merely contain a question mark untouched', function (string $value): void {

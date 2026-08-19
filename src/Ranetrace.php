@@ -246,7 +246,7 @@ final class Ranetrace
 
     private function scrubber(): SecretScrubber
     {
-        return $this->scrubber ??= new SecretScrubber($this->config);
+        return $this->scrubber ??= new SecretScrubber($this->config, $this->log());
     }
 
     private function fingerprints(): FingerprintGenerator

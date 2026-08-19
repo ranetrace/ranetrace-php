@@ -17,8 +17,8 @@ use Ranetrace\Php\Config;
  *
  * Ported from `ranetrace/ranetrace-laravel` (`src/Utilities/SecretScrubber.php`).
  * The redaction semantics are part of the privacy promise the two SDKs share:
- * they must not drift. Only the config lookup changed, from a Laravel facade to
- * an injected {@see Config}.
+ * they must not drift. Only the collaborator lookup changed, from Laravel
+ * facades to an injected {@see Config} and {@see InternalLogger}.
  */
 final class SecretScrubber
 {
@@ -86,7 +86,10 @@ final class SecretScrubber
      */
     private ?array $fragments = null;
 
-    public function __construct(private readonly Config $config) {}
+    public function __construct(
+        private readonly Config $config,
+        private readonly InternalLogger $log,
+    ) {}
 
     /**
      * Recursively redact array values whose key matches a sensitive fragment.
@@ -132,10 +135,16 @@ final class SecretScrubber
 
     /**
      * Redact sensitive query-string parameters within a URL, preserving the
-     * scheme, host, path and fragment. Non-sensitive params keep their exact
-     * encoding; the URL is returned untouched when it has no query string or no
-     * sensitive params. Use for `url`/`referrer` fields, which can otherwise
-     * carry reset tokens, signed-URL signatures, `?api_key=`, etc.
+     * scheme, host and path. Non-sensitive params keep their exact encoding;
+     * the URL is returned untouched when it carries no sensitive params. Use
+     * for `url`/`referrer` fields, which can otherwise carry reset tokens,
+     * signed-URL signatures, `?api_key=`, etc.
+     *
+     * The FRAGMENT is scrubbed too, but only when it is itself query-shaped: an
+     * OAuth implicit-flow redirect comes back as `/callback#access_token=…`, so
+     * a fragment can carry exactly the secret the query does. A fragment of any
+     * other shape (an anchor, an SPA hash route) is returned byte-for-byte,
+     * since {@see scrubQuery()} would otherwise rewrite prose into pairs.
      */
     public function scrubUrl(?string $url): ?string
     {
@@ -143,25 +152,20 @@ final class SecretScrubber
             return $url;
         }
 
-        $query = parse_url($url, PHP_URL_QUERY);
-        if (! is_string($query) || $query === '') {
+        $fragmentStart = mb_strpos($url, '#');
+        $withoutFragment = $fragmentStart === false ? $url : mb_substr($url, 0, $fragmentStart);
+        $fragment = $fragmentStart === false ? '' : mb_substr($url, $fragmentStart + 1);
+
+        $scrubbedUrl = $this->scrubUrlQuery($withoutFragment);
+        $scrubbedFragment = $this->isQueryShaped($fragment)
+            ? $this->scrubQuery($fragment, $this->sensitiveFragments())
+            : $fragment;
+
+        if ($scrubbedUrl === $withoutFragment && $scrubbedFragment === $fragment) {
             return $url;
         }
 
-        $scrubbed = $this->scrubQuery($query, $this->sensitiveFragments());
-        if ($scrubbed === $query) {
-            return $url;
-        }
-
-        $queryStart = mb_strpos($url, '?');
-        if ($queryStart === false) {
-            return $url;
-        }
-
-        $fragmentStart = mb_strpos($url, '#', $queryStart);
-        $fragment = $fragmentStart !== false ? mb_substr($url, $fragmentStart) : '';
-
-        return mb_substr($url, 0, $queryStart).'?'.$scrubbed.$fragment;
+        return $fragmentStart === false ? $scrubbedUrl : $scrubbedUrl.'#'.$scrubbedFragment;
     }
 
     /**
@@ -262,15 +266,20 @@ final class SecretScrubber
 
     /**
      * Apply {@see scrubPathSegments()} to the PATH component of a URL, leaving
-     * the scheme, host, port, query and fragment exactly as they were, so it
-     * composes with {@see scrubUrl()} (which redacts the query) without
-     * re-encoding anything.
+     * the scheme, host, port and query exactly as they were, so it composes
+     * with {@see scrubUrl()} (which redacts the query) without re-encoding
+     * anything.
      *
      * Where the Laravel SDK resolves the sensitive segments from the matched
      * route, this SDK has no router to ask: the caller supplies the segment
      * values, typically from {@see sensitiveRouteParameterValues()}. Passing
      * null or an empty list means "query-only scrubbing", which is the correct
      * behaviour for a host that cannot say which segments are secret.
+     *
+     * The FRAGMENT is run through {@see scrubPathSegments()} as well, because a
+     * single-page app routes in it: `/app#/reset/abc123` puts the token in a
+     * path-shaped fragment. Segment matching is an exact whole-segment compare,
+     * so this is safe on a fragment of any shape.
      *
      * @param  array<int, string>|null  $sensitiveValues
      */
@@ -280,25 +289,29 @@ final class SecretScrubber
             return $url;
         }
 
-        $pathStart = $this->pathOffset($url);
-        $pathEnd = mb_strlen($url);
+        $fragmentStart = mb_strpos($url, '#');
+        $withoutFragment = $fragmentStart === false ? $url : mb_substr($url, 0, $fragmentStart);
+        $fragment = $fragmentStart === false ? '' : mb_substr($url, $fragmentStart + 1);
 
-        foreach (['?', '#'] as $delimiter) {
-            $position = mb_strpos($url, $delimiter, $pathStart);
+        $pathStart = $this->pathOffset($withoutFragment);
+        $pathEnd = mb_strpos($withoutFragment, '?', $pathStart);
 
-            if ($position !== false && $position < $pathEnd) {
-                $pathEnd = $position;
-            }
+        if ($pathEnd === false) {
+            $pathEnd = mb_strlen($withoutFragment);
         }
 
-        $path = mb_substr($url, $pathStart, $pathEnd - $pathStart);
-        $scrubbed = $this->scrubPathSegments($path, $sensitiveValues);
+        $path = mb_substr($withoutFragment, $pathStart, $pathEnd - $pathStart);
+        $scrubbedPath = $this->scrubPathSegments($path, $sensitiveValues);
+        $scrubbedFragment = $this->scrubPathSegments($fragment, $sensitiveValues);
 
-        if ($scrubbed === $path) {
+        if ($scrubbedPath === $path && $scrubbedFragment === $fragment) {
             return $url;
         }
 
-        return mb_substr($url, 0, $pathStart).$scrubbed.mb_substr($url, $pathEnd);
+        return mb_substr($withoutFragment, 0, $pathStart)
+            .$scrubbedPath
+            .mb_substr($withoutFragment, $pathEnd)
+            .($fragmentStart === false ? '' : '#'.$scrubbedFragment);
     }
 
     /**
@@ -307,6 +320,13 @@ final class SecretScrubber
      * defense-in-depth for strings we cannot structure (e.g. exception stack
      * traces): it catches query-string-like and key/value leakage, but not
      * positional secret arguments that carry no key.
+     *
+     * Fails closed. The pattern backtracks super-linearly on a long run of word
+     * characters, so PCRE can hit its backtrack limit and give up. Returning the
+     * input then would ship the very string we were asked to redact, so the
+     * whole value becomes the placeholder instead: losing the string beats
+     * leaking it. The give-up is written to the internal log so a scrubber that
+     * has started swallowing strings is visible rather than silent.
      */
     public function scrubString(string $value): string
     {
@@ -326,25 +346,73 @@ final class SecretScrubber
             return $matches[1].$matches[2].self::REDACTION.$matches[2];
         }, $value);
 
-        return $result ?? $value;
+        if ($result === null) {
+            $this->log->warning('Secret scrubbing of a free-form string failed, so the whole string was redacted.', [
+                'error' => preg_last_error_msg(),
+                'length' => mb_strlen($value),
+            ]);
+
+            return self::REDACTION;
+        }
+
+        return $result;
     }
 
     /**
-     * Offset at which the path component of a URL starts: after `scheme://host`
-     * (and any port) for an absolute URL, or 0 for a relative one. Returns the
-     * string length when an absolute URL has no path at all.
+     * Offset at which the path component of a URL starts: after the authority
+     * (`scheme://host`, any port, and the protocol-relative `//host` form) for
+     * an absolute reference, or 0 for a relative one. Returns the string length
+     * when an absolute URL has no path at all.
+     *
+     * The authority is recognised only at the START of the string. An
+     * unanchored search for `://` finds the one inside
+     * `/reset-password/TOKEN?next=https://app.test/dashboard` and puts the path
+     * window in the middle of the query, which left the live token in the part
+     * nothing then inspected.
      */
     private function pathOffset(string $url): int
     {
-        $schemeEnd = mb_strpos($url, '://');
-
-        if ($schemeEnd === false) {
+        if (preg_match('#^(?:[A-Za-z][A-Za-z0-9+.\-]*:)?//[^/?\#]*#', $url, $matches) !== 1) {
             return 0;
         }
 
-        $pathStart = mb_strpos($url, '/', $schemeEnd + 3);
+        return mb_strlen($matches[0]);
+    }
 
-        return $pathStart === false ? mb_strlen($url) : $pathStart;
+    /**
+     * Redact the sensitive query parameters of a fragment-free URL, leaving
+     * every other byte of it exactly as it was.
+     */
+    private function scrubUrlQuery(string $url): string
+    {
+        $query = parse_url($url, PHP_URL_QUERY);
+        if (! is_string($query) || $query === '') {
+            return $url;
+        }
+
+        $scrubbed = $this->scrubQuery($query, $this->sensitiveFragments());
+        if ($scrubbed === $query) {
+            return $url;
+        }
+
+        $queryStart = mb_strpos($url, '?');
+        if ($queryStart === false) {
+            return $url;
+        }
+
+        return mb_substr($url, 0, $queryStart).'?'.$scrubbed;
+    }
+
+    /**
+     * Whether a string is a run of `key=value` pairs, the shape {@see scrubQuery()}
+     * is safe to rewrite. Used for the query of a relative reference and for a
+     * fragment, both of which are free-form until proven otherwise.
+     */
+    private function isQueryShaped(string $value): bool
+    {
+        $pair = '['.self::URL_KEY_CHARS.']+=['.self::URL_VALUE_CHARS.']*';
+
+        return preg_match('#^'.$pair.'(?:&'.$pair.')*$#', $value) === 1;
     }
 
     /**
@@ -471,9 +539,7 @@ final class SecretScrubber
             return true;
         }
 
-        $pair = '['.self::URL_KEY_CHARS.']+=['.self::URL_VALUE_CHARS.']*';
-
-        return preg_match('#^'.$pair.'(?:&'.$pair.')*$#', $query) === 1;
+        return $this->isQueryShaped($query);
     }
 
     /**

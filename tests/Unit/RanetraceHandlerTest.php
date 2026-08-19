@@ -23,7 +23,7 @@ function logHandler(
         'logging' => ['enabled' => true],
     ], $overrides));
 
-    return new RanetraceHandler($config, $buffer, new SecretScrubber($config), new InternalLogger($config), $level);
+    return new RanetraceHandler($config, $buffer, new SecretScrubber($config, new InternalLogger($config)), new InternalLogger($config), $level);
 }
 
 /**

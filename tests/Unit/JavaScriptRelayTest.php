@@ -46,7 +46,7 @@ function relay(ArrayBuffer $buffer, array $overrides = [], array $root = []): Re
     return new Relay(
         $config,
         $buffer,
-        new SecretScrubber($config),
+        new SecretScrubber($config, new InternalLogger($config)),
         new FingerprintGenerator($config),
         new InternalLogger($config),
     );
