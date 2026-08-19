@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Ranetrace\Php\Events\EventTracker;
 use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
 use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 
@@ -454,4 +455,17 @@ test('customUnsafe skips validation', function (): void {
     expect($event['event_name'])->toBe('NOT VALID')
         ->and($event['properties'])->toBe(['a' => 1])
         ->and($event['user'])->toBe(['id' => 5]);
+});
+
+test('an event over the per-item byte budget has its properties replaced, never its top level', function (): void {
+    $buffer = new ArrayBuffer;
+
+    eventTracker($buffer)->track('checkout_started', ['blob' => str_repeat('p', 100_000)]);
+
+    $event = firstEvent($buffer);
+
+    expect(array_keys($event))->toBe(EVENT_KEYS)
+        ->and($event)->not->toHaveKey('_truncated')
+        ->and($event['properties'])->toBe(['_truncated' => 'Field exceeded the per-item budget and was removed'])
+        ->and(mb_strlen((string) json_encode($event), '8bit'))->toBeLessThanOrEqual(ItemByteBudget::MAX_ITEM_BYTES);
 });

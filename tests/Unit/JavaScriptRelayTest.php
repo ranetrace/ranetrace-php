@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Ranetrace\Php\JavaScript\Relay;
 use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
 use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 
@@ -611,4 +612,32 @@ test('the response encodes itself as json', function (): void {
     $response = relay(new ArrayBuffer)->handleRequest(relayServer(), relayPayload());
 
     expect($response->toJson())->toBe('{"success":true,"message":"Error received"}');
+});
+
+test('a javascript error over the per-item byte budget is shrunk before it is buffered', function (): void {
+    // Every field here is inside its own cap: twenty breadcrumbs is the default
+    // maximum and 5 KB of data per breadcrumb is the per-breadcrumb cap. Their
+    // product is 100 KB, which is why the item budget exists on top of them.
+    $breadcrumbs = [];
+
+    for ($index = 0; $index < 20; $index++) {
+        $breadcrumbs[] = [
+            'timestamp' => '2026-08-06T10:00:00+00:00',
+            'category' => 'console',
+            'message' => 'log',
+            'data' => ['blob' => str_repeat('b', 5_000)],
+        ];
+    }
+
+    $buffer = new ArrayBuffer;
+
+    $response = relay($buffer)->handleRequest(relayServer(), relayPayload(['breadcrumbs' => $breadcrumbs]));
+
+    $item = firstJavascriptError($buffer);
+
+    expect($response->status)->toBe(200)
+        ->and(array_keys($item))->toBe(JAVASCRIPT_ERROR_KEYS)
+        ->and($item)->not->toHaveKey('_truncated')
+        ->and($item['breadcrumbs'])->toBe(['_truncated' => 'Field exceeded the per-item budget and was removed'])
+        ->and(mb_strlen((string) json_encode($item), '8bit'))->toBeLessThanOrEqual(ItemByteBudget::MAX_ITEM_BYTES);
 });

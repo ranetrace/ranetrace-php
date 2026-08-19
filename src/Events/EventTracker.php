@@ -11,6 +11,7 @@ use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
 use Throwable;
 
@@ -92,13 +93,17 @@ final class EventTracker
      */
     private ?array $sensitivePathValues = null;
 
+    private readonly ItemByteBudget $budget;
+
     public function __construct(
         private readonly Config $config,
         private readonly BufferInterface $buffer,
         private readonly SecretScrubber $scrubber,
         private readonly FingerprintGenerator $fingerprints,
         private readonly InternalLogger $log,
-    ) {}
+    ) {
+        $this->budget = new ItemByteBudget($log);
+    }
 
     /**
      * Whether an event name follows the naming convention: snake_case, 3 to 50
@@ -147,7 +152,11 @@ final class EventTracker
         }
 
         try {
-            $this->buffer->addItem(self::BUFFER_TYPE, [
+            // The per-item byte budget runs on the finished, already scrubbed
+            // item, right before it reaches the buffer. A null item was
+            // irreducibly over budget and was dropped with a diagnostics entry,
+            // so there is nothing left to buffer.
+            $item = $this->budget->cap(self::BUFFER_TYPE, [
                 'event_name' => $name,
                 // The host's declared path secrets are passed through, so a URL
                 // property loses its `{token}` segment the same way the event's
@@ -165,6 +174,12 @@ final class EventTracker
                     $this->serverString('HTTP_USER_AGENT'),
                 ),
             ]);
+
+            if ($item === null) {
+                return;
+            }
+
+            $this->buffer->addItem(self::BUFFER_TYPE, $item);
         } catch (Throwable $failure) {
             $this->log->error('Failed to track event', [
                 'event_name' => $name,

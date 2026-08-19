@@ -6,6 +6,7 @@ use Monolog\Level;
 use Monolog\LogRecord;
 use Ranetrace\Php\Logging\RanetraceHandler;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
 use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 
@@ -211,4 +212,16 @@ test('it never throws back into the call site that logged', function (): void {
     logHandler($buffer)->handle(logRecord());
 
     expect($buffer->items)->toBe([]);
+});
+
+test('a log record over the per-item byte budget is shrunk before it is buffered', function (): void {
+    // The message cap counts characters, so 40,000 three-byte characters clear
+    // it and still weigh 120 KB. The byte budget at the buffer handoff is what
+    // catches that.
+    $payload = handledPayloads(logRecord(str_repeat('→', 40_000)))[0];
+
+    expect(array_keys($payload))->toEqualCanonicalizing(['level', 'message', 'context', 'channel', 'timestamp', 'extra'])
+        ->and($payload['message'])->toEndWith('... (truncated)')
+        ->and($payload)->not->toHaveKey('_truncated')
+        ->and(mb_strlen((string) json_encode($payload), '8bit'))->toBeLessThanOrEqual(ItemByteBudget::MAX_ITEM_BYTES);
 });

@@ -8,6 +8,7 @@ use ErrorException;
 use Ranetrace\Php\Buffer\BufferInterface;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
 use Throwable;
 
@@ -25,6 +26,8 @@ use Throwable;
 final class ErrorReporter
 {
     private readonly PayloadBuilder $payloadBuilder;
+
+    private readonly ItemByteBudget $budget;
 
     /**
      * The exception handler that was installed before ours, called after we
@@ -60,6 +63,7 @@ final class ErrorReporter
         private readonly InternalLogger $log,
     ) {
         $this->payloadBuilder = new PayloadBuilder($config, $scrubber, $log);
+        $this->budget = new ItemByteBudget($log);
     }
 
     /**
@@ -86,11 +90,21 @@ final class ErrorReporter
         }
 
         try {
-            $this->buffer->addItem('errors', $this->payloadBuilder->build(
+            // The per-item byte budget runs on the finished, already scrubbed
+            // payload, right before it reaches the buffer. A null item was
+            // irreducibly over budget and was dropped with a diagnostics entry,
+            // so there is nothing left to buffer.
+            $item = $this->budget->cap('errors', $this->payloadBuilder->build(
                 $throwable,
                 $this->server ?? $_SERVER,
                 $this->console ?? (PHP_SAPI === 'cli'),
             ));
+
+            if ($item === null) {
+                return;
+            }
+
+            $this->buffer->addItem('errors', $item);
         } catch (Throwable $failure) {
             $this->log->error('Failed to capture exception', [
                 'exception' => $failure->getMessage(),

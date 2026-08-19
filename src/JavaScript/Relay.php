@@ -10,6 +10,7 @@ use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\SecretScrubber;
 use Throwable;
@@ -86,13 +87,17 @@ final class Relay
      */
     private ?array $sensitivePathValues = null;
 
+    private readonly ItemByteBudget $budget;
+
     public function __construct(
         private readonly Config $config,
         private readonly BufferInterface $buffer,
         private readonly SecretScrubber $scrubber,
         private readonly FingerprintGenerator $fingerprints,
         private readonly InternalLogger $log,
-    ) {}
+    ) {
+        $this->budget = new ItemByteBudget($log);
+    }
 
     /**
      * Decide what to do with one posted error report.
@@ -213,7 +218,14 @@ final class Relay
             ]);
         }
 
-        if (! $this->buffer->addItem(self::BUFFER_TYPE, $this->buildItem($server, $payload, $message))) {
+        // The per-item byte budget runs on the finished, already scrubbed item,
+        // right before it reaches the buffer. A null item was irreducibly over
+        // budget and was dropped with a diagnostics entry of its own, so there
+        // is nothing left to buffer; the browser is still acknowledged, exactly
+        // as it is for a rejected write.
+        $item = $this->budget->cap(self::BUFFER_TYPE, $this->buildItem($server, $payload, $message));
+
+        if ($item !== null && ! $this->buffer->addItem(self::BUFFER_TYPE, $item)) {
             // A rejected write is a transient drop (lock contention, unwritable
             // spool), already recorded by the buffer's own diagnostics. The
             // browser can do nothing about it and retrying would only amplify

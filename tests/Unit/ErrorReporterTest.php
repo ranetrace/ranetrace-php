@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Ranetrace\Php\Errors\ErrorReporter;
 use Ranetrace\Php\Errors\PayloadBuilder;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
 use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 
@@ -531,3 +532,26 @@ test('it leaves non-fatal errors and a clean shutdown alone', function (?array $
     'a deprecation' => [['type' => E_DEPRECATED, 'message' => 'Passing null', 'file' => '/app/a.php', 'line' => 1]],
     'nothing at all' => [null],
 ]);
+
+test('an error item over the per-item byte budget is shrunk before it is buffered', function (): void {
+    // Every field the errors payload caps is capped in CHARACTERS, so a file of
+    // wide multibyte source lines and a multibyte exception message pass those
+    // caps and still weigh far more than the 70 KB the item budget allows. That
+    // is the gap the budget closes, at the buffer handoff.
+    $file = tempDirectory().'/wide.php';
+    file_put_contents($file, str_repeat(str_repeat('→', 2_000)."\n", 20));
+
+    $buffer = new ArrayBuffer;
+    $reporter = errorReporter($buffer);
+    $reporter->setServerContext([], true);
+
+    $reporter->report(exceptionAt($file, 10, str_repeat('→', 9_000)));
+
+    $payload = $buffer->payloads('errors')[0];
+
+    expect(array_keys($payload))->toBe(errorPayloadKeys())
+        ->and($payload['message'])->toEndWith('... (truncated)')
+        ->and($payload['context'])->toEndWith('... (truncated)')
+        ->and($payload)->not->toHaveKey('_truncated')
+        ->and(mb_strlen((string) json_encode($payload), '8bit'))->toBeLessThanOrEqual(ItemByteBudget::MAX_ITEM_BYTES);
+});

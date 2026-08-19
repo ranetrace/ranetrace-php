@@ -11,6 +11,7 @@ use Ranetrace\Php\Buffer\BufferInterface;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\SecretScrubber;
 use Throwable;
@@ -41,6 +42,8 @@ final class RanetraceHandler extends AbstractProcessingHandler
 
     private const int MAX_EXTRA_BYTES = 10_240;
 
+    private readonly ItemByteBudget $budget;
+
     /**
      * The minimum level defaults to the configured `logging.level` (itself
      * `notice`) rather than to Monolog's `debug`, so a host that mounts this
@@ -56,6 +59,8 @@ final class RanetraceHandler extends AbstractProcessingHandler
         bool $bubble = true,
     ) {
         parent::__construct($level ?? self::configuredLevel($config), $bubble);
+
+        $this->budget = new ItemByteBudget($log);
     }
 
     /**
@@ -76,7 +81,11 @@ final class RanetraceHandler extends AbstractProcessingHandler
                 return;
             }
 
-            $this->buffer->addItem('logs', [
+            // The per-item byte budget runs on the finished, already scrubbed
+            // item, right before it reaches the buffer. A null item was
+            // irreducibly over budget and was dropped with a diagnostics entry,
+            // so there is nothing left to buffer.
+            $item = $this->budget->cap('logs', [
                 'level' => mb_strtolower($record->level->name),
                 'message' => $this->message($record->message),
                 'context' => PayloadSizer::capBytes(
@@ -88,6 +97,12 @@ final class RanetraceHandler extends AbstractProcessingHandler
                 'timestamp' => $record->datetime->format('c'),
                 'extra' => $this->extra($record),
             ]);
+
+            if ($item === null) {
+                return;
+            }
+
+            $this->buffer->addItem('logs', $item);
         } catch (Throwable $failure) {
             $this->log->warning('Failed to capture log to Ranetrace', [
                 'exception' => $failure->getMessage(),

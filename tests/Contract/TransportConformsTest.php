@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Ranetrace\Php\Contract\WireContract;
 use Ranetrace\Php\Http\ApiClient;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Tests\Doubles\FakeHttpClient;
 use Ranetrace\Php\Worker\Worker;
 
@@ -39,6 +40,35 @@ test('the worker batch budgets equal the envelope contract', function (): void {
     expect(Worker::MAX_ITEMS_PER_RUN)->toBe($envelope['max_items_per_batch'])
         ->and(contractWorkerConstant('MAX_BATCH_BYTES'))->toBe($envelope['client_trim_bytes'])
         ->and($envelope['client_trim_bytes'])->toBeLessThan($envelope['server_max_body_bytes']);
+});
+
+test('the capture item budget equals the envelope contract', function (): void {
+    $policy = WireContract::envelope()['client_item_policy'];
+
+    expect(ItemByteBudget::MAX_ITEM_BYTES)->toBe($policy['max_item_bytes'])
+        ->and(ItemByteBudget::MAX_ITEM_FIELD_BYTES)->toBe($policy['max_item_field_bytes'])
+        ->and($policy['max_item_field_bytes'])->toBeLessThan($policy['max_item_bytes'])
+        // The drop-rather-than-mark half of the policy is the part no constant
+        // can express, so the contract states it and this pins the statement.
+        ->and($policy['never_send_marker_key'])->toBeTrue();
+});
+
+test('an item the budget dropped is never replaced with a marker payload', function (): void {
+    $budget = new ItemByteBudget(new InternalLogger(testConfig([
+        'buffer_path' => tempDirectory(),
+        'internal_logging' => ['enabled' => false],
+    ])));
+
+    $item = [];
+
+    for ($field = 0; $field < 20; $field++) {
+        $item['field_'.$field] = str_repeat('x', 5_000);
+    }
+
+    // Null, not an item carrying `_truncated` or any other stand-in key: the
+    // errors endpoint matches field sets strictly, so a marker key would take
+    // the whole batch of up to a thousand items down with it.
+    expect($budget->cap('errors', $item))->toBeNull();
 });
 
 test('the worker pause lengths equal the response contract', function (): void {
