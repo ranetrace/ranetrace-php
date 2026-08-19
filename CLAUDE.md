@@ -14,10 +14,17 @@ Its sibling is `ranetrace/ranetrace-laravel` (working copy at `../ranetrace-lara
 
 The Ranetrace API does **strict field-set matching**: a payload with an extra key, a missing key or a wrong type gets the **whole batch** rejected with a 422, which drops every item in it and pauses the feature for fifteen minutes. There is no additive-field tolerance and no partial acceptance.
 
+The contract is written down in `contract/`, which ships with the package so the Laravel SDK and the backend application can test against the same artifact rather than three drifting descriptions of it:
+
+- `contract/items/*.json` per capture type: the field spec transcribed from the backend's own validators, plus a minimal and a full example that really pass them.
+- `contract/envelope.json`, `endpoints.json`, `headers.json`, `responses.json`: the body shape and budgets, the paths and wrapper keys, the five headers, and the client's response matrix.
+- `Contract\WireContract` reads them; `tests/Contract` asserts that the emitters, the worker and the API client still agree with them.
+
 So:
 
 - Never add, rename, remove or retype a key in a payload the API receives without the backend accepting the new shape **first**.
-- Changes that need the backend to move go in the coordination log at `../ranetrace-laravel/.claude/backend-changes-needed.md`, and ship in lockstep with the backend task.
+- Changing what an emitter sends means changing the matching fixture in the same commit. If the fixture cannot change yet because the backend has not moved, the emitter cannot change yet either.
+- Coordinated changes go in `contract/CHANGELOG.md`, one entry with a status per side, and ship in lockstep with the backend task.
 - `Ranetrace-API-Version: 1.0` goes on every request.
 - The tests assert exact payload shapes on purpose. A test that has to be edited to accommodate a payload change is the alarm working, not a chore.
 

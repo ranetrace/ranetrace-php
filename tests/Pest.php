@@ -5,7 +5,7 @@ declare(strict_types=1);
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Tests\TestCase;
 
-uses(TestCase::class)->in('Unit', 'Feature');
+uses(TestCase::class)->in('Unit', 'Feature', 'Contract');
 
 /**
  * Environment variables a test set, so they can be removed again afterwards.
@@ -35,7 +35,7 @@ uses()->afterEach(function (): void {
     }
 
     $GLOBALS['ranetrace_test_temp_dirs'] = [];
-})->in('Unit', 'Feature');
+})->in('Unit', 'Feature', 'Contract');
 
 /**
  * Set an environment variable for the duration of one test.

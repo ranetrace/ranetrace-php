@@ -1,0 +1,44 @@
+{
+    "request_body": {
+        "shape": "A JSON object with exactly one top-level key, the type's wrapper key, holding a plain array of item objects.",
+        "example": {
+            "errors": [
+                {"...": "one item object, per contract/items/errors.json"},
+                {"...": "another item object"}
+            ]
+        },
+        "note": "The array is re-indexed before encoding, so it is always a JSON array and never an object with numeric keys."
+    },
+    "buffered_item": {
+        "shape": {
+            "id": {"type": "string", "note": "Spool-local identifier, unique per buffered item."},
+            "data": {"type": "object", "note": "The item object itself. This is the only part that crosses the wire."},
+            "timestamp": {"type": "integer", "note": "Unix timestamp of the moment the item was buffered, used for the spool's idle TTL."}
+        },
+        "note": "The shape both SDKs spool locally. `id` and `timestamp` are client bookkeeping and never reach the API; the batch body carries the `data` objects only."
+    },
+    "wrappers": {
+        "errors": "errors",
+        "events": "events",
+        "logs": "logs",
+        "javascript_errors": "javascript_errors"
+    },
+    "max_items_per_batch": 1000,
+    "server_max_body_bytes": 5000000,
+    "client_trim_bytes": 4500000,
+    "client_item_policy": {
+        "max_item_bytes": 71680,
+        "max_item_field_bytes": 8192,
+        "order": [
+            "Measure the JSON-encoded size of the item. Within max_item_bytes, send it unchanged.",
+            "Over budget: cut every string field longer than max_item_field_bytes, and replace every array field larger than max_item_field_bytes wholesale (truncating a structure mid-way yields invalid JSON).",
+            "Still over budget: drop the item and record the loss in the SDK's internal diagnostics log."
+        ],
+        "never_send_marker_key": true,
+        "note": "The dropped item is never replaced with a placeholder or marker payload at the item's top level. The wire shape is fixed per type, so a marker key belongs to no type; on the errors endpoint its strict allow-list would 422 the item and take the whole batch with it, which is the exact failure this budget exists to prevent. Losing one item is cheaper than losing up to a thousand plus a fifteen-minute feature pause. A `_truncated` key nested inside a free-shape field (log `context`/`extra`, JS-error `context`, breadcrumb `data`) is a different thing and is allowed."
+    },
+    "notes": [
+        "client_trim_bytes is the client's soft budget for one request body, deliberately below server_max_body_bytes so the JSON envelope's own overhead cannot push a batch into a 413.",
+        "A batch trimmed at the byte budget always keeps at least one item: a single over-budget item cannot be split, and the per-item policy already bounds it, so sending it and letting the server judge beats spooling it forever."
+    ]
+}

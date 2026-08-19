@@ -1,0 +1,12 @@
+{
+    "note": "Paths are kebab-case, wrapper keys are snake_case. The two spellings of `javascript_errors` are the whole reason this file exists as a lookup rather than a naming rule.",
+    "method": "POST",
+    "base_url_default": "https://api.ranetrace.com/v1",
+    "base_url_note": "Every path below is appended to the configured API base URL, which already carries the version prefix.",
+    "endpoints": {
+        "errors": {"path": "/errors/store", "wrapper": "errors"},
+        "events": {"path": "/events/store", "wrapper": "events"},
+        "logs": {"path": "/logs/store", "wrapper": "logs"},
+        "javascript_errors": {"path": "/javascript-errors/store", "wrapper": "javascript_errors"}
+    }
+}

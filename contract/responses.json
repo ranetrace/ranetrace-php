@@ -1,0 +1,87 @@
+{
+    "note": "The client's response matrix, transcribed from Worker::handle() in ranetrace/ranetrace-php. Every branch answers three questions: do the items go back on the spool, does the feature or everything pause, and are the items terminal. This is contract, not implementation detail: the server relies on the client behaving this way.",
+    "pause_seconds_default": 900,
+    "rate_limit_floor_seconds": 60,
+    "statuses": {
+        "200": {
+            "rebuffer": "unprocessed_indexes",
+            "pause_scope": null,
+            "pause_seconds": null,
+            "drop": false,
+            "note": "Validation passed for the whole batch and processing ran per item. Items named by unprocessed_indexes are re-buffered for the next run; items counted as failed are terminal, because the server rejected them individually and would reject them again. The run stamps the last-successful-batch time for this type."
+        },
+        "401": {
+            "rebuffer": true,
+            "pause_scope": "global",
+            "pause_seconds": 900,
+            "drop": false,
+            "note": "Invalid or revoked API key. The pause is global, not per feature: a rejected key is not a problem with this endpoint, and presenting it to the remaining endpoints in the same run would only multiply the rejections. The run stops immediately."
+        },
+        "403": {
+            "rebuffer": true,
+            "pause_scope": "feature",
+            "pause_seconds": 900,
+            "drop": false,
+            "note": "The token lacks the feature's write ability, the website is in maintenance mode, or the account has no access. Treated as recoverable, so the items are kept."
+        },
+        "413": {
+            "rebuffer": false,
+            "pause_scope": "feature",
+            "pause_seconds": 900,
+            "drop": true,
+            "note": "Batch over the item count or the body size limit. Dropped, because re-sending the same oversize batch would fail identically. Logged at critical: the client's pre-flight byte trim and item cap are supposed to make this unreachable, so arriving here means the client is miscounting."
+        },
+        "422": {
+            "rebuffer": false,
+            "pause_scope": "feature",
+            "pause_seconds": 900,
+            "drop": true,
+            "note": "One or more items failed validation, which rejects the whole batch. Dropped, because the server validates every item and these items are invalid and always will be. This is the failure the strict field sets in contract/items/ exist to prevent."
+        },
+        "429": {
+            "rebuffer": true,
+            "pause_scope": "feature",
+            "pause_seconds": null,
+            "pause_seconds_source": "Retry-After",
+            "pause_seconds_floor": 60,
+            "drop": false,
+            "note": "Rate limited. The pause length is the Retry-After header in seconds, floored at 60. The floor is load-bearing: a missing header is stored as an empty string and casts to zero, and a zero-second pause would have a rate-limited client hammering the endpoint on every run."
+        },
+        "default": {
+            "rebuffer": true,
+            "pause_scope": "feature",
+            "pause_seconds": 900,
+            "drop": false,
+            "note": "A 500, or any status this matrix does not name. Treated as transient: re-buffer, back off, and let the next run be the retry."
+        },
+        "network": {
+            "rebuffer": true,
+            "pause_scope": "feature",
+            "pause_seconds": 900,
+            "drop": false,
+            "note": "No HTTP status was reached: a dead connection, a timeout, a missing API key, or a body that would not encode. The client normalises all of these to status 0 so the raw transport error never escapes into the host application."
+        }
+    },
+    "success_body": {
+        "shape": {
+            "success": {"type": "boolean"},
+            "items": {
+                "received": {"type": "integer", "presence": "always"},
+                "processed": {"type": "integer", "presence": "always"},
+                "ignored": {"type": "integer", "presence": "only when greater than zero"},
+                "failed": {"type": "integer", "presence": "only when greater than zero"},
+                "unprocessed": {"type": "integer", "presence": "only when greater than zero"}
+            },
+            "unprocessed_indexes": {"type": "array of integer", "presence": "only when there are unprocessed items"}
+        },
+        "invariant": "processed + ignored + failed + unprocessed always equals received.",
+        "note": "Absent counters are zero. A client must read them with a zero default rather than expecting the keys. Indexes are zero-based positions in the batch that was sent."
+    },
+    "error_body": {
+        "shape": {
+            "success": {"type": "boolean"},
+            "error": {"message": {"type": "string"}}
+        },
+        "note": "Every non-200 carries this shape. The client reads error.message for its diagnostics log only; the matrix above keys off the status."
+    }
+}

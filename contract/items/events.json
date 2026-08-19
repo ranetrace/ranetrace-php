@@ -1,0 +1,64 @@
+{
+    "type": "events",
+    "wrapper": "events",
+    "strict_fields": false,
+    "notes": [
+        "Transcribed from the backend app's EventsBatchController, verified 2026-08-19.",
+        "There is no allow-list here: a key outside `fields` is dropped by the validator rather than rejecting the item. Both SDKs still send exactly the seven keys in `fields`, because the shape is what the dashboard reads.",
+        "`additional_checks` are enforced after the field rules and reject the item (and therefore the whole batch) just as hard. An example that satisfies `fields` but trips one of them is not a valid example.",
+        "The endpoint also applies burst protection per IP, per session hash and per website before validation. That is a 429 on the request, not an item rule, so it is described in responses.json rather than here."
+    ],
+    "fields": {
+        "event_name": {"required": true, "type": "string", "min": 3, "max": 50, "pattern": "/^[a-z][a-z0-9_]*$/"},
+        "timestamp": {"required": true, "type": "date"},
+        "properties": {"required": false, "type": "array"},
+        "properties.*": {"required": false},
+        "user": {"required": false, "type": "array"},
+        "user.*": {"required": false},
+        "url": {"required": false, "type": "string", "max": 2000},
+        "user_agent_hash": {"required": false, "type": "string", "size": 64},
+        "session_id_hash": {"required": false, "type": "string", "size": 64}
+    },
+    "additional_checks": {
+        "forbidden_event_names": {
+            "values": ["test", "bot_action", "fake_event", "debug"],
+            "note": "Rejected as suspicious even though they satisfy the name pattern."
+        },
+        "max_item_bytes": {
+            "value": 5120,
+            "note": "JSON-encoded size of the whole item, measured server-side."
+        },
+        "max_property_value_chars": {
+            "value": 500,
+            "note": "Applies to string property values only."
+        },
+        "max_property_repetition_ratio": {
+            "value": 0.8,
+            "note": "With more than one property, no single value may account for more than 80 percent of the values. Non-string values are compared by their JSON encoding."
+        },
+        "max_consecutive_character_repetition": {
+            "value": 50,
+            "note": "A string property value may not repeat the same character more than 50 times in a row."
+        }
+    },
+    "examples": {
+        "minimal": {
+            "event_name": "cart_viewed",
+            "timestamp": "2026-08-19T09:30:45+00:00"
+        },
+        "full": {
+            "event_name": "checkout_completed",
+            "timestamp": "2026-08-19T09:30:45+00:00",
+            "properties": {
+                "order_id": "ORD-4821",
+                "total_amount": 149.95,
+                "currency": "EUR",
+                "product_count": 3
+            },
+            "user": {"id": 4211},
+            "url": "https://shop.example.com/checkout/complete",
+            "user_agent_hash": "3f6a1c9d5b2e8047a1d4c7f0b3e6591827a4d0c3f6b9e2510d7a4c1f8b5e2093",
+            "session_id_hash": "9c2e5f81a4d07b36e18c4a5209fb7d365a0d3c8e1f472b9684be2f705ac31d69"
+        }
+    }
+}

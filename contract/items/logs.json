@@ -1,0 +1,54 @@
+{
+    "type": "logs",
+    "wrapper": "logs",
+    "strict_fields": false,
+    "notes": [
+        "Transcribed from the backend app's LogsBatchController, verified 2026-08-19.",
+        "There is no allow-list here: a key outside `fields` is dropped by the validator rather than rejecting the item. Both SDKs still send exactly the six keys in `fields`.",
+        "`context` and `extra` are free-shape arrays at ingest. Anything the SDKs agree to put inside them is a convention between the SDKs, not a rule the server enforces, which is why it lives in `extra_vocabulary` rather than in `fields`.",
+        "Both SDKs may replace an oversized `context` or `extra` wholesale with a single `_truncated` key carrying the reason. That is legal here precisely because these fields are free-shape."
+    ],
+    "fields": {
+        "level": {"required": true, "type": "string", "enum": ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]},
+        "message": {"required": true, "type": "string", "max": 50000},
+        "channel": {"required": true, "type": "string", "max": 255},
+        "timestamp": {"required": true, "type": "date"},
+        "context": {"required": false, "type": "array"},
+        "extra": {"required": false, "type": "array"}
+    },
+    "extra_vocabulary": {
+        "note": "The keys the SDKs attach to `extra` on top of whatever the host logged. The canonical source is RanetraceHandler::extra() in ranetrace/ranetrace-php. The Laravel SDK still reports `laravel_version` here; moving it to this vocabulary is in flight, in lockstep with the same move on the error item.",
+        "keys": {
+            "environment": {"type": "string", "presence": "always"},
+            "php_version": {"type": "string", "presence": "always"},
+            "framework": {"type": "string", "presence": "when the host names one", "note": "Absent rather than null when the host said nothing, so absence reads as \"not said\" instead of \"no framework\"."},
+            "framework_version": {"type": "string", "presence": "when the host names one", "note": "Absent rather than null when the host said nothing."}
+        }
+    },
+    "examples": {
+        "minimal": {
+            "level": "notice",
+            "message": "Nightly inventory sync finished",
+            "channel": "app",
+            "timestamp": "2026-08-19T02:15:00+00:00"
+        },
+        "full": {
+            "level": "warning",
+            "message": "Payment gateway timed out after 30s, falling back to the queue",
+            "channel": "payments",
+            "timestamp": "2026-08-19T09:30:45+00:00",
+            "context": {
+                "gateway": "stripe",
+                "order_id": "ORD-4821",
+                "attempt": 3,
+                "api_key": "[REDACTED]"
+            },
+            "extra": {
+                "environment": "production",
+                "php_version": "8.4.10",
+                "framework": "laravel",
+                "framework_version": "13.18.1"
+            }
+        }
+    }
+}

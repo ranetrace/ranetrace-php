@@ -1,0 +1,85 @@
+{
+    "type": "javascript_errors",
+    "wrapper": "javascript_errors",
+    "strict_fields": false,
+    "notes": [
+        "Transcribed from the backend app's JavaScriptErrorsBatchController, verified 2026-08-19.",
+        "There is no allow-list here: a key outside `fields` is dropped by the validator rather than rejecting the item. Both SDKs still send exactly the fifteen top-level keys in `fields`.",
+        "`user_agent`, `environment`, `user_id` and `session_id` are added by the SDK relay from the server side and are never read from the browser payload.",
+        "A breadcrumb's `timestamp`, `category` and `message` are required by the app for every breadcrumb present, so a relay that keeps a breadcrumb with any of them missing poisons the batch.",
+        "`browser_info` is rebuilt from a fixed seven-key list rather than filtered, so an unknown key from a tampered browser payload never reaches the wire and a missing one arrives as null."
+    ],
+    "fields": {
+        "message": {"required": true, "type": "string", "max": 2000},
+        "timestamp": {"required": true, "type": "date"},
+        "url": {"required": true, "type": "string", "max": 2000},
+        "stack": {"required": false, "type": "string", "max": 10000},
+        "type": {"required": false, "type": "string", "max": 100},
+        "filename": {"required": false, "type": "string", "max": 500},
+        "line": {"required": false, "type": "integer"},
+        "column": {"required": false, "type": "integer"},
+        "user_agent": {"required": false, "type": "string"},
+        "environment": {"required": false, "type": "string", "max": 50},
+        "user_id": {"required": false},
+        "session_id": {"required": false, "type": "string", "max": 255},
+        "breadcrumbs": {"required": false, "type": "array", "max": 20},
+        "breadcrumbs.*.timestamp": {"required": true, "type": "date"},
+        "breadcrumbs.*.category": {"required": true, "type": "string", "max": 100},
+        "breadcrumbs.*.message": {"required": true, "type": "string", "max": 500},
+        "breadcrumbs.*.data": {"required": false, "type": "array"},
+        "context": {"required": false, "type": "array"},
+        "browser_info": {"required": false, "type": "array"},
+        "browser_info.screen_width": {"required": false, "type": "integer"},
+        "browser_info.screen_height": {"required": false, "type": "integer"},
+        "browser_info.viewport_width": {"required": false, "type": "integer"},
+        "browser_info.viewport_height": {"required": false, "type": "integer"},
+        "browser_info.device_memory": {"required": false, "type": "number"},
+        "browser_info.hardware_concurrency": {"required": false, "type": "integer"},
+        "browser_info.connection_type": {"required": false, "type": "string"}
+    },
+    "examples": {
+        "minimal": {
+            "message": "Script error.",
+            "timestamp": "2026-08-19T09:30:45+00:00",
+            "url": "https://shop.example.com/cart"
+        },
+        "full": {
+            "message": "Cannot read properties of undefined (reading 'total')",
+            "timestamp": "2026-08-19T09:30:45+00:00",
+            "url": "https://shop.example.com/cart?token=%5BREDACTED%5D",
+            "stack": "TypeError: Cannot read properties of undefined (reading 'total')\n    at renderCart (https://shop.example.com/js/cart.js:214:19)\n    at HTMLDocument.<anonymous> (https://shop.example.com/js/cart.js:31:5)",
+            "type": "TypeError",
+            "filename": "https://shop.example.com/js/cart.js",
+            "line": 214,
+            "column": 19,
+            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+            "environment": "production",
+            "user_id": 4211,
+            "session_id": "7b1e9042ac5d38f620c7e1ba954df3086d3a0f52c8b71e941f85d20b6ec4739a",
+            "breadcrumbs": [
+                {
+                    "timestamp": "2026-08-19T09:30:41+00:00",
+                    "category": "navigation",
+                    "message": "Navigated to /cart",
+                    "data": {"from": "/products"}
+                },
+                {
+                    "timestamp": "2026-08-19T09:30:44+00:00",
+                    "category": "ui.click",
+                    "message": "Clicked #checkout",
+                    "data": {"_truncated": "Breadcrumb data exceeded 5KB limit and was removed"}
+                }
+            ],
+            "context": {"cart_items": 3, "currency": "EUR"},
+            "browser_info": {
+                "screen_width": 2560,
+                "screen_height": 1440,
+                "viewport_width": 1440,
+                "viewport_height": 900,
+                "device_memory": 8,
+                "hardware_concurrency": 10,
+                "connection_type": "4g"
+            }
+        }
+    }
+}
