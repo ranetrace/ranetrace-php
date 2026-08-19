@@ -11,13 +11,13 @@ use Ranetrace\Php\Config;
  * Turns raw visitor identifiers into salted, one-way hashes before they leave
  * the host. Ranetrace never receives a raw IP, user agent or session id.
  *
- * Ported from `ranetrace/ranetrace-laravel`
- * (`src/Analytics/FingerprintGenerator.php`). The hashed inputs and their
- * separator are the contract: the session hash is HMAC-SHA256 over
- * `ip|first-100-chars-of-user-agent|Y-m-d`, so it rotates every day and cannot
- * be joined across sites. That composition must not drift, or event and visit
- * records stop lining up. Only the input source changed, from a Laravel
- * `Request` to plain nullable strings the caller extracts from `$_SERVER`.
+ * Shared with `ranetrace/ranetrace-laravel`, whose copy this replaced. The
+ * hashed inputs and their separator are the contract: the session hash is
+ * HMAC-SHA256 over `ip|first-100-chars-of-user-agent|Y-m-d`, so it rotates
+ * every day and cannot be joined across sites. There is one derivation because
+ * two of them stop event and visit records lining up. What differs per host is
+ * only where the three inputs come from, which is why they arrive as plain
+ * strings rather than as a request object.
  */
 final class FingerprintGenerator
 {

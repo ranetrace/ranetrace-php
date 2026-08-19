@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ranetrace\Php\Support;
 
 use Ranetrace\Php\Config;
+use Throwable;
 
 /**
  * Redacts values stored under sensitive keys before telemetry leaves the host.
@@ -15,10 +16,12 @@ use Ranetrace\Php\Config;
  * name. The built-in fragment list is always applied and can be extended (never
  * shrunk) via the `scrubbing.extra_keys` config value.
  *
- * Ported from `ranetrace/ranetrace-laravel` (`src/Utilities/SecretScrubber.php`).
- * The redaction semantics are part of the privacy promise the two SDKs share:
- * they must not drift. Only the collaborator lookup changed, from Laravel
- * facades to an injected {@see Config} and {@see InternalLogger}.
+ * This is the ONE scrubber both SDKs use. `ranetrace/ranetrace-laravel` used to
+ * keep a copy of it; the copy is gone, and the router knowledge that was the
+ * copy's whole reason to exist now arrives through the `$sensitiveValues`
+ * callable seam described on {@see scrubDeep()}. The redaction semantics are the
+ * privacy promise the two SDKs share, so there is deliberately nowhere left for
+ * them to drift.
  */
 final class SecretScrubber implements Scrubber
 {
@@ -79,6 +82,13 @@ final class SecretScrubber implements Scrubber
     private const string URL_VALUE_CHARS = "A-Za-z0-9._~%!$'()*+,;:@=/-";
 
     /**
+     * How many characters of a key token may precede the sensitive fragment
+     * inside it, in {@see scrubString()}. Bounding this is what keeps the
+     * pattern's cost linear; see that method for why, and for what it costs.
+     */
+    private const int MAX_KEY_PREFIX = 64;
+
+    /**
      * Built-in fragments merged with the user-configured extensions, resolved
      * once per instance.
      *
@@ -113,24 +123,35 @@ final class SecretScrubber implements Scrubber
      * key-based scrubbing alone would miss.
      *
      * Both halves of a URL can carry one. The QUERY is always scrubbed. The
-     * PATH is scrubbed only when the caller supplies the segment values that
-     * are secret, because a path segment carries no marker saying "this is a
-     * token" and this SDK has no router to ask — the Laravel SDK resolves them
-     * from the matched route. A host that knows its own routes should pass
-     * {@see sensitiveRouteParameterValues()} here, otherwise a reset link
-     * recorded as a navigation breadcrumb keeps its live token: the top-level
-     * `url` field is already path-redacted, so leaving this null redacts the
-     * same secret in one field and ships it in another.
+     * PATH is scrubbed only for the segment values the caller declares secret,
+     * because a path segment carries no marker saying "this is a token" and
+     * this library has no router to ask. Leaving that unanswered means a reset
+     * link recorded as a navigation breadcrumb keeps its live token while the
+     * top-level `url` field of the same item is path-redacted: the same secret
+     * redacted in one field and shipped in another.
+     *
+     * $sensitiveValues answers the question in one of three ways:
+     *
+     * - `null`: nobody can say, so the path is left alone (query-only).
+     * - a list of strings: those segment values are secret in EVERY URL found.
+     *   What a plain-PHP host has, typically from
+     *   {@see sensitiveRouteParameterValues()} for the request being handled.
+     * - a callable: called with each URL-shaped value in turn, returning the
+     *   segment values that are secret in THAT url. This is the seam a host
+     *   with a router needs, because free-form data holds URLs from other
+     *   requests than the current one (a breadcrumb recorded on the previous
+     *   page), and only a per-URL lookup can say what those hold. The Laravel
+     *   SDK passes its `RouteSecretResolver`.
      *
      * Intended for free-form, untrusted breadcrumb/context data. Composes with
      * the `mixed` return of {@see DataSanitizer::sanitizeForSerialization()},
      * which has already bounded the recursion depth.
      *
-     * @param  array<int, string>|null  $sensitiveValues
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitiveValues
      */
-    public function scrubDeep(mixed $data, ?array $sensitiveValues = null): mixed
+    public function scrubDeep(mixed $data, array|callable|null $sensitiveValues = null): mixed
     {
-        return $this->scrubUrlValues($this->scrub($data), $sensitiveValues ?? []);
+        return $this->scrubUrlValues($this->scrub($data), $sensitiveValues);
     }
 
     /**
@@ -270,22 +291,27 @@ final class SecretScrubber implements Scrubber
      * with {@see scrubUrl()} (which redacts the query) without re-encoding
      * anything.
      *
-     * Where the Laravel SDK resolves the sensitive segments from the matched
-     * route, this SDK has no router to ask: the caller supplies the segment
-     * values, typically from {@see sensitiveRouteParameterValues()}. Passing
-     * null or an empty list means "query-only scrubbing", which is the correct
-     * behaviour for a host that cannot say which segments are secret.
+     * $sensitiveValues takes the three forms {@see scrubDeep()} documents; a
+     * callable is resolved against this URL. Null, an empty list or a callable
+     * that answers with neither means "query-only scrubbing", which is the
+     * correct behaviour for a host that cannot say which segments are secret.
      *
      * The FRAGMENT is run through {@see scrubPathSegments()} as well, because a
      * single-page app routes in it: `/app#/reset/abc123` puts the token in a
      * path-shaped fragment. Segment matching is an exact whole-segment compare,
      * so this is safe on a fragment of any shape.
      *
-     * @param  array<int, string>|null  $sensitiveValues
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitiveValues
      */
-    public function scrubUrlPath(?string $url, ?array $sensitiveValues = null): ?string
+    public function scrubUrlPath(?string $url, array|callable|null $sensitiveValues = null): ?string
     {
-        if ($url === null || $url === '' || $sensitiveValues === null || $sensitiveValues === []) {
+        if ($url === null || $url === '') {
+            return $url;
+        }
+
+        $sensitiveValues = $this->resolveSensitiveValues($url, $sensitiveValues);
+
+        if ($sensitiveValues === []) {
             return $url;
         }
 
@@ -321,12 +347,31 @@ final class SecretScrubber implements Scrubber
      * traces): it catches query-string-like and key/value leakage, but not
      * positional secret arguments that carry no key.
      *
-     * Fails closed. The pattern backtracks super-linearly on a long run of word
-     * characters, so PCRE can hit its backtrack limit and give up. Returning the
-     * input then would ship the very string we were asked to redact, so the
-     * whole value becomes the placeholder instead: losing the string beats
-     * leaking it. The give-up is written to the internal log so a scrubber that
-     * has started swallowing strings is visible rather than silent.
+     * Three details of the pattern are load-bearing, all of them about cost. It
+     * runs on stack traces and log messages, which are the longest, least
+     * structured strings the SDK ever touches, and the naive spelling
+     * `[\w.\-]*(?:fragment)[\w.\-]*` is quadratic on a long word-character run:
+     * every start position re-tries every prefix length. On a 50k run that is
+     * billions of steps, which PCRE ends by hitting its backtrack limit.
+     *
+     * - `(?<![\w.\-])` means a match can only START where a key token can, so a
+     *   long word run is entered once instead of once per character. This is
+     *   what turns the scan linear.
+     * - The prefix is bounded to {@see MAX_KEY_PREFIX} characters. It exists to
+     *   keep the full key name in group 1, and no real key name (`stripe_`,
+     *   `user_api_`) comes close. A sensitive fragment buried further than that
+     *   into one unbroken token is not recognised, which is the one case this
+     *   spelling gives up on deliberately.
+     * - The suffix is possessive. The separator characters (`"`, `'`, space,
+     *   `=`, `:`) are all outside `[\w.\-]`, so giving word characters back can
+     *   never help it match: the backtracking it does is pure waste.
+     *
+     * Fails closed anyway. PCRE can still give up (a pathological input, a
+     * lowered `pcre.backtrack_limit`, bad UTF-8), and returning the input then
+     * would ship the very string we were asked to redact, so the whole value
+     * becomes the placeholder instead: losing the string beats leaking it. The
+     * give-up is written to the internal log so a scrubber that has started
+     * swallowing strings is visible rather than silent.
      */
     public function scrubString(string $value): string
     {
@@ -340,7 +385,7 @@ final class SecretScrubber implements Scrubber
         ));
 
         // key-token (containing a sensitive fragment) + separator (= : =>) + value.
-        $pattern = '/(["\']?[\w.\-]*(?:'.$alternation.')[\w.\-]*["\']?\s*(?:=>|[:=])\s*)(["\']?)([^"\'\s,;&)}]+)\2/i';
+        $pattern = '/(?<![\w.\-])(["\']?[\w.\-]{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')[\w.\-]*+["\']?\s*(?:=>|[:=])\s*)(["\']?)([^"\'\s,;&)}]+)\2/i';
 
         $result = preg_replace_callback($pattern, static function (array $matches): string {
             return $matches[1].$matches[2].self::REDACTION.$matches[2];
@@ -470,24 +515,30 @@ final class SecretScrubber implements Scrubber
      * carries its secret in exactly the same place an absolute one does.
      *
      * The QUERY is always scrubbed. The PATH is scrubbed only for the segment
-     * values the caller declared secret-bearing, since this SDK has no router
-     * to resolve them from; an empty list means query-only, which is the
-     * correct behaviour for a host that cannot say which segments are secret.
+     * values $sensitiveValues declares secret-bearing, in whichever of its three
+     * forms; a callable is asked about each URL separately.
+     *
+     * A callable is resolved against the ORIGINAL value rather than the
+     * query-scrubbed one, so a host that matches the URL against its routes
+     * sees what the browser actually recorded. Redacting the query first cannot
+     * change which path segments a route names, but it can change the string a
+     * router is handed.
      *
      * Operates on the already-depth-bounded output of {@see DataSanitizer}.
      *
-     * @param  array<int, string>  $sensitiveValues
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitiveValues
      */
-    private function scrubUrlValues(mixed $data, array $sensitiveValues): mixed
+    private function scrubUrlValues(mixed $data, array|callable|null $sensitiveValues): mixed
     {
         if (is_string($data)) {
             if (! $this->isScrubbableUrl($data)) {
                 return $data;
             }
 
+            $resolved = $this->resolveSensitiveValues($data, $sensitiveValues);
             $scrubbed = $this->scrubUrl($data) ?? $data;
 
-            return $this->scrubUrlPath($scrubbed, $sensitiveValues) ?? $scrubbed;
+            return $this->scrubUrlPath($scrubbed, $resolved) ?? $scrubbed;
         }
 
         if (is_array($data)) {
@@ -540,6 +591,42 @@ final class SecretScrubber implements Scrubber
         }
 
         return $this->isQueryShaped($query);
+    }
+
+    /**
+     * The secret-bearing segment values for one URL, whichever of the three
+     * forms of $sensitiveValues the caller supplied.
+     *
+     * A callable that throws is treated as "cannot say" rather than allowed to
+     * escape: it is host code reaching for a router mid-capture, and a capture
+     * path must never break the application it is watching. The result is
+     * query-only scrubbing for that value, which is what a host with no router
+     * gets anyway.
+     *
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitiveValues
+     * @return array<int, string>
+     */
+    private function resolveSensitiveValues(string $url, array|callable|null $sensitiveValues): array
+    {
+        if ($sensitiveValues === null) {
+            return [];
+        }
+
+        if (is_array($sensitiveValues)) {
+            return $sensitiveValues;
+        }
+
+        try {
+            $resolved = $sensitiveValues($url);
+        } catch (Throwable $failure) {
+            $this->log->warning('Resolving the sensitive path segments of a URL failed, so its path was left unscrubbed.', [
+                'error' => $failure->getMessage(),
+            ]);
+
+            return [];
+        }
+
+        return is_array($resolved) ? $resolved : [];
     }
 
     /**

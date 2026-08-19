@@ -299,6 +299,11 @@ test('scrubDeep redacts relative URL shapes that carry no leading slash', functi
 test('scrubString redacts the whole value when PCRE gives up, and says so in the internal log', function (): void {
     // A PCRE limit failure used to return the input unscrubbed. Losing the
     // string beats leaking it, and the give-up must never be silent.
+    //
+    // The limit has to be pinned artificially low to reach this path at all:
+    // the pattern is no longer super-linear, so no realistic input reaches the
+    // real limit. The path still has to work, because a host can lower
+    // `pcre.backtrack_limit` itself and PCRE gives up on bad UTF-8 too.
     $directory = tempDirectory();
     $scrubber = scrubber(['buffer_path' => $directory]);
     $value = str_repeat('token', 400);
@@ -306,7 +311,7 @@ test('scrubString redacts the whole value when PCRE gives up, and says so in the
     $limit = ini_get('pcre.backtrack_limit');
 
     try {
-        ini_set('pcre.backtrack_limit', '100');
+        ini_set('pcre.backtrack_limit', '10');
 
         $result = $scrubber->scrubString($value);
     } finally {
@@ -317,6 +322,96 @@ test('scrubString redacts the whole value when PCRE gives up, and says so in the
         ->and($result)->not->toBe($value)
         ->and(scrubberInternalLog($directory))->toContain('WARNING')
         ->toContain('Backtrack limit');
+});
+
+test('scrubString stays linear on the long word runs that used to burn the backtrack limit', function (string $label, string $value, string $expected): void {
+    // These are the shapes the pattern used to be quadratic on: a 50k run of
+    // word characters, which cost one full re-scan per start position. PCRE
+    // gave up and the whole value was redacted wholesale. The result is now the
+    // precise redaction, which is only reachable if the engine never gave up.
+    $started = microtime(true);
+
+    $result = scrubber()->scrubString($value);
+
+    expect($result)->toBe($expected)
+        ->and(microtime(true) - $started)->toBeLessThan(1.0, $label);
+})->with([
+    'fragment leading the run' => [
+        'fragment leading the run',
+        'token'.str_repeat('a', 50_000).'=x',
+        'token'.str_repeat('a', 50_000).'=[REDACTED]',
+    ],
+    'secret behind the run' => [
+        'secret behind the run',
+        str_repeat('a', 50_000).' password=hunter2',
+        str_repeat('a', 50_000).' password=[REDACTED]',
+    ],
+    'run with no secret at all' => [
+        'run with no secret at all',
+        str_repeat('a', 50_000),
+        str_repeat('a', 50_000),
+    ],
+]);
+
+test('scrubDeep asks a callable which segments are secret in each url it finds', function (): void {
+    // The seam a host with a router needs: free-form data holds URLs from other
+    // requests than the current one, and only a per-URL lookup can say what
+    // those hold. One shared list would redact the wrong URL's secret.
+    $result = scrubber()->scrubDeep([
+        'from' => 'https://app.test/reset-password/AAA',
+        'to' => 'https://app.test/invitations/BBB',
+        'unknown' => 'https://app.test/dashboard/CCC',
+    ], fn (string $url): array => match (true) {
+        str_contains($url, '/reset-password/') => ['AAA'],
+        str_contains($url, '/invitations/') => ['BBB'],
+        default => [],
+    });
+
+    expect($result)->toBe([
+        'from' => 'https://app.test/reset-password/[REDACTED]',
+        'to' => 'https://app.test/invitations/[REDACTED]',
+        'unknown' => 'https://app.test/dashboard/CCC',
+    ]);
+});
+
+test('scrubDeep passes the callable the value as recorded, before the query is redacted', function (): void {
+    // A host resolves the URL by matching it against its routes, so it must see
+    // what the browser recorded rather than a rewritten copy of it.
+    $seen = [];
+
+    scrubber()->scrubDeep(
+        ['url' => '/reset-password/AAA?token=live'],
+        function (string $url) use (&$seen): array {
+            $seen[] = $url;
+
+            return ['AAA'];
+        }
+    );
+
+    expect($seen)->toBe(['/reset-password/AAA?token=live']);
+});
+
+test('scrubUrlPath resolves a callable against the url it was given', function (): void {
+    expect(scrubber()->scrubUrlPath('/reset-password/AAA', fn (string $url): array => ['AAA']))
+        ->toBe('/reset-password/[REDACTED]')
+        ->and(scrubber()->scrubUrlPath('/reset-password/AAA', fn (string $url): ?array => null))
+        ->toBe('/reset-password/AAA');
+});
+
+test('a resolver that throws leaves the path unscrubbed instead of breaking the capture', function (): void {
+    // The callable is host code reaching for a router mid-capture. Monitoring
+    // must never be the reason an application breaks.
+    $directory = tempDirectory();
+
+    $result = scrubber(['buffer_path' => $directory])->scrubDeep(
+        ['url' => '/reset-password/AAA?token=live'],
+        function (string $url): array {
+            throw new RuntimeException('the router is not booted');
+        }
+    );
+
+    expect($result)->toBe(['url' => '/reset-password/AAA?token=[REDACTED]'])
+        ->and(scrubberInternalLog($directory))->toContain('the router is not booted');
 });
 
 test('scrubUrl redacts a query-shaped fragment', function (string $url, string $expected): void {
@@ -348,6 +443,7 @@ test('scrubUrl returns a fragment that is not query-shaped byte-for-byte', funct
     'anchor after a query' => ['https://app.test/docs?page=2#section-2'],
     'plain anchor' => ['/path#anchor'],
     'hash route' => ['/app#/reset/abc123'],
+    'absolute hash route' => ['https://app.test/app#/reset/abc123'],
     'empty fragment' => ['https://app.test/docs#'],
 ]);
 
@@ -360,7 +456,16 @@ test('scrubDeep redacts a declared sensitive value inside an SPA hash route', fu
 
 test('scrubUrlPath redacts a sensitive segment in a path-shaped fragment', function (): void {
     expect(scrubber()->scrubUrlPath('https://app.test/app#/reset/abc123', ['abc123']))
-        ->toBe('https://app.test/app#/reset/[REDACTED]');
+        ->toBe('https://app.test/app#/reset/[REDACTED]')
+        ->and(scrubber()->scrubUrlPath('/app#/reset/abc123', ['abc123']))
+        ->toBe('/app#/reset/[REDACTED]')
+        // A query between the path and the hash route must not move the window.
+        ->and(scrubber()->scrubUrlPath('https://app.test/app?page=2#/reset/abc123', ['abc123']))
+        ->toBe('https://app.test/app?page=2#/reset/[REDACTED]');
+});
+
+test('scrubUrlPath leaves a fragment without a sensitive segment byte-for-byte', function (): void {
+    expect(scrubber()->scrubUrlPath('/docs#section-2', ['abc123']))->toBe('/docs#section-2');
 });
 
 test('scrubUrlPath redacts the path even when the query or fragment carries an absolute url', function (string $url, string $expected): void {

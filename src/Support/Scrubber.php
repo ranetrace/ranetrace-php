@@ -7,18 +7,18 @@ namespace Ranetrace\Php\Support;
 /**
  * Redaction, as the shared payload builders need it.
  *
- * {@see SecretScrubber} is this package's implementation. The interface exists
- * because the Laravel SDK still owns a scrubber of its own: it resolves the
- * secret-bearing segments of a URL from the router, per URL, which a
- * framework-agnostic scrubber cannot do. Until the two are merged (slice C of
- * the shared-core migration), the shared builders take whichever scrubber their
- * host brought and the redaction semantics stay exactly what that host already
- * shipped.
+ * {@see SecretScrubber} is the implementation both SDKs use. The interface
+ * stays because the builders should depend on the capability rather than the
+ * class, and because a host with an unusual redaction obligation of its own can
+ * satisfy it, but there is no second implementation to keep in step any more:
+ * `ranetrace/ranetrace-laravel` deleted its copy and its `CoreScrubber` bridge
+ * when the two merged.
  *
  * `$sensitiveValues` is the caller's answer to "which path segments hold a
  * secret", since a path segment carries no marker saying so. Null means
- * query-only scrubbing, which is the correct behaviour for a host that cannot
- * say.
+ * query-only scrubbing, a list names the secret segment values, and a callable
+ * is asked per URL, which is what a host with a router needs for free-form data
+ * holding URLs from requests other than the current one.
  */
 interface Scrubber
 {
@@ -37,15 +37,15 @@ interface Scrubber
     /**
      * Redact the path segments whose value is one of $sensitiveValues.
      *
-     * @param  array<int, string>|null  $sensitiveValues
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitiveValues
      */
-    public function scrubUrlPath(?string $url, ?array $sensitiveValues = null): ?string;
+    public function scrubUrlPath(?string $url, array|callable|null $sensitiveValues = null): ?string;
 
     /**
      * Key-based redaction plus redaction of secrets inside URL-shaped string
      * values, for free-form, untrusted data.
      *
-     * @param  array<int, string>|null  $sensitiveValues
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitiveValues
      */
-    public function scrubDeep(mixed $data, ?array $sensitiveValues = null): mixed;
+    public function scrubDeep(mixed $data, array|callable|null $sensitiveValues = null): mixed;
 }

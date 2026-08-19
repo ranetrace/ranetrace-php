@@ -40,6 +40,7 @@ final class LogItemBuilder
      * @param  array<array-key, mixed>  $context  The record's own context, free-shape and untrusted.
      * @param  array<array-key, mixed>  $extra  The record's own extra, free-shape and untrusted.
      * @param  string  $timestamp  ISO 8601, from the record's own clock.
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues  Path segment values to redact from any URL hiding in $context or $extra: a fixed list, or a per-URL resolver for a host with a router. Null means query-only scrubbing.
      * @return array{
      *     level: string,
      *     message: string,
@@ -49,8 +50,15 @@ final class LogItemBuilder
      *     extra: array<string, mixed>,
      * }
      */
-    public function build(string $level, string $message, array $context, string $channel, string $timestamp, array $extra): array
-    {
+    public function build(
+        string $level,
+        string $message,
+        array $context,
+        string $channel,
+        string $timestamp,
+        array $extra,
+        array|callable|null $sensitivePathValues = null,
+    ): array {
         return [
             'level' => mb_strtolower($level),
             'message' => $this->message($message),
@@ -59,13 +67,13 @@ final class LogItemBuilder
             // replacing mid-structure rather than truncating, since partial JSON
             // is not JSON.
             'context' => PayloadSizer::capBytes(
-                (array) $this->scrubber->scrubDeep(DataSanitizer::sanitizeForSerialization($context)),
+                (array) $this->scrubber->scrubDeep(DataSanitizer::sanitizeForSerialization($context), $sensitivePathValues),
                 self::MAX_CONTEXT_BYTES,
                 'Context exceeded 50KB limit and was removed',
             ),
             'channel' => $channel,
             'timestamp' => $timestamp,
-            'extra' => $this->extra($extra),
+            'extra' => $this->extra($extra, $sensitivePathValues),
         ];
     }
 
@@ -95,12 +103,13 @@ final class LogItemBuilder
      * would read as "no framework" rather than "not said".
      *
      * @param  array<array-key, mixed>  $extra
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues
      * @return array<string, mixed>
      */
-    private function extra(array $extra): array
+    private function extra(array $extra, array|callable|null $sensitivePathValues): array
     {
         $capped = PayloadSizer::capBytes(
-            (array) $this->scrubber->scrubDeep(DataSanitizer::sanitizeForSerialization($extra)),
+            (array) $this->scrubber->scrubDeep(DataSanitizer::sanitizeForSerialization($extra), $sensitivePathValues),
             self::MAX_EXTRA_BYTES,
             'Extra data exceeded 10KB limit and was removed',
         );

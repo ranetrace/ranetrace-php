@@ -63,7 +63,7 @@ final class ErrorItemBuilder
      * @param  string|null  $userAgent  Observed by the host, never read from the payload.
      * @param  int|string|null  $userId  The authenticated user, as the host knows them.
      * @param  string|null  $sessionId  Already hashed. Never the raw session id: a leaked payload must not be replayable as a session.
-     * @param  array<int, string>|null  $sensitivePathValues  Path segment values to redact from the reported URL and from any URL inside the breadcrumbs or context.
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues  Path segment values to redact from the reported URL and from any URL inside the breadcrumbs or context: a fixed list, or a per-URL resolver for a host with a router.
      * @param  string|null  $timestampFallback  Used when the payload names no timestamp. Null reads this process's clock, which a host with a freezable clock of its own will not want.
      * @return array<string, mixed>
      */
@@ -72,7 +72,7 @@ final class ErrorItemBuilder
         ?string $userAgent,
         int|string|null $userId,
         ?string $sessionId,
-        ?array $sensitivePathValues = null,
+        array|callable|null $sensitivePathValues = null,
         ?string $timestampFallback = null,
     ): array {
         $stack = $payload['stack'] ?? null;
@@ -112,10 +112,10 @@ final class ErrorItemBuilder
      * browser cannot smuggle a fifth.
      *
      * @param  mixed  $breadcrumbs  Validated to be an array or absent by this point.
-     * @param  array<int, string>|null  $sensitivePathValues
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues
      * @return array<int, array{timestamp: mixed, category: mixed, message: mixed, data: array<array-key, mixed>}>
      */
-    private function breadcrumbs(mixed $breadcrumbs, ?array $sensitivePathValues): array
+    private function breadcrumbs(mixed $breadcrumbs, array|callable|null $sensitivePathValues): array
     {
         if (! is_array($breadcrumbs)) {
             return [];
@@ -169,10 +169,10 @@ final class ErrorItemBuilder
      * the same way the top-level `url` field does. Otherwise the same payload
      * would redact the secret in one field and ship it in another.
      *
-     * @param  array<int, string>|null  $sensitivePathValues
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues
      * @return array<array-key, mixed>
      */
-    private function scrubbedArray(mixed $value, ?array $sensitivePathValues): array
+    private function scrubbedArray(mixed $value, array|callable|null $sensitivePathValues): array
     {
         $scrubbed = $this->scrubber->scrubDeep(
             DataSanitizer::sanitizeForSerialization($value),

@@ -15,10 +15,9 @@ use Ranetrace\Php\Support\Scrubber;
  * matching, so an added or dropped key rejects the whole batch; the key set is
  * exactly these seven and the tests assert it rather than only the values.
  *
- * The fingerprints arrive already hashed. They are per SDK on purpose: each one
- * salts its HMAC with what its own installs have always used, so computing them
- * here would silently re-key every existing install's hashes and break the join
- * between its events and its visits.
+ * The fingerprints arrive already hashed, by {@see \Ranetrace\Php\Support\FingerprintGenerator}
+ * in both SDKs. They are not computed here because the builder is handed a
+ * finished observation of the request, not the request itself.
  */
 final class EventItemBuilder
 {
@@ -29,7 +28,7 @@ final class EventItemBuilder
      * @param  array{id: mixed}|null  $user  Only the id travels; events carry no email.
      * @param  string  $timestamp  ISO 8601 capture time, from the host's clock.
      * @param  string|null  $url  The URL of the request the event happened in, unscrubbed. Null for a console process.
-     * @param  array<int, string>|null  $sensitivePathValues  Path segment values to redact from $url and from any URL hiding in $properties. Null means query-only scrubbing.
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues  Path segment values to redact from $url and from any URL hiding in $properties: a fixed list, or a per-URL resolver for a host with a router. Null means query-only scrubbing.
      * @return array{
      *     event_name: string,
      *     properties: mixed,
@@ -48,7 +47,7 @@ final class EventItemBuilder
         ?string $url,
         string $userAgentHash,
         string $sessionIdHash,
-        ?array $sensitivePathValues = null,
+        array|callable|null $sensitivePathValues = null,
     ): array {
         return [
             'event_name' => $name,

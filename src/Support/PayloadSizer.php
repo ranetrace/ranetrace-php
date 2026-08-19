@@ -10,10 +10,10 @@ namespace Ranetrace\Php\Support;
  * replaced wholesale with a `_truncated` marker rather than truncated
  * mid-structure, since partial JSON is invalid.
  *
- * Ported from `ranetrace/ranetrace-laravel` (`src/Utilities/PayloadSizer.php`).
- * The marker key and the byte-counting method are part of the wire contract and
- * must not drift; only the signature narrowed from `mixed` to `array`, which is
- * all any call site passes.
+ * Shared with `ranetrace/ranetrace-laravel`, whose copy this replaced. The
+ * marker key and the byte-counting method are part of the wire contract, so
+ * there is one of them; the signature is narrower than the copy's was (`array`,
+ * not `mixed`), which is all any call site ever passed.
  */
 final class PayloadSizer
 {
