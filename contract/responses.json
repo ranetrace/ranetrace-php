@@ -45,7 +45,7 @@
             "pause_seconds_source": "Retry-After",
             "pause_seconds_floor": 60,
             "drop": false,
-            "note": "Rate limited. The pause length is the Retry-After header in seconds, floored at 60. The floor is load-bearing: a missing header is stored as an empty string and casts to zero, and a zero-second pause would have a rate-limited client hammering the endpoint on every run."
+            "note": "Rate limited. The pause length is the Retry-After header in seconds. The 60-second value is a substitute for an absent or zero header, not a lower bound: Retry-After: 5 really pauses 5 seconds, in both SDKs. The substitute is load-bearing because a missing header is stored as an empty string and casts to zero, and a zero-second pause would have a rate-limited client hammering the endpoint on every run."
         },
         "default": {
             "rebuffer": true,
