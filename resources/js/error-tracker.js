@@ -10,18 +10,18 @@
  * - Breadcrumbs for debugging context
  * - Automatic error deduplication
  *
- * This file is a template, not a finished script: `Ranetrace\Php\JavaScript\Snippet`
+ * This file is a template, not a finished script: `Ranetrace\Php\JavaScript\CaptureScript`
  * replaces the config token assigned to `config` below with the JSON-encoded
- * runtime config before inlining it in a <script> tag. That token must stay
- * spelled exactly as Snippet::CONFIG_TOKEN and must occur exactly once, or the
- * snippet ships an unconfigured script.
+ * runtime config before a host inlines it in a <script> tag. That token must stay
+ * spelled exactly as CaptureScript::CONFIG_TOKEN and must occur exactly once, or
+ * the host ships an unconfigured script.
  *
- * Ported from `ranetrace/ranetrace-laravel` (resources/views/error-tracker.blade.php).
- * The only behavioural change is the transport header set: the Laravel relay was
- * protected by CSRF middleware, this SDK's relay does a same-origin check on
- * Origin/Referer instead, so the script neither carries nor sends a CSRF token.
- * Everything else must stay byte-for-byte equivalent in behaviour, because the
- * relay validates exactly what this script sends.
+ * This is the ONE copy of the script. `ranetrace/ranetrace-laravel` used to carry
+ * a second one inline in resources/views/error-tracker.blade.php; both relays
+ * validate exactly what their own copy sends, so a fix to one silently stranded
+ * the other. Both SDKs now render this file, each supplying its own config, and a
+ * capability only one host has (the CSRF token below) is switched on by that
+ * config rather than by forking the script.
  */
 
 (function() {
@@ -44,6 +44,27 @@
     // fall back to keepalive:false (loses page-unload survivability but gets
     // the payload through).
     const KEEPALIVE_SIZE_LIMIT = 60000;
+
+    /**
+     * The headers every relay POST carries.
+     *
+     * X-CSRF-TOKEN is sent only when the host configured a token. The Laravel
+     * SDK's relay sits behind CSRF middleware and supplies one; the
+     * framework-agnostic SDK's relay verifies Origin/Referer instead and supplies
+     * none, so the header is absent there. A blank token is treated as no token:
+     * it means no session was started, and an empty header would fail the CSRF
+     * check anyway. Insertion order fixes the header order, which is the order
+     * both relays have always been sent.
+     */
+    const requestHeaders = {
+        'Content-Type': 'application/json'
+    };
+
+    if (config.csrfToken) {
+        requestHeaders['X-CSRF-TOKEN'] = config.csrfToken;
+    }
+
+    requestHeaders['X-Requested-With'] = 'XMLHttpRequest';
 
     /**
      * Add a breadcrumb for debugging context
@@ -153,10 +174,7 @@
         // Send to server
         fetch(config.endpoint, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest'
-            },
+            headers: requestHeaders,
             body: body,
             keepalive: keepalive
         }).catch(function(err) {

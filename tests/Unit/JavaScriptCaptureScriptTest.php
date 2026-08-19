@@ -36,11 +36,28 @@ test('the ring buffer and dedup caches keep their agreed limits', function (): v
         ->toContain('if (breadcrumbs.length > config.maxBreadcrumbs) {');
 });
 
-test('it posts with only the two agreed headers and no csrf token', function (): void {
+test('it posts with the two headers every host sends', function (): void {
     expect(captureScript())
-        ->toContain("'Content-Type': 'application/json',")
-        ->toContain("'X-Requested-With': 'XMLHttpRequest'")
-        ->not->toContain('X-CSRF-TOKEN');
+        ->toContain("'Content-Type': 'application/json'")
+        ->toContain("requestHeaders['X-Requested-With'] = 'XMLHttpRequest';")
+        ->toContain('headers: requestHeaders,');
+});
+
+/**
+ * The header is in the shared script so the Laravel SDK, whose relay sits behind
+ * CSRF middleware, can keep sending it. It must stay behind the config flag: this
+ * SDK's relay does a same-origin check instead and configures no token, and an
+ * unconditional `X-CSRF-TOKEN: undefined` would be a header it never sent before.
+ */
+test('the csrf header is sent only when the host configured a token', function (): void {
+    $script = captureScript();
+
+    $guard = mb_strpos($script, 'if (config.csrfToken) {');
+    $header = mb_strpos($script, "requestHeaders['X-CSRF-TOKEN'] = config.csrfToken;");
+
+    expect($guard)->toBeInt()
+        ->and($header)->toBeGreaterThan($guard)
+        ->and(mb_substr_count($script, 'X-CSRF-TOKEN'))->toBe(2);
 });
 
 test('a failed send is warned about, never rethrown', function (): void {

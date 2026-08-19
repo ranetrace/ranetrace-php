@@ -104,11 +104,15 @@ test('a configured ignored error list replaces the defaults in the script', func
     expect(renderedConfig($rendered)['ignoredErrors'])->toBe(['Only this one']);
 });
 
+/**
+ * The shared script can send `X-CSRF-TOKEN`, because the Laravel SDK's relay sits
+ * behind CSRF middleware. This SDK's relay does a same-origin check instead, so
+ * the config it emits must leave `csrfToken` out and leave the header unsent.
+ */
 test('it carries no csrf token, because the relay checks the origin instead', function (): void {
     $rendered = snippet()->render(['endpoint' => '/e']);
 
-    expect($rendered)->not->toContain('csrfToken')
-        ->and($rendered)->not->toContain('X-CSRF-TOKEN');
+    expect(renderedConfig($rendered))->not->toHaveKey('csrfToken');
 });
 
 test('a closing script tag inside a config value cannot terminate the tag early', function (): void {

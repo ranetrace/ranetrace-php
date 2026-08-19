@@ -11,29 +11,23 @@ use RuntimeException;
 /**
  * Renders the browser capture script as an inline `<script>` tag.
  *
- * Ported from `ranetrace/ranetrace-laravel`'s `error-tracker.blade.php`, which
- * was one file mixing the script with Blade interpolation. Here the script lives
- * on its own at `resources/js/error-tracker.js` with a single
- * `__RANETRACE_CONFIG__` token, and this class substitutes the JSON config into
- * it. Splitting them is what lets the script be linted, diffed against the
- * Laravel original, and asserted on by a test.
+ * This class is the plain-PHP host's side of the split: it turns
+ * {@see Config} into the runtime config the script reads, and asks
+ * {@see CaptureScript} for the script itself. The script is shared with
+ * `ranetrace/ranetrace-laravel`, which builds its own config from Laravel's
+ * config repository and takes the same body from the same class.
  *
- * Two things the Laravel version could discover for itself have to be told to
- * this one. The endpoint is required, because this SDK registers no routes and
- * the host mounts {@see Relay} wherever it likes. The nonce is passed in,
- * because there is no Vite integration to ask for one.
+ * Two things the Laravel version can discover for itself have to be told to this
+ * one. The endpoint is required, because this SDK registers no routes and the
+ * host mounts {@see Relay} wherever it likes. The nonce is passed in, because
+ * there is no Vite integration to ask for one.
  *
- * There is deliberately no `csrfToken` in the emitted config: the relay verifies
- * Origin/Referer instead of a CSRF token, so the script has no token to carry.
+ * There is deliberately no `csrfToken` in the emitted config: this SDK's relay
+ * verifies Origin/Referer instead of a CSRF token, so the script is given no
+ * token and sends no `X-CSRF-TOKEN` header.
  */
 final class Snippet
 {
-    /**
-     * The one token the template exposes. Changing it here without changing the
-     * template ships an unconfigured script that silently does nothing.
-     */
-    private const string CONFIG_TOKEN = '__RANETRACE_CONFIG__';
-
     public function __construct(private readonly Config $config) {}
 
     /**
@@ -65,7 +59,7 @@ final class Snippet
             ? ' nonce="'.htmlspecialchars($nonce, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'"'
             : '';
 
-        return '<script'.$attribute.'>'.PHP_EOL.$this->script($endpoint).PHP_EOL.'</script>';
+        return '<script'.$attribute.'>'.PHP_EOL.CaptureScript::withConfig($this->runtimeConfig($endpoint)).PHP_EOL.'</script>';
     }
 
     /**
@@ -95,38 +89,5 @@ final class Snippet
                 $ignored,
             )),
         ];
-    }
-
-    /**
-     * The template with its config token substituted.
-     *
-     * @throws RuntimeException
-     */
-    private function script(string $endpoint): string
-    {
-        $template = @file_get_contents($this->templatePath());
-
-        if ($template === false) {
-            throw new RuntimeException('Unable to read the Ranetrace JavaScript error tracker template at '.$this->templatePath().'.');
-        }
-
-        // JSON_HEX_TAG/AMP/APOS keep a `</script>` or a stray quote inside a
-        // config value (an endpoint, an ignored-error pattern) from closing the
-        // tag we are inlining into. JSON_HEX_QUOT is deliberately NOT set: it
-        // would escape the structural double quotes too, and `"` outside a
-        // string is not valid JavaScript. JSON_PRESERVE_ZERO_FRACTION keeps a
-        // sample rate of 1.0 spelled as a float, so the emitted config reads as
-        // what it is.
-        $json = (string) json_encode(
-            $this->runtimeConfig($endpoint),
-            JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION,
-        );
-
-        return str_replace(self::CONFIG_TOKEN, $json, $template);
-    }
-
-    private function templatePath(): string
-    {
-        return dirname(__DIR__, 2).'/resources/js/error-tracker.js';
     }
 }
