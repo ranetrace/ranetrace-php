@@ -8,7 +8,6 @@ use DateTimeImmutable;
 use InvalidArgumentException;
 use Ranetrace\Php\Buffer\BufferInterface;
 use Ranetrace\Php\Config;
-use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\ItemByteBudget;
@@ -95,14 +94,17 @@ final class EventTracker
 
     private readonly ItemByteBudget $budget;
 
+    private readonly EventItemBuilder $items;
+
     public function __construct(
         private readonly Config $config,
         private readonly BufferInterface $buffer,
-        private readonly SecretScrubber $scrubber,
+        SecretScrubber $scrubber,
         private readonly FingerprintGenerator $fingerprints,
         private readonly InternalLogger $log,
     ) {
         $this->budget = new ItemByteBudget($log);
+        $this->items = new EventItemBuilder($scrubber);
     }
 
     /**
@@ -156,24 +158,19 @@ final class EventTracker
             // item, right before it reaches the buffer. A null item was
             // irreducibly over budget and was dropped with a diagnostics entry,
             // so there is nothing left to buffer.
-            $item = $this->budget->cap(self::BUFFER_TYPE, [
-                'event_name' => $name,
-                // The host's declared path secrets are passed through, so a URL
-                // property loses its `{token}` segment the same way the event's
-                // own `url` field does.
-                'properties' => $this->scrubber->scrubDeep(
-                    DataSanitizer::sanitizeForSerialization($properties),
-                    $this->sensitivePathValues
-                ),
-                'user' => $this->resolveUser($userId),
-                'timestamp' => (new DateTimeImmutable)->format('c'),
-                'url' => $this->currentUrl(),
-                'user_agent_hash' => $this->fingerprints->generateUserAgentHash($this->serverString('HTTP_USER_AGENT')),
-                'session_id_hash' => $this->fingerprints->generateSessionIdHash(
+            $item = $this->budget->cap(self::BUFFER_TYPE, $this->items->build(
+                $name,
+                $properties,
+                $this->resolveUser($userId),
+                (new DateTimeImmutable)->format('c'),
+                $this->currentUrl(),
+                $this->fingerprints->generateUserAgentHash($this->serverString('HTTP_USER_AGENT')),
+                $this->fingerprints->generateSessionIdHash(
                     $this->serverString('REMOTE_ADDR'),
                     $this->serverString('HTTP_USER_AGENT'),
                 ),
-            ]);
+                $this->sensitivePathValues,
+            ));
 
             if ($item === null) {
                 return;
@@ -341,9 +338,9 @@ final class EventTracker
     }
 
     /**
-     * The scrubbed URL of the current request, or null when there is no request:
-     * a CLI process has no URL to report, and neither does a web context that
-     * did not tell us its host.
+     * The URL of the current request, unscrubbed (the item builder redacts it),
+     * or null when there is no request: a CLI process has no URL to report, and
+     * neither does a web context that did not tell us its host.
      */
     private function currentUrl(): ?string
     {
@@ -357,12 +354,7 @@ final class EventTracker
             return null;
         }
 
-        $uri = $this->serverString('REQUEST_URI') ?? '/';
-
-        return $this->scrubber->scrubUrlPath(
-            $this->scrubber->scrubUrl($this->scheme().'://'.$host.$uri),
-            $this->sensitivePathValues,
-        );
+        return $this->scheme().'://'.$host.($this->serverString('REQUEST_URI') ?? '/');
     }
 
     /**

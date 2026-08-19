@@ -20,7 +20,7 @@ use Ranetrace\Php\Config;
  * they must not drift. Only the collaborator lookup changed, from Laravel
  * facades to an injected {@see Config} and {@see InternalLogger}.
  */
-final class SecretScrubber
+final class SecretScrubber implements Scrubber
 {
     public const string REDACTION = '[REDACTED]';
 
@@ -88,7 +88,7 @@ final class SecretScrubber
 
     public function __construct(
         private readonly Config $config,
-        private readonly InternalLogger $log,
+        private readonly Diagnostics $log,
     ) {}
 
     /**

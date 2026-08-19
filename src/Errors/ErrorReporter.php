@@ -96,8 +96,10 @@ final class ErrorReporter
             // so there is nothing left to buffer.
             $item = $this->budget->cap('errors', $this->payloadBuilder->build(
                 $throwable,
-                $this->server ?? $_SERVER,
-                $this->console ?? (PHP_SAPI === 'cli'),
+                ErrorContext::fromServer(
+                    $this->server ?? $_SERVER,
+                    $this->console ?? (PHP_SAPI === 'cli'),
+                ),
             ));
 
             if ($item === null) {

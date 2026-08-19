@@ -8,6 +8,10 @@ use Ranetrace\Php\Buffer\BufferInterface;
 use Ranetrace\Php\Buffer\PauseStore;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Http\ApiClient;
+use Ranetrace\Php\Http\BatchOutcome;
+use Ranetrace\Php\Http\EndpointTable;
+use Ranetrace\Php\Http\PauseScope;
+use Ranetrace\Php\Http\ResponsePolicy;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\JsonFile;
 use Ranetrace\Php\Support\Quietly;
@@ -50,52 +54,19 @@ final class Worker
     private const int MAX_BATCH_BYTES = 4_500_000;
 
     /**
-     * The standard back-off. Long enough that a degraded endpoint gets real
-     * relief, short enough that a recovered one is retried within the buffer's
-     * idle TTL.
+     * The `{SDK}` segment of every User-Agent this package sends.
      */
-    private const int PAUSE_SECONDS = 900;
+    private const string SDK = 'PHP';
 
     /**
-     * Floor for a 429 pause. The client result stores a missing `Retry-After`
-     * as `''`, and `(int) '' === 0`; without this floor a rate-limited SDK would
-     * take a zero-second pause and keep hammering the endpoint every run.
+     * The four contracted endpoints. The table is shared with
+     * `ranetrace/ranetrace-laravel`, which extends it with its own analytics
+     * type; the pause lengths and the per-status decisions live beside it in
+     * {@see ResponsePolicy}.
      */
-    private const int RATE_LIMIT_FLOOR_SECONDS = 60;
+    private readonly EndpointTable $endpoints;
 
-    /**
-     * Per-type transport facts. Paths are kebab-case, wrapper keys snake_case,
-     * and the logs type reads its timeout from `logging.timeout` because the
-     * config section is named for the feature, not the buffer.
-     *
-     * @var array<string, array{path: string, wrapper: string, agent: string, timeout: string}>
-     */
-    private const array ENDPOINTS = [
-        'errors' => [
-            'path' => '/errors/store',
-            'wrapper' => 'errors',
-            'agent' => 'Ranetrace-PHP/Errors/1.0',
-            'timeout' => 'errors.timeout',
-        ],
-        'events' => [
-            'path' => '/events/store',
-            'wrapper' => 'events',
-            'agent' => 'Ranetrace-PHP/Events/1.0',
-            'timeout' => 'events.timeout',
-        ],
-        'logs' => [
-            'path' => '/logs/store',
-            'wrapper' => 'logs',
-            'agent' => 'Ranetrace-PHP/Logs/1.0',
-            'timeout' => 'logging.timeout',
-        ],
-        'javascript_errors' => [
-            'path' => '/javascript-errors/store',
-            'wrapper' => 'javascript_errors',
-            'agent' => 'Ranetrace-PHP/JavaScriptErrors/1.0',
-            'timeout' => 'javascript_errors.timeout',
-        ],
-    ];
+    private readonly ResponsePolicy $policy;
 
     public function __construct(
         private readonly Config $config,
@@ -103,7 +74,10 @@ final class Worker
         private readonly PauseStore $pauses,
         private readonly ApiClient $api,
         private readonly InternalLogger $log,
-    ) {}
+    ) {
+        $this->endpoints = EndpointTable::contract();
+        $this->policy = new ResponsePolicy;
+    }
 
     /**
      * Drain one type, or every type when none is named.
@@ -184,24 +158,13 @@ final class Worker
     }
 
     /**
-     * @param  array<string, mixed>  $data
-     */
-    private static function errorMessage(array $data, string $fallback): string
-    {
-        $error = $data['error'] ?? null;
-        $message = is_array($error) ? ($error['message'] ?? null) : null;
-
-        return is_string($message) && $message !== '' ? $message : $fallback;
-    }
-
-    /**
      * @return list<string>
      */
     private function resolveTypes(?string $type): array
     {
         $types = array_values(array_filter(
             $this->buffer->types(),
-            static fn (string $candidate): bool => isset(self::ENDPOINTS[$candidate]),
+            fn (string $candidate): bool => $this->endpoints->has($candidate),
         ));
 
         if ($type === null) {
@@ -250,13 +213,13 @@ final class Worker
             ]);
         }
 
-        $endpoint = self::ENDPOINTS[$type];
+        $endpoint = $this->endpoints->get($type);
 
         $result = $this->api->sendBatch(
-            $endpoint['path'],
-            $endpoint['wrapper'],
-            $endpoint['agent'],
-            $this->timeout($endpoint['timeout']),
+            $endpoint->path,
+            $endpoint->wrapper,
+            $endpoint->userAgent(self::SDK),
+            $this->timeout($endpoint->timeoutKey),
             array_column($items, 'data'),
         );
 
@@ -264,195 +227,128 @@ final class Worker
     }
 
     /**
-     * The response matrix. Every branch answers three questions: do the items go
-     * back on the spool, does the feature (or everything) pause, and how loudly
-     * is it logged.
+     * Act on one response.
+     *
+     * What each status MEANS lives in {@see ResponsePolicy}, shared with
+     * `ranetrace/ranetrace-laravel` so the two SDKs cannot drift on it. What is
+     * left here is this worker's own half: the diagnostics wording, the
+     * file-backed pause store, and the fact that a transient failure pauses on
+     * the spot rather than being retried, because there is no queue to release
+     * to and the next run is the retry. {@see BatchOutcome::$transient} is
+     * therefore read by the Laravel job and deliberately ignored here.
      *
      * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
      * @param  array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}  $result
      */
     private function handle(string $type, array $items, array $result): void
     {
-        $status = $result['status'];
-        $data = $result['data'];
+        $outcome = $this->policy->decide($result);
 
-        // Status 0 is a transport failure the API client already caught, so the
-        // raw cURL message never escapes into the host application.
-        if ($status === 0) {
-            $this->log->error('Network error during batch send', [
-                'type' => $type,
-                'error' => $result['error'] ?? 'Unknown network error',
-                'items_count' => count($items),
-            ]);
+        $this->logOutcome($type, $items, $result, $outcome);
 
-            $this->reBuffer($type, $items);
-            $this->pauses->pauseFeature($type, self::PAUSE_SECONDS, 'network');
-
-            return;
+        if ($outcome->stampLastBatch) {
+            $this->stampLastBatch($type);
         }
 
-        match ($status) {
-            200 => $this->handleSuccess($type, $items, $data),
-            401 => $this->handleUnauthorized($type, $items, $data),
-            403 => $this->handleForbidden($type, $items, $data),
-            413 => $this->handlePayloadTooLarge($type, $items, $data),
-            422 => $this->handleUnprocessable($type, $items, $data),
-            429 => $this->handleRateLimited($type, $items, $result['headers']),
-            default => $this->handleServerFailure($type, $items, $status),
+        if ($outcome->rebuffer) {
+            $this->reBuffer($type, $items);
+        }
+
+        if ($outcome->counters?->hasUnprocessed() === true) {
+            $this->buffer->addItems($type, $outcome->unprocessedPayloads($items));
+        }
+
+        $seconds = $outcome->pauseSeconds ?? ResponsePolicy::PAUSE_SECONDS;
+
+        match ($outcome->pauseScope) {
+            // Global, not per-feature: a rejected key is not a problem with
+            // this endpoint.
+            PauseScope::Everything => $this->pauses->pauseGlobal($seconds, $outcome->reason),
+            PauseScope::Feature => $this->pauses->pauseFeature($type, $seconds, $outcome->reason),
+            PauseScope::None => null,
         };
     }
 
     /**
      * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
-     * @param  array<string, mixed>  $data
+     * @param  array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}  $result
      */
-    private function handleSuccess(string $type, array $items, array $data): void
+    private function logOutcome(string $type, array $items, array $result, BatchOutcome $outcome): void
     {
-        $this->stampLastBatch($type);
+        $data = $result['data'];
 
-        $counters = is_array($data['items'] ?? null) ? $data['items'] : [];
-        $failed = (int) ($counters['failed'] ?? 0);
-        $unprocessed = (int) ($counters['unprocessed'] ?? 0);
+        match ($outcome->status) {
+            // Status 0 is a transport failure the API client already caught, so
+            // the raw cURL message never escapes into the host application.
+            0 => $this->log->error('Network error during batch send', [
+                'type' => $type,
+                'error' => $result['error'] ?? 'Unknown network error',
+                'items_count' => count($items),
+            ]),
+            200 => $this->logSuccess($type, $outcome),
+            401 => $this->log->error('API authentication failed, invalid or revoked API key', [
+                'type' => $type,
+                'message' => ResponsePolicy::errorMessage($data, 'Unauthorized'),
+            ]),
+            403 => $this->log->error('API request forbidden', [
+                'type' => $type,
+                'message' => ResponsePolicy::errorMessage($data, 'Forbidden'),
+            ]),
+            // Critical because the pre-flight byte trim is supposed to make a
+            // 413 impossible: reaching here means the client is miscounting.
+            413 => $this->log->critical('Payload too large, indicates a client bug', [
+                'type' => $type,
+                'items_count' => count($items),
+                'message' => ResponsePolicy::errorMessage($data, 'Payload Too Large'),
+            ]),
+            422 => $this->log->error('Validation failed, indicates schema drift or malformed items', [
+                'type' => $type,
+                'items_count' => count($items),
+                'message' => ResponsePolicy::errorMessage($data, 'Unprocessable Entity'),
+            ]),
+            429 => $this->log->warning('Rate limit exceeded', [
+                'type' => $type,
+                'retry_after' => $outcome->pauseSeconds,
+            ]),
+            default => $this->log->error(
+                $outcome->status === 500 ? 'Server error during batch processing' : 'Unexpected API response status',
+                [
+                    'type' => $type,
+                    'status' => $outcome->status,
+                    'items_count' => count($items),
+                ]
+            ),
+        };
+    }
 
-        if ($failed > 0) {
+    private function logSuccess(string $type, BatchOutcome $outcome): void
+    {
+        $counters = $outcome->counters;
+
+        if ($counters === null) {
+            return;
+        }
+
+        if ($counters->hasFailures()) {
             // Terminal by design: the server rejected these individually and
             // will reject them again, so re-sending would loop forever.
             $this->log->warning('Some items failed during processing', [
                 'type' => $type,
-                'received' => $counters['received'] ?? 0,
-                'processed' => $counters['processed'] ?? 0,
-                'ignored' => $counters['ignored'] ?? 0,
-                'failed' => $failed,
+                'received' => $counters->received,
+                'processed' => $counters->processed,
+                'ignored' => $counters->ignored,
+                'failed' => $counters->failed,
             ]);
         }
 
-        if ($unprocessed > 0) {
+        if ($counters->hasUnprocessed()) {
             $this->log->info('Some items were not processed due to timeout', [
                 'type' => $type,
-                'received' => $counters['received'] ?? 0,
-                'processed' => $counters['processed'] ?? 0,
-                'unprocessed' => $unprocessed,
+                'received' => $counters->received,
+                'processed' => $counters->processed,
+                'unprocessed' => $counters->unprocessed,
             ]);
-
-            $indexes = is_array($data['unprocessed_indexes'] ?? null) ? $data['unprocessed_indexes'] : [];
-            $payloads = [];
-
-            foreach ($indexes as $index) {
-                if (is_int($index) && isset($items[$index])) {
-                    $payloads[] = $items[$index]['data'];
-                }
-            }
-
-            $this->buffer->addItems($type, $payloads);
         }
-    }
-
-    /**
-     * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
-     * @param  array<string, mixed>  $data
-     */
-    private function handleUnauthorized(string $type, array $items, array $data): void
-    {
-        $this->log->error('API authentication failed, invalid or revoked API key', [
-            'type' => $type,
-            'message' => self::errorMessage($data, 'Unauthorized'),
-        ]);
-
-        // Global, not per-feature: a rejected key is not a problem with this
-        // endpoint.
-        $this->pauses->pauseGlobal(self::PAUSE_SECONDS, '401');
-        $this->reBuffer($type, $items);
-    }
-
-    /**
-     * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
-     * @param  array<string, mixed>  $data
-     */
-    private function handleForbidden(string $type, array $items, array $data): void
-    {
-        $this->log->error('API request forbidden', [
-            'type' => $type,
-            'message' => self::errorMessage($data, 'Forbidden'),
-        ]);
-
-        $this->pauses->pauseFeature($type, self::PAUSE_SECONDS, '403');
-        $this->reBuffer($type, $items);
-    }
-
-    /**
-     * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
-     * @param  array<string, mixed>  $data
-     */
-    private function handlePayloadTooLarge(string $type, array $items, array $data): void
-    {
-        // Critical because the pre-flight byte trim is supposed to make this
-        // impossible: reaching here means the client is miscounting.
-        $this->log->critical('Payload too large, indicates a client bug', [
-            'type' => $type,
-            'items_count' => count($items),
-            'message' => self::errorMessage($data, 'Payload Too Large'),
-        ]);
-
-        $this->pauses->pauseFeature($type, self::PAUSE_SECONDS, '413');
-
-        // Dropped: re-sending the same oversize batch would fail identically.
-    }
-
-    /**
-     * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
-     * @param  array<string, mixed>  $data
-     */
-    private function handleUnprocessable(string $type, array $items, array $data): void
-    {
-        $this->log->error('Validation failed, indicates schema drift or malformed items', [
-            'type' => $type,
-            'items_count' => count($items),
-            'message' => self::errorMessage($data, 'Unprocessable Entity'),
-        ]);
-
-        $this->pauses->pauseFeature($type, self::PAUSE_SECONDS, '422');
-
-        // Dropped: the server validates the whole batch, so these items are
-        // invalid and always will be.
-    }
-
-    /**
-     * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
-     * @param  array{retry-after: ?string}  $headers
-     */
-    private function handleRateLimited(string $type, array $items, array $headers): void
-    {
-        $retryAfter = (int) ($headers['retry-after'] ?? 0);
-
-        if ($retryAfter < 1) {
-            $retryAfter = self::RATE_LIMIT_FLOOR_SECONDS;
-        }
-
-        $this->log->warning('Rate limit exceeded', [
-            'type' => $type,
-            'retry_after' => $retryAfter,
-        ]);
-
-        $this->pauses->pauseFeature($type, $retryAfter, '429');
-        $this->reBuffer($type, $items);
-    }
-
-    /**
-     * A 500, or any status the matrix does not name. Both are treated as
-     * transient: re-buffer, back off, try again next run.
-     *
-     * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
-     */
-    private function handleServerFailure(string $type, array $items, int $status): void
-    {
-        $this->log->error($status === 500 ? 'Server error during batch processing' : 'Unexpected API response status', [
-            'type' => $type,
-            'status' => $status,
-            'items_count' => count($items),
-        ]);
-
-        $this->reBuffer($type, $items);
-        $this->pauses->pauseFeature($type, self::PAUSE_SECONDS, (string) $status);
     }
 
     /**

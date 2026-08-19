@@ -6,32 +6,29 @@ namespace Ranetrace\Php\Errors;
 
 use DateTimeImmutable;
 use Ranetrace\Php\Config;
-use Ranetrace\Php\Support\InternalLogger;
-use Ranetrace\Php\Support\SecretScrubber;
+use Ranetrace\Php\Support\Diagnostics;
+use Ranetrace\Php\Support\Scrubber;
 use Throwable;
 
 /**
  * Shapes a throwable into the error item the Ranetrace API accepts.
  *
- * Ported from `ranetrace/ranetrace-laravel` (`src/Ranetrace.php`,
- * `buildErrorPayload()` and its helpers). Every cap, every truncation rule and
- * the header allowlist are part of the wire contract and must not drift from
- * that SDK: the backend does strict field-set matching, so a payload with an
- * extra key, a missing key or a wrong type gets the WHOLE batch rejected with a
- * 422, dropping every item in it and pausing the feature for fifteen minutes.
+ * This is the ONE builder: `ranetrace/ranetrace-laravel` shapes its error items
+ * here too, handing over what only a framework can answer through
+ * {@see ErrorContext} rather than keeping a second copy of the caps. Every cap,
+ * every truncation rule and the header allowlist are part of the wire contract:
+ * the backend does strict field-set matching, so a payload with an extra key, a
+ * missing key or a wrong type gets the WHOLE batch rejected with a 422, dropping
+ * every item in it and pausing the feature for fifteen minutes.
  *
- * The one deliberate difference is the framework identity. The Laravel SDK
- * sends `laravel_version`; a framework-agnostic SDK cannot, so this builder
- * sends `framework` and `framework_version` instead, both always present and
- * both nullable, read from config because the SDK has no framework to ask. That
- * makes the item 19 keys rather than 18 and requires the backend validator to
- * accept the new shape first (lockstep with backend task #81).
+ * What a host is told to answer, it answers through {@see Config}: `environment`,
+ * `project_root`, `framework`, `framework_version` and `user_resolver`. What it
+ * observes per capture, it answers through {@see ErrorContext}. Nothing here
+ * reaches for a superglobal or a framework.
  *
- * What the Laravel SDK discovers from its container, this one is told:
- * `app()->environment()` becomes the `environment` config value, `base_path()`
- * becomes `project_root`, `Auth::user()` becomes the `user_resolver` callable,
- * and the `Request` object becomes a plain `$_SERVER` array handed in by the
- * caller.
+ * The framework identity is a pair, `framework` and `framework_version`, both
+ * always present and both nullable. That is why the item is 19 keys rather than
+ * the 18 the Laravel SDK once sent under `laravel_version`, which is retired.
  */
 final class PayloadBuilder
 {
@@ -104,18 +101,13 @@ final class PayloadBuilder
 
     public function __construct(
         private readonly Config $config,
-        private readonly SecretScrubber $scrubber,
-        private readonly InternalLogger $log,
+        private readonly Scrubber $scrubber,
+        private readonly Diagnostics $log,
     ) {}
 
     /**
      * Build the 19-key error item.
      *
-     * `$isConsole` is passed in rather than read from `PHP_SAPI` here so the
-     * caller owns the decision (and so both branches are reachable from a test
-     * suite, which always runs under the CLI SAPI).
-     *
-     * @param  array<array-key, mixed>  $server  The `$_SERVER` array to read the request and argv from.
      * @return array{
      *     message: string,
      *     file: string,
@@ -138,12 +130,13 @@ final class PayloadBuilder
      *     console_arguments: array<int, string>|null,
      * }
      */
-    public function build(Throwable $throwable, array $server, bool $isConsole): array
+    public function build(Throwable $throwable, ErrorContext $context): array
     {
         $file = $throwable->getFile();
         $line = $throwable->getLine();
+        $isConsole = $context->isConsole;
 
-        [$context, $highlightLine] = $this->sourceContext($file, $line);
+        [$source, $highlightLine] = $this->sourceContext($file, $line);
 
         // The message and the trace are secret-scrubbed BEFORE truncation, so a
         // secret cannot survive by being split across the length boundary. An
@@ -157,19 +150,19 @@ final class PayloadBuilder
             'type' => $throwable::class,
             'environment' => $this->stringConfig('environment'),
             'trace' => $this->truncate($this->scrubber->scrubString($throwable->getTraceAsString()), self::MAX_TRACE_LENGTH),
-            'headers' => $isConsole ? null : $this->headers($server),
-            'context' => $context,
+            'headers' => $isConsole ? null : $this->headers($context),
+            'context' => $source,
             'highlight_line' => $highlightLine,
             'user' => $this->user(),
-            'timestamp' => (new DateTimeImmutable)->format('c'),
-            'url' => $isConsole ? null : $this->url($server),
-            'method' => $isConsole ? null : $this->method($server),
+            'timestamp' => $context->timestamp ?? (new DateTimeImmutable)->format('c'),
+            'url' => $isConsole ? null : $this->url($context),
+            'method' => $isConsole ? null : $this->method($context),
             'php_version' => (string) phpversion(),
             'framework' => $this->nullableStringConfig('framework'),
             'framework_version' => $this->nullableStringConfig('framework_version'),
             'is_console' => $isConsole,
-            'console_command' => $isConsole ? $this->consoleCommand($server) : null,
-            'console_arguments' => $isConsole ? $this->consoleArguments($server) : null,
+            'console_command' => $isConsole ? $this->consoleCommand($context) : null,
+            'console_arguments' => $isConsole ? $this->consoleArguments($context) : null,
         ];
     }
 
@@ -212,11 +205,10 @@ final class PayloadBuilder
      * structure survives. Guards against a minified or generated line bloating
      * the item.
      *
-     * The suffix is added OUTSIDE the cap here (unlike {@see truncate()}), which
-     * is the Laravel SDK's behaviour: the context field has no field-level cap
-     * of its own, so the overshoot of fifteen characters per line is harmless
-     * and matching the sibling SDK byte for byte is worth more than internal
-     * consistency.
+     * The suffix is added OUTSIDE the cap here (unlike {@see truncate()}) on
+     * purpose: the context field has no field-level cap of its own, so the
+     * overshoot of fifteen characters per line is harmless, and this is what
+     * both SDKs have always sent.
      */
     private function capContextLine(string $line): string
     {
@@ -293,62 +285,37 @@ final class PayloadBuilder
     }
 
     /**
-     * The request headers, as `header-name => [values]`.
+     * The request headers, as `header-name => [values]`, masked and bounded.
      *
-     * Returns null rather than an empty array when the server array carries no
-     * headers at all: `json_encode([])` is `[]`, a JSON array, and the field is
-     * typed as an object on the wire, so an empty result must travel as the
-     * null the contract already allows.
+     * Null when the host observed none: `json_encode([])` is `[]`, a JSON array,
+     * and the field is typed as an object on the wire, so an empty result must
+     * travel as the null the contract already allows.
      *
-     * @param  array<array-key, mixed>  $server
      * @return array<string, array<int, string>>|null
      */
-    private function headers(array $server): ?array
+    private function headers(ErrorContext $context): ?array
     {
-        $headers = [];
+        $headers = $context->headers;
 
-        foreach ($server as $key => $value) {
-            if (! is_string($key)) {
-                continue;
-            }
-
-            if (str_starts_with($key, 'HTTP_')) {
-                $name = mb_strtolower(str_replace('_', '-', mb_substr($key, 5)));
-            } elseif ($key === 'CONTENT_TYPE' || $key === 'CONTENT_LENGTH') {
-                $name = mb_strtolower(str_replace('_', '-', $key));
-            } else {
-                continue;
-            }
-
-            if ($name === '' || ! is_scalar($value)) {
-                continue;
-            }
-
-            $headers[$name] = (string) $value;
-        }
-
-        if ($headers === []) {
+        if ($headers === null || $headers === []) {
             return null;
         }
 
-        return $this->maskAndBoundHeaders($headers);
-    }
-
-    /**
-     * Mask every header not on {@see SAFE_HEADERS} and cap both the header
-     * count and the per-value length.
-     *
-     * @param  array<string, string>  $headers
-     * @return array<string, array<int, string>>
-     */
-    private function maskAndBoundHeaders(array $headers): array
-    {
         $bounded = [];
 
-        foreach (array_slice($headers, 0, self::MAX_HEADER_COUNT, true) as $name => $value) {
-            $bounded[$name] = in_array($name, self::SAFE_HEADERS, true)
-                ? [$this->boundHeaderValue($name, $value)]
-                : ['***'];
+        foreach (array_slice($headers, 0, self::MAX_HEADER_COUNT, true) as $name => $values) {
+            if (! in_array($name, self::SAFE_HEADERS, true)) {
+                $bounded[$name] = ['***'];
+
+                continue;
+            }
+
+            // A header bag can hold a null value, so every value is cast the
+            // way `(string) $value` always did rather than type-hinted away.
+            $bounded[$name] = array_map(
+                fn (mixed $value): string => $this->boundHeaderValue($name, is_scalar($value) ? (string) $value : '', $context),
+                is_array($values) ? array_values($values) : [$values],
+            );
         }
 
         return $bounded;
@@ -356,68 +323,43 @@ final class PayloadBuilder
 
     /**
      * Scrub the Referer (it can carry reset tokens and signed-URL signatures in
-     * its query string) and truncate to the per-value cap.
+     * its query string AND in its path) and truncate to the per-value cap.
      */
-    private function boundHeaderValue(string $name, string $value): string
+    private function boundHeaderValue(string $name, string $value, ErrorContext $context): string
     {
         if ($name === 'referer') {
-            $value = (string) $this->scrubber->scrubUrl($value);
+            $value = (string) $this->scrubber->scrubUrlPath(
+                $this->scrubber->scrubUrl($value),
+                $context->refererPathValues($value),
+            );
         }
 
         return $this->truncate($value, self::MAX_HEADER_VALUE_LENGTH);
     }
 
     /**
-     * The full URL of the request being handled, with sensitive query
-     * parameters redacted.
-     *
-     * Only the QUERY string is scrubbed. The Laravel SDK also redacts path
-     * segments a route names `{token}` or `{hash}`, using the matched route as
-     * the oracle for which segments are secret; this SDK has no router to ask,
-     * so a host that knows better scrubs the path itself before handing over a
-     * server array.
-     *
-     * @param  array<array-key, mixed>  $server
+     * The URL of the request being handled, with sensitive query parameters
+     * redacted and, where the host could name them, its secret-bearing path
+     * segments too.
      */
-    private function url(array $server): ?string
+    private function url(ErrorContext $context): ?string
     {
-        $host = $this->serverString($server, 'HTTP_HOST') ?? $this->serverString($server, 'SERVER_NAME') ?? '';
-        $uri = $this->serverString($server, 'REQUEST_URI') ?? '';
-
-        $url = $host === '' ? $uri : $this->scheme($server).'://'.$host.$uri;
-
-        if ($url === '') {
+        if ($context->url === null || $context->url === '') {
             return null;
         }
 
-        return $this->truncate((string) $this->scrubber->scrubUrl($url), self::MAX_URL_LENGTH);
+        return $this->truncate(
+            (string) $this->scrubber->scrubUrlPath(
+                $this->scrubber->scrubUrl($context->url),
+                $context->sensitivePathValues,
+            ),
+            self::MAX_URL_LENGTH,
+        );
     }
 
-    /**
-     * `HTTPS` is the only signal trusted here. `X-Forwarded-Proto` is a client
-     * -settable header, and the SDK has no trusted-proxy configuration to judge
-     * it by, so a host behind a TLS-terminating proxy sets `HTTPS` (every
-     * mainstream setup already does) rather than having the SDK guess.
-     *
-     * @param  array<array-key, mixed>  $server
-     */
-    private function scheme(array $server): string
+    private function method(ErrorContext $context): ?string
     {
-        $https = $this->serverString($server, 'HTTPS');
-
-        if ($https === null || $https === '' || mb_strtolower($https) === 'off') {
-            return 'http';
-        }
-
-        return 'https';
-    }
-
-    /**
-     * @param  array<array-key, mixed>  $server
-     */
-    private function method(array $server): ?string
-    {
-        $method = $this->serverString($server, 'REQUEST_METHOD');
+        $method = $context->method;
 
         return $method === null || $method === '' ? null : mb_strtoupper($method);
     }
@@ -425,58 +367,42 @@ final class PayloadBuilder
     /**
      * The command line the process was started with, scrubbed for `--token=…`
      * style secrets.
-     *
-     * @param  array<array-key, mixed>  $server
      */
-    private function consoleCommand(array $server): ?string
+    private function consoleCommand(ErrorContext $context): ?string
     {
-        $argv = $this->argv($server);
+        $command = $context->consoleCommand;
 
-        if ($argv === []) {
-            return null;
-        }
-
-        return $this->scrubber->scrubString(implode(' ', $argv));
+        return $command === null ? null : $this->scrubber->scrubString($command);
     }
 
     /**
      * The same command line as an array, count- and length-bounded.
      *
-     * @param  array<array-key, mixed>  $server
-     * @return array<int, string>
+     * @return array<int, string>|null
      */
-    private function consoleArguments(array $server): array
+    private function consoleArguments(ErrorContext $context): ?array
     {
+        $arguments = $context->consoleArguments;
+
+        if ($arguments === null) {
+            return null;
+        }
+
+        $strings = [];
+
+        foreach ($arguments as $argument) {
+            if (is_scalar($argument)) {
+                $strings[] = (string) $argument;
+            }
+        }
+
         return array_map(
             fn (string $argument): string => $this->truncate(
                 $this->scrubber->scrubString($argument),
                 self::MAX_CONSOLE_ARGV_LENGTH,
             ),
-            array_slice($this->argv($server), 0, self::MAX_CONSOLE_ARGV_COUNT)
+            array_slice($strings, 0, self::MAX_CONSOLE_ARGV_COUNT)
         );
-    }
-
-    /**
-     * @param  array<array-key, mixed>  $server
-     * @return array<int, string>
-     */
-    private function argv(array $server): array
-    {
-        $argv = $server['argv'] ?? null;
-
-        if (! is_array($argv)) {
-            return [];
-        }
-
-        $arguments = [];
-
-        foreach ($argv as $argument) {
-            if (is_scalar($argument)) {
-                $arguments[] = (string) $argument;
-            }
-        }
-
-        return $arguments;
     }
 
     /**
@@ -530,16 +456,6 @@ final class PayloadBuilder
         }
 
         return mb_substr($value, 0, $maxLength - mb_strlen(self::TRUNCATION_SUFFIX)).self::TRUNCATION_SUFFIX;
-    }
-
-    /**
-     * @param  array<array-key, mixed>  $server
-     */
-    private function serverString(array $server, string $key): ?string
-    {
-        $value = $server[$key] ?? null;
-
-        return is_scalar($value) ? (string) $value : null;
     }
 
     private function stringConfig(string $dotKey): string

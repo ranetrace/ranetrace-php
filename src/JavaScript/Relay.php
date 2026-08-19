@@ -4,14 +4,11 @@ declare(strict_types=1);
 
 namespace Ranetrace\Php\JavaScript;
 
-use DateTimeImmutable;
 use Ranetrace\Php\Buffer\BufferInterface;
 use Ranetrace\Php\Config;
-use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\ItemByteBudget;
-use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\SecretScrubber;
 use Throwable;
 
@@ -45,39 +42,9 @@ use Throwable;
 final class Relay
 {
     /**
-     * Maximum serialized context size (JSON-encoded bytes). Oversize context is
-     * replaced with a truncation marker rather than truncated mid-structure,
-     * because partial JSON is not JSON.
-     */
-    private const int MAX_CONTEXT_BYTES = 51_200;
-
-    /**
-     * Maximum serialized data size per breadcrumb (JSON-encoded bytes).
-     */
-    private const int MAX_BREADCRUMB_DATA_BYTES = 5_120;
-
-    /**
      * The buffer type JavaScript errors are spooled under.
      */
     private const string BUFFER_TYPE = 'javascript_errors';
-
-    /**
-     * The only `browser_info` keys that reach the wire, in wire order. The
-     * object is rebuilt from this list rather than filtered, so an unknown key
-     * from a tampered payload is dropped and a missing one is null: the field
-     * set is always exactly these seven.
-     *
-     * @var array<int, string>
-     */
-    private const array BROWSER_INFO_KEYS = [
-        'screen_width',
-        'screen_height',
-        'viewport_width',
-        'viewport_height',
-        'device_memory',
-        'hardware_concurrency',
-        'connection_type',
-    ];
 
     /**
      * Path segment values to redact from the reported URL. See
@@ -89,14 +56,17 @@ final class Relay
 
     private readonly ItemByteBudget $budget;
 
+    private readonly ErrorItemBuilder $items;
+
     public function __construct(
         private readonly Config $config,
         private readonly BufferInterface $buffer,
-        private readonly SecretScrubber $scrubber,
+        SecretScrubber $scrubber,
         private readonly FingerprintGenerator $fingerprints,
         private readonly InternalLogger $log,
     ) {
         $this->budget = new ItemByteBudget($log);
+        $this->items = new ErrorItemBuilder($config, $scrubber);
     }
 
     /**
@@ -223,7 +193,15 @@ final class Relay
         // budget and was dropped with a diagnostics entry of its own, so there
         // is nothing left to buffer; the browser is still acknowledged, exactly
         // as it is for a rejected write.
-        $item = $this->budget->cap(self::BUFFER_TYPE, $this->buildItem($server, $payload, $message));
+        $item = $this->budget->cap(self::BUFFER_TYPE, $this->items->build(
+            $payload,
+            $this->headerString($server, 'HTTP_USER_AGENT'),
+            $this->resolveUserId(),
+            // Hashed, never raw, so a leaked payload cannot be replayed as a
+            // session while errors can still be grouped per visit.
+            $this->sessionId($server),
+            $this->sensitivePathValues,
+        ));
 
         if ($item !== null && ! $this->buffer->addItem(self::BUFFER_TYPE, $item)) {
             // A rejected write is a transient drop (lock contention, unwritable
@@ -237,51 +215,6 @@ final class Relay
             'success' => true,
             'message' => 'Error received',
         ]);
-    }
-
-    /**
-     * The 15-key buffered item. Every key is always present and the set is
-     * exact: the API does strict field-set matching, so one extra or missing key
-     * rejects the whole batch.
-     *
-     * `user_agent`, `environment`, `user_id` and `session_id` are server-added
-     * and never read from the payload, because a browser can claim anything.
-     *
-     * @param  array<string, mixed>  $server
-     * @param  array<string, mixed>  $payload
-     * @return array<string, mixed>
-     */
-    private function buildItem(array $server, array $payload, string $message): array
-    {
-        $stack = $payload['stack'] ?? null;
-        $url = (string) $payload['url'];
-
-        return [
-            'message' => $this->scrubber->scrubString($message),
-            'stack' => is_string($stack) ? $this->scrubber->scrubString($stack) : null,
-            'type' => isset($payload['type']) && is_string($payload['type']) ? $payload['type'] : 'Error',
-            'filename' => isset($payload['filename']) && is_string($payload['filename']) ? $payload['filename'] : null,
-            'line' => $this->intOrNull($payload['line'] ?? null),
-            'column' => $this->intOrNull($payload['column'] ?? null),
-            'user_agent' => $this->headerString($server, 'HTTP_USER_AGENT'),
-            // The reported URL is the page the error happened on, not this POST
-            // endpoint, so it gets scrubbed on its own terms: query first, then
-            // whichever path segments the host declared secret-bearing.
-            'url' => $this->scrubber->scrubUrlPath($this->scrubber->scrubUrl($url), $this->sensitivePathValues),
-            'timestamp' => $this->timestamp($payload),
-            'environment' => (string) $this->config->get('environment', 'production'),
-            'user_id' => $this->resolveUserId(),
-            // Hashed, never raw, so a leaked payload cannot be replayed as a
-            // session while errors can still be grouped per visit.
-            'session_id' => $this->sessionId($server),
-            'breadcrumbs' => $this->normalizeBreadcrumbs($payload['breadcrumbs'] ?? []),
-            'context' => PayloadSizer::capBytes(
-                $this->scrubbedArray($payload['context'] ?? []),
-                self::MAX_CONTEXT_BYTES,
-                'Context exceeded 50KB limit and was removed',
-            ),
-            'browser_info' => $this->browserInfo($payload['browser_info'] ?? []),
-        ];
     }
 
     /**
@@ -444,7 +377,7 @@ final class Relay
         $browserInfo = $payload['browser_info'] ?? null;
 
         if (is_array($browserInfo)) {
-            foreach (self::BROWSER_INFO_KEYS as $key) {
+            foreach (ErrorItemBuilder::BROWSER_INFO_KEYS as $key) {
                 if ($key === 'connection_type') {
                     $this->assertString($errors, $browserInfo, 'browser_info.connection_type', false, 50, 'connection_type');
 
@@ -590,94 +523,6 @@ final class Relay
         return $rate < 1.0 && mt_rand() / mt_getrandmax() > $rate;
     }
 
-    /**
-     * Keep the LAST N breadcrumbs (the ones nearest the error are the
-     * diagnostic ones) and rebuild each as exactly the four wire keys, so a
-     * browser cannot smuggle a fifth.
-     *
-     * @param  mixed  $breadcrumbs  Validated to be an array or absent by this point.
-     * @return array<int, array{timestamp: mixed, category: mixed, message: mixed, data: array<array-key, mixed>}>
-     */
-    private function normalizeBreadcrumbs(mixed $breadcrumbs): array
-    {
-        if (! is_array($breadcrumbs)) {
-            return [];
-        }
-
-        $max = $this->config->get('javascript_errors.max_breadcrumbs', 20);
-        $max = is_numeric($max) ? (int) $max : 20;
-
-        $kept = $max > 0 ? array_slice(array_values($breadcrumbs), -$max) : [];
-
-        return array_map(function (mixed $breadcrumb): array {
-            $breadcrumb = is_array($breadcrumb) ? $breadcrumb : [];
-
-            return [
-                'timestamp' => $breadcrumb['timestamp'] ?? null,
-                'category' => $breadcrumb['category'] ?? null,
-                'message' => $breadcrumb['message'] ?? null,
-                'data' => PayloadSizer::capBytes(
-                    $this->scrubbedArray($breadcrumb['data'] ?? []),
-                    self::MAX_BREADCRUMB_DATA_BYTES,
-                    'Breadcrumb data exceeded 5KB limit and was removed',
-                ),
-            ];
-        }, $kept);
-    }
-
-    /**
-     * Exactly seven keys, always, in wire order. Unknown keys are dropped by
-     * construction and missing ones are null.
-     *
-     * @return array<string, mixed>
-     */
-    private function browserInfo(mixed $browserInfo): array
-    {
-        $source = is_array($browserInfo) ? $browserInfo : [];
-        $info = [];
-
-        foreach (self::BROWSER_INFO_KEYS as $key) {
-            $info[$key] = $source[$key] ?? null;
-        }
-
-        return $info;
-    }
-
-    /**
-     * Sanitize for serialization, then redact secret-keyed values and secrets
-     * hiding in URL-shaped values.
-     *
-     * The host's declared path secrets are passed through, so a reset link the
-     * tracker recorded as a navigation breadcrumb loses its `{token}` segment
-     * the same way the top-level `url` field does — otherwise the same payload
-     * would redact the secret in one field and ship it in another.
-     *
-     * @return array<array-key, mixed>
-     */
-    private function scrubbedArray(mixed $value): array
-    {
-        $scrubbed = $this->scrubber->scrubDeep(
-            DataSanitizer::sanitizeForSerialization($value),
-            $this->sensitivePathValues
-        );
-
-        return is_array($scrubbed) ? $scrubbed : [];
-    }
-
-    /**
-     * @param  array<string, mixed>  $payload
-     */
-    private function timestamp(array $payload): string
-    {
-        $timestamp = $payload['timestamp'] ?? null;
-
-        if (is_string($timestamp) && mb_trim($timestamp) !== '') {
-            return $timestamp;
-        }
-
-        return (new DateTimeImmutable)->format('c');
-    }
-
     private function resolveUserId(): int|string|null
     {
         $resolver = $this->config->get('user_resolver');
@@ -727,14 +572,5 @@ final class Relay
         $value = (string) $value;
 
         return $value === '' ? null : $value;
-    }
-
-    private function intOrNull(mixed $value): ?int
-    {
-        if ($value === null || is_bool($value)) {
-            return null;
-        }
-
-        return is_numeric($value) ? (int) $value : null;
     }
 }

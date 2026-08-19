@@ -24,7 +24,7 @@ use Throwable;
  * Nothing here throws. A logger that can break the host while reporting that
  * something is already broken is worse than a logger that stays quiet.
  */
-final class InternalLogger
+final class InternalLogger implements Diagnostics
 {
     /**
      * PSR-3 severities in ascending order; the configured minimum is compared
