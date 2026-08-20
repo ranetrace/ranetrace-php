@@ -4,7 +4,7 @@ All notable changes to `ranetrace-php` will be documented in this file.
 
 This file starts here, so releases before it are not recorded; the git history is the record for those.
 
-## [Unreleased]
+## [1.0.0] - 2026-08-20
 
 ### Added
 - **This package is now the one home of the four wire payload shapes, the endpoint table and the response matrix.** `ranetrace/ranetrace-laravel` builds its error, log, event and JavaScript-error items here instead of keeping a second description of the same field sets, addresses its batches from the same table, and reads the same per-status decisions. Two descriptions of a strictly-matched field set eventually disagree, and the disagreement surfaces as a backend 422 that discards a whole batch rather than as a failing test in either repo
