@@ -3,42 +3,123 @@
     "wrapper": "errors",
     "strict_fields": true,
     "notes": [
-        "Transcribed from the backend app's ErrorsBatchController (validator rules plus ALLOWED_ERROR_FIELDS), verified 2026-08-19.",
-        "This is the only type with a strict allow-list: an item carrying any key outside `fields` plus `legacy_fields` is rejected, and one rejected item takes the whole batch down with a 422.",
+        "Transcribed from the backend app's ErrorsBatchController (validator rules plus ALLOWED_ERROR_FIELDS), verified 2026-08-19; the legacy laravel_version spelling was removed from the allow-list on 2026-08-21.",
+        "This is the only type with a strict allow-list: an item carrying any key outside `fields` is rejected, and one rejected item takes the whole batch down with a 422. The retired Laravel SDK spelling `laravel_version` is such a key now: it was tolerated at ingest while deployed SDKs still sent it, and both SDKs ship the generic framework pair.",
         "The canonical SDK shape is the 19 keys in `fields`, all always present, nullable ones sent as null. The `minimal` example is what the app accepts, not what any SDK sends.",
         "The `full` example populates every field at once so a consumer exercises every rule in one POST. No single SDK run produces it: `headers`, `url` and `method` are null in a console context and `console_command`, `console_arguments` are null in a web context. The `console` example shows the real console shape."
     ],
     "fields": {
-        "message": {"required": true, "type": "string", "max": 10000},
-        "file": {"required": true, "type": "string", "max": 1000},
-        "line": {"required": true, "type": "integer"},
-        "type": {"required": true, "type": "string", "max": 255},
-        "environment": {"required": true, "type": "string", "max": 50},
-        "timestamp": {"required": true, "type": "date"},
-        "trace": {"required": false, "type": "string", "max": 5000},
-        "headers": {"required": false, "type": "array", "max": 50},
-        "headers.*": {"type": "array"},
-        "headers.*.*": {"type": "string", "max": 500},
-        "context": {"required": false, "type": "string", "max": 30000},
-        "highlight_line": {"required": false, "type": "integer"},
-        "user": {"required": false, "type": "array"},
-        "user.*": {"required": false},
-        "url": {"required": false, "type": "string", "max": 2000},
-        "method": {"required": false, "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]},
-        "php_version": {"required": false, "type": "string", "max": 20},
-        "framework": {"required": false, "type": "string", "max": 50},
-        "framework_version": {"required": false, "type": "string", "max": 50},
-        "is_console": {"required": false, "type": "boolean"},
-        "console_command": {"required": false, "type": "string", "max": 1000},
-        "console_arguments": {"required": false, "type": "array", "max": 50},
-        "console_arguments.*": {"type": "string", "max": 500}
-    },
-    "legacy_fields": {
-        "laravel_version": {
+        "message": {
+            "required": true,
+            "type": "string",
+            "max": 10000
+        },
+        "file": {
+            "required": true,
+            "type": "string",
+            "max": 1000
+        },
+        "line": {
+            "required": true,
+            "type": "integer"
+        },
+        "type": {
+            "required": true,
+            "type": "string",
+            "max": 255
+        },
+        "environment": {
+            "required": true,
+            "type": "string",
+            "max": 50
+        },
+        "timestamp": {
+            "required": true,
+            "type": "date"
+        },
+        "trace": {
             "required": false,
             "type": "string",
-            "max": 20,
-            "note": "Ingest-only tolerated spelling from deployed Laravel SDK versions. The app normalises it to framework \"laravel\" plus framework_version before storage, and an explicit framework/framework_version pair wins when both arrive. Scheduled for removal from the allow-list once both SDKs ship the generic pair, so no new emitter may send it."
+            "max": 5000
+        },
+        "headers": {
+            "required": false,
+            "type": "array",
+            "max": 50
+        },
+        "headers.*": {
+            "type": "array"
+        },
+        "headers.*.*": {
+            "type": "string",
+            "max": 500
+        },
+        "context": {
+            "required": false,
+            "type": "string",
+            "max": 30000
+        },
+        "highlight_line": {
+            "required": false,
+            "type": "integer"
+        },
+        "user": {
+            "required": false,
+            "type": "array"
+        },
+        "user.*": {
+            "required": false
+        },
+        "url": {
+            "required": false,
+            "type": "string",
+            "max": 2000
+        },
+        "method": {
+            "required": false,
+            "type": "string",
+            "enum": [
+                "GET",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+                "HEAD",
+                "OPTIONS"
+            ]
+        },
+        "php_version": {
+            "required": false,
+            "type": "string",
+            "max": 20
+        },
+        "framework": {
+            "required": false,
+            "type": "string",
+            "max": 50
+        },
+        "framework_version": {
+            "required": false,
+            "type": "string",
+            "max": 50
+        },
+        "is_console": {
+            "required": false,
+            "type": "boolean"
+        },
+        "console_command": {
+            "required": false,
+            "type": "string",
+            "max": 1000
+        },
+        "console_arguments": {
+            "required": false,
+            "type": "array",
+            "max": 50
+        },
+        "console_arguments.*": {
+            "type": "string",
+            "max": 500
         }
     },
     "examples": {
@@ -59,17 +140,34 @@
             "timestamp": "2026-08-19T09:30:45+00:00",
             "trace": "#0 app/Repositories/OrderRepository.php(88): PDO->prepare()\n#1 app/Http/Controllers/OrderController.php(31): App\\Repositories\\OrderRepository->findForCustomer()\n#2 {main}",
             "headers": {
-                "accept": ["application/json"],
-                "accept-language": ["en-GB,en;q=0.9"],
-                "content-type": ["application/json"],
-                "host": ["shop.example.com"],
-                "user-agent": ["Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"],
-                "authorization": ["***"],
-                "cookie": ["***"]
+                "accept": [
+                    "application/json"
+                ],
+                "accept-language": [
+                    "en-GB,en;q=0.9"
+                ],
+                "content-type": [
+                    "application/json"
+                ],
+                "host": [
+                    "shop.example.com"
+                ],
+                "user-agent": [
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+                ],
+                "authorization": [
+                    "***"
+                ],
+                "cookie": [
+                    "***"
+                ]
             },
             "context": "public function findForCustomer(int $customerId): Order\n{\n    return $this->query()\n        ->where('customer_id', $customerId)\n        ->firstOrFail();\n}\n",
             "highlight_line": 4,
-            "user": {"id": 4211, "email": "engineer@example.com"},
+            "user": {
+                "id": 4211,
+                "email": "engineer@example.com"
+            },
             "url": "https://shop.example.com/orders/912?token=%5BREDACTED%5D",
             "method": "GET",
             "php_version": "8.4.10",
@@ -77,7 +175,11 @@
             "framework_version": "13.18.1",
             "is_console": false,
             "console_command": "artisan queue:work --queue=default",
-            "console_arguments": ["artisan", "queue:work", "--queue=default"]
+            "console_arguments": [
+                "artisan",
+                "queue:work",
+                "--queue=default"
+            ]
         },
         "console": {
             "message": "Connection refused",
@@ -98,7 +200,12 @@
             "framework_version": null,
             "is_console": true,
             "console_command": "artisan inventory:sync --since=2026-08-18 --token=[REDACTED]",
-            "console_arguments": ["artisan", "inventory:sync", "--since=2026-08-18", "--token=[REDACTED]"]
+            "console_arguments": [
+                "artisan",
+                "inventory:sync",
+                "--since=2026-08-18",
+                "--token=[REDACTED]"
+            ]
         }
     }
 }

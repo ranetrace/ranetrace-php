@@ -9,20 +9,64 @@
         "Both SDKs may replace an oversized `context` or `extra` wholesale with a single `_truncated` key carrying the reason. That is legal here precisely because these fields are free-shape."
     ],
     "fields": {
-        "level": {"required": true, "type": "string", "enum": ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]},
-        "message": {"required": true, "type": "string", "max": 50000},
-        "channel": {"required": true, "type": "string", "max": 255},
-        "timestamp": {"required": true, "type": "date"},
-        "context": {"required": false, "type": "array"},
-        "extra": {"required": false, "type": "array"}
+        "level": {
+            "required": true,
+            "type": "string",
+            "enum": [
+                "emergency",
+                "alert",
+                "critical",
+                "error",
+                "warning",
+                "notice",
+                "info",
+                "debug"
+            ]
+        },
+        "message": {
+            "required": true,
+            "type": "string",
+            "max": 50000
+        },
+        "channel": {
+            "required": true,
+            "type": "string",
+            "max": 255
+        },
+        "timestamp": {
+            "required": true,
+            "type": "date"
+        },
+        "context": {
+            "required": false,
+            "type": "array"
+        },
+        "extra": {
+            "required": false,
+            "type": "array"
+        }
     },
     "extra_vocabulary": {
-        "note": "The keys the SDKs attach to `extra` on top of whatever the host logged. The canonical source is RanetraceHandler::extra() in ranetrace/ranetrace-php. The Laravel SDK still reports `laravel_version` here; moving it to this vocabulary is in flight, in lockstep with the same move on the error item.",
+        "note": "The keys the SDKs attach to `extra` on top of whatever the host logged. The canonical source is RanetraceHandler::extra() in ranetrace/ranetrace-php. The Laravel SDK reports the same vocabulary since it moved to the shared log builder; its old `laravel_version` key is retired.",
         "keys": {
-            "environment": {"type": "string", "presence": "always"},
-            "php_version": {"type": "string", "presence": "always"},
-            "framework": {"type": "string", "presence": "when the host names one", "note": "Absent rather than null when the host said nothing, so absence reads as \"not said\" instead of \"no framework\"."},
-            "framework_version": {"type": "string", "presence": "when the host names one", "note": "Absent rather than null when the host said nothing."}
+            "environment": {
+                "type": "string",
+                "presence": "always"
+            },
+            "php_version": {
+                "type": "string",
+                "presence": "always"
+            },
+            "framework": {
+                "type": "string",
+                "presence": "when the host names one",
+                "note": "Absent rather than null when the host said nothing, so absence reads as \"not said\" instead of \"no framework\"."
+            },
+            "framework_version": {
+                "type": "string",
+                "presence": "when the host names one",
+                "note": "Absent rather than null when the host said nothing."
+            }
         }
     },
     "examples": {

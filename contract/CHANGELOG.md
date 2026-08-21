@@ -43,10 +43,17 @@ The fixtures beside this file are the source of truth, not the prose below:
 - `headers.json`: the five request headers.
 - `responses.json`: the client's response matrix and the response bodies.
 
-Everything in flight is listed here:
+Nothing is in flight. Every coordinated change below is applied on both sides.
 
-- **The error item's `laravel_version`.** The backend still allow-lists it and normalises it to `framework` plus `framework_version`. `items/errors.json` carries it under `legacy_fields`, not under `fields`. It comes off the allow-list once no deployed Laravel SDK sends it.
-- **The log item's `extra` vocabulary.** This SDK attaches `environment`, `php_version` and, when the host names one, `framework` and `framework_version`. The Laravel SDK still reports `laravel_version` there. `extra` is free-shape at ingest, so this one is a convention between the SDKs rather than a validated shape, and it can move without a backend release.
+## Change log
+
+### 2026-08-21, the `laravel_version` error-item spelling is retired at ingest
+
+Status: **APPLIED on both sides.** The backend's `ALLOWED_ERROR_FIELDS` and validator no longer know the key and no longer normalise it; an item carrying it is rejected like any other unknown key. Both SDKs had already moved to the generic `framework` plus `framework_version` pair (the PHP SDK from its first release, the Laravel SDK in its 1.0.0 release built on this core), so no supported emitter sends it. `items/errors.json` dropped its `legacy_fields` block the same day. A pre-1.0 Laravel SDK still deployed somewhere will have its error batches rejected with a 422 until it is upgraded; that is the intended cut.
+
+### 2026-08-21, the log item's `extra` vocabulary is shared
+
+Status: **APPLIED on both sides.** The Laravel SDK attaches `environment`, `php_version`, `framework` and `framework_version` through the shared log builder; its old `laravel_version` extra key is retired. `extra` is free-shape at ingest, so the backend needed no change.
 
 ## Archive: the Laravel SDK's backend-changes log
 

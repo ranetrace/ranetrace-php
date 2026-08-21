@@ -4,6 +4,11 @@ All notable changes to `ranetrace-php` will be documented in this file.
 
 This file starts here, so releases before it are not recorded; the git history is the record for those.
 
+## [Unreleased]
+
+### Changed
+- `contract/items/errors.json` no longer carries a `legacy_fields` block: the backend retired the `laravel_version` error-item spelling at ingest on 2026-08-21, so the fixture describes exactly the 19 keys the allow-list accepts. The `extra_vocabulary` note in `items/logs.json` and `contract/CHANGELOG.md` record both moves as applied on both sides. No code changed
+
 ## [1.0.0] - 2026-08-20
 
 ### Added

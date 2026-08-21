@@ -40,11 +40,14 @@ test('every item fixture declares its own type and wrapper key', function (strin
         ->and($spec['wrapper'])->toBe(WireContract::endpoints()['endpoints'][$type]['wrapper']);
 })->with(WireContract::itemTypes());
 
-test('the errors fixture keeps laravel_version out of the canonical field set', function (): void {
+test('the errors fixture keeps the retired laravel_version key out entirely', function (): void {
+    // It was tolerated under legacy_fields while deployed Laravel SDKs still
+    // sent it; the ingest dropped it on 2026-08-21, so the fixture carries no
+    // legacy block at all and the key must not creep back into fields.
     $spec = WireContract::item('errors');
 
     expect(DescriptorValidator::topLevelKeys($spec['fields']))->not->toContain('laravel_version')
-        ->and($spec['legacy_fields'])->toHaveKey('laravel_version');
+        ->and($spec)->not->toHaveKey('legacy_fields');
 });
 
 test('the errors fixture pins the nineteen canonical keys', function (): void {
