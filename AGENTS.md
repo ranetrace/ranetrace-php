@@ -133,6 +133,7 @@ echo $ranetrace->javascriptSnippet(['endpoint' => '/ranetrace/js-errors', 'nonce
 
 - CSRF is replaced by a same-origin check: `Origin`, else `Referer`, must match `Host`/`SERVER_NAME` or appear in `javascript_errors.allowed_origins` (full origin or bare authority both accepted). Neither header present is allowed. The script sends no `X-CSRF-TOKEN` here because it is given no token; it can send one, and does when `ranetrace/ranetrace-laravel` renders the same script.
 - `JavaScript\CaptureScript::withConfig(array $config): string` is the seam another SDK builds on: the bare script body with the given runtime config substituted, no `<script>` tag around it. An application host wants `javascriptSnippet()` above instead.
+- **The inlined script is minified**, about 4.3 KB rather than 13.4 KB, so it does not read well on a page. `resources/js/error-tracker.js` in this package is the readable source of exactly that script, and is the file to open when working out what it does. Nothing has to be built to use the SDK: the minified twin is committed and ships in the Composer package, so no consumer needs node or a build step.
 - Set `$_SERVER['RANETRACE_SESSION_ID']` to a per-visit id if you want per-visit grouping. It is HMAC-hashed, never stored raw.
 - `user_agent`, `environment`, `user_id` and `session_id` are server-added and never read from the posted payload.
 - Statuses: 200 (received, ignored by pattern, or sampled out), 403 (disabled or origin rejected), 422 (validation), 500 (internal). Never throws.

@@ -48,6 +48,7 @@
     },
     "scripts": {
         "analyse": "vendor/bin/phpstan analyse",
+        "build-js": "@php bin/build-capture-script",
         "test": "vendor/bin/pest --parallel",
         "test-coverage": "vendor/bin/pest --coverage",
         "format": "vendor/bin/pint"

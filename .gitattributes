@@ -8,4 +8,21 @@
 /phpunit.xml    export-ignore
 /pint.json      export-ignore
 
+# The JavaScript toolchain is maintainer-only: it rebuilds the capture script's
+# minified twin, and that twin is committed precisely so no consumer needs node.
+/bin/build-capture-script export-ignore
+/package.json             export-ignore
+/package-lock.json        export-ignore
+
+# Everything under resources/js ships, including error-tracker.min.js (the body
+# a browser downloads), build-manifest.json (the stamp the freshness guard reads)
+# and the readable error-tracker.js, which is small on disk, never sent to a
+# browser, and the file a consumer debugging the script wants to read.
+
 * text=auto eol=lf
+
+# The build manifest stamps the sha256 of these files, so their bytes have to be
+# the same in every checkout. The rule above already normalises them; this says
+# so where someone loosening it would see the cost.
+resources/js/*.js    text eol=lf
+resources/js/*.json  text eol=lf

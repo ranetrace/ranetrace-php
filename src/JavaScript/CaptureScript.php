@@ -29,14 +29,44 @@ use RuntimeException;
  * This class deliberately does not wrap the result in a `<script>` tag. The tag's
  * attributes are the host's business: this SDK takes a nonce as an option, the
  * Laravel SDK asks `Vite::cspNonce()` for one.
+ *
+ * ## The script is a committed pair, and this class reads the minified half
+ *
+ * `resources/js/error-tracker.js` is the readable source, the file humans edit.
+ * `resources/js/error-tracker.min.js` is its generated twin, and it is the one
+ * read here, because this body is inlined into every page view of every site that
+ * installs either SDK: its comments and indentation were being downloaded by
+ * every visitor on the critical path of a page they were waiting for. Minified it
+ * is about 4.3 KB instead of 13.4 KB, 1.7 KB instead of 4.0 KB over the wire.
+ *
+ * The twin is committed rather than built on install because a PHP package is
+ * installed by Composer, which runs no JavaScript toolchain. A consumer must
+ * never need node, npm or a build step to render this script, so the bytes ship
+ * in the Composer package the way any other resource does.
+ *
+ * A committed generated file can go stale, so `resources/js/build-manifest.json`
+ * stamps the sha256 of both files along with the pinned esbuild version and the
+ * exact command. The suite compares the hashes on every run, which needs no
+ * JavaScript toolchain at all, so a source edit without a rebuild fails a test
+ * here rather than shipping a twin that no longer matches. Rebuild with
+ * `composer build-js` (`bin/build-capture-script`).
+ *
+ * Minification renames every local variable and function, so nothing may identify
+ * this script by a local name or by anything that lives only in a comment. What
+ * survives is string literals, property names, `window` members and the config
+ * keys, which is what the guards in `tests/Unit` key on.
  */
 final class CaptureScript
 {
     /**
      * The one token the template exposes. Changing it here without changing the
      * template ships an unconfigured script that silently does nothing.
+     *
+     * Public because `bin/build-capture-script` and the guards that pin it have
+     * to name the same token this class substitutes. A second spelling of it
+     * somewhere else is exactly the drift this class exists to prevent.
      */
-    private const string CONFIG_TOKEN = '__RANETRACE_CONFIG__';
+    public const string CONFIG_TOKEN = '__RANETRACE_CONFIG__';
 
     /**
      * The script body, ready to be placed inside a `<script>` tag.
@@ -81,14 +111,22 @@ final class CaptureScript
         $template = @file_get_contents(self::templatePath());
 
         if ($template === false) {
-            throw new RuntimeException('Unable to read the Ranetrace JavaScript error tracker template at '.self::templatePath().'.');
+            throw new RuntimeException(
+                'Unable to read the Ranetrace JavaScript error tracker template at '.self::templatePath().'. '.
+                'It is a generated file that ships with the package, so in an application this means a broken install; '.
+                'in a checkout of the package itself, run `composer build-js`.'
+            );
         }
 
         return $template;
     }
 
+    /**
+     * The minified twin, never the readable source: this is the body a browser
+     * downloads. See the class docblock for why the twin is committed.
+     */
     private static function templatePath(): string
     {
-        return dirname(__DIR__, 2).'/resources/js/error-tracker.js';
+        return dirname(__DIR__, 2).'/resources/js/error-tracker.min.js';
     }
 }

@@ -2,6 +2,17 @@
  * Ranetrace JavaScript Error Tracking
  * Version: 1.0.0
  *
+ * Edit this file, then run `composer build-js`: the package ships
+ * error-tracker.min.js, and that generated twin is what
+ * `Ranetrace\Php\JavaScript\CaptureScript` reads and what a browser downloads.
+ * This readable copy never reaches a page. The suite compares the sha256 of both
+ * files against resources/js/build-manifest.json, so an edit here without a
+ * rebuild fails the tests rather than shipping a stale script.
+ *
+ * Minification renames every local variable and function in this file, so nothing
+ * outside it may identify the script by a local name or by a phrase that lives
+ * only in these comments.
+ *
  * This script automatically captures JavaScript errors and sends them to Ranetrace.
  * It includes support for:
  * - Global error handling (window.onerror)

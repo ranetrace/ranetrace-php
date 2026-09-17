@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Ranetrace\Php\Config;
+use Ranetrace\Php\JavaScript\CaptureScript;
 use Ranetrace\Php\Tests\TestCase;
 
 uses(TestCase::class)->in('Unit', 'Feature', 'Contract');
@@ -92,4 +93,37 @@ function deleteTempDirectory(string $directory): void
 function testConfig(array $overrides = []): Config
 {
     return new Config(array_replace(['key' => 'test-api-key-12345'], $overrides));
+}
+
+/**
+ * The runtime config object out of a rendered capture script.
+ *
+ * The script ships minified, so the variable the config is assigned to is a
+ * one-letter name that a different esbuild version may spell differently, and no
+ * test may key on it. The literal is located by the template around it instead: a
+ * probe render gives the exact prefix and suffix the substitution sits between,
+ * whatever the minifier called things.
+ *
+ * `$rendered` may be the bare script or a whole page with the script inside it.
+ *
+ * @return array<string, mixed>
+ */
+function capturedScriptConfig(string $rendered): array
+{
+    [$before, $after] = explode(
+        '{"ranetraceProbe":true}',
+        CaptureScript::withConfig(['ranetraceProbe' => true]),
+        2,
+    );
+
+    $start = mb_strpos($rendered, $before);
+
+    expect($start)->not->toBeFalse('the rendered output does not carry the capture script');
+
+    $start += mb_strlen($before);
+    $end = mb_strpos($rendered, $after, $start);
+
+    expect($end)->not->toBeFalse('the capture script is truncated after the config literal');
+
+    return json_decode(mb_substr($rendered, $start, $end - $start), true, 512, JSON_THROW_ON_ERROR);
 }

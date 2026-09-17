@@ -20,15 +20,15 @@ function snippet(array $overrides = [], array $root = []): Snippet
 /**
  * The runtime config object the rendered script carries.
  *
+ * The script ships minified, so the variable the config is assigned to has a
+ * one-letter name no test may key on. `capturedScriptConfig()` locates the
+ * literal by the template around it instead.
+ *
  * @return array<string, mixed>
  */
 function renderedConfig(string $rendered): array
 {
-    expect($rendered)->toMatch('/const config = \{.*\};/');
-
-    preg_match('/const config = (\{.*\});/', $rendered, $matches);
-
-    return json_decode($matches[1], true, 512, JSON_THROW_ON_ERROR);
+    return capturedScriptConfig($rendered);
 }
 
 test('it renders nothing when javascript error tracking is off', function (array $overrides, array $root): void {

@@ -36,6 +36,16 @@ So:
 - **Record the reasoning behind non-obvious decisions where the next maintainer will hit them**: in the docblock, in the test name, in the commit message. A rule with no recorded reason gets refactored away by someone who assumes it was arbitrary.
 - Run `vendor/bin/pint` before finishing. Run `vendor/bin/phpstan analyse` too.
 
+## The browser capture script is a committed pair
+
+`resources/js/error-tracker.js` is the readable source and the only file to edit. `resources/js/error-tracker.min.js` is its generated twin, and it is what `JavaScript\CaptureScript` reads, because that body is inlined into every page view of every site that installs either SDK: about 4.3 KB instead of 13.4 KB, 1.7 KB instead of 4.0 KB over the wire.
+
+- Edit the source, then run `composer build-js` (`bin/build-capture-script`). It runs the pinned esbuild command, refuses to stamp an output that fails its checks, and writes `resources/js/build-manifest.json`.
+- The twin is committed rather than built on install because Composer runs no JavaScript toolchain and a consumer must never need node. That is also why `bin/build-capture-script`, `package.json` and the lockfile are `export-ignore`d while everything under `resources/js` ships.
+- The manifest stamps the sha256 of **both** files, so an edit to either without a rebuild fails the suite with the command to run. That guard is a hash comparison precisely so it needs no toolchain: the suite runs everywhere, the build runs only on a maintainer's machine.
+- The esbuild version is pinned in `package.json` and in the build script, because a different version can emit different bytes. `npm install` here gets it; without a local install the script falls back to `npx --yes esbuild@<version>`.
+- **Minification renames every local variable and function.** Nothing outside the source may identify the script by a local name or by a phrase that lives only in a comment. Key on string literals, property names, `window` members, the endpoint or the config keys. `JavaScriptCaptureScriptTest` guards the source and may read its own spelling; `JavaScriptCaptureScriptBuildTest` guards the twin and is the model for anything new.
+
 ## Tests
 
 - **Pest, functional style only.** `test('it does the thing', function (): void { ... })`. No class-based PHPUnit tests anywhere in the suite.

@@ -1,0 +1,11 @@
+{
+    "name": "ranetrace-php-build",
+    "private": true,
+    "description": "Maintainer-only toolchain for building resources/js/error-tracker.min.js. Consumers of ranetrace/ranetrace-php never need it: the minified script is committed and ships in the Composer package.",
+    "scripts": {
+        "build": "php bin/build-capture-script"
+    },
+    "devDependencies": {
+        "esbuild": "0.28.2"
+    }
+}

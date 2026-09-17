@@ -6,35 +6,34 @@ use Ranetrace\Php\JavaScript\CaptureScript;
 
 /**
  * `CaptureScript` is the seam both SDKs render the shared browser script through.
- * `JavaScriptCaptureScriptTest` guards the script file itself; these guard the
+ * `JavaScriptCaptureScriptTest` guards the readable source and
+ * `JavaScriptCaptureScriptBuildTest` the minified twin it ships; these guard the
  * substitution, which is the part a consuming host depends on.
- */
-
-/**
- * The runtime config object out of a rendered script.
  *
- * @return array<string, mixed>
+ * What `withConfig()` returns is the minified twin, so nothing here may key on a
+ * local name or on the source's formatting: both are gone. The config literal is
+ * found through `capturedScriptConfig()`, and the assertions below stand on the
+ * substituted JSON itself, which is this class's own output and untouched by the
+ * minifier.
  */
-function renderedScriptConfig(string $script): array
-{
-    preg_match('/const config = (\{.*\});/', $script, $matches);
-
-    return json_decode($matches[1] ?? '', true, 512, JSON_THROW_ON_ERROR);
-}
-
 test('it substitutes the config token completely', function (): void {
     $script = CaptureScript::withConfig(['endpoint' => '/e', 'enabled' => true]);
 
     expect($script)->not->toContain('__RANETRACE_CONFIG__')
-        ->and($script)->toContain('const config = {"endpoint":"/e","enabled":true};');
+        ->and($script)->toContain('{"endpoint":"/e","enabled":true}')
+        ->and(capturedScriptConfig($script))->toBe(['endpoint' => '/e', 'enabled' => true]);
 });
 
 test('it returns the bare script body, leaving the script tag to the host', function (): void {
-    $script = CaptureScript::withConfig(['enabled' => true]);
+    $script = mb_trim(CaptureScript::withConfig(['enabled' => true]));
 
     expect($script)->not->toStartWith('<script')
-        ->and($script)->not->toEndWith('</script>')
-        ->and($script)->toContain("(function() {\n    'use strict';");
+        ->not->toEndWith('</script>')
+        // A self-contained IIFE in strict mode, which is what a host can inline
+        // anywhere without it leaking a name into the page.
+        ->toStartWith('(function()')
+        ->toContain('"use strict"')
+        ->toEndWith('})();');
 });
 
 /**
@@ -45,7 +44,7 @@ test('it returns the bare script body, leaving the script tag to the host', func
 test('a host-specific config key is carried through untouched', function (): void {
     $script = CaptureScript::withConfig(['enabled' => true, 'csrfToken' => 'laravel-token']);
 
-    expect(renderedScriptConfig($script))->toBe(['enabled' => true, 'csrfToken' => 'laravel-token']);
+    expect(capturedScriptConfig($script))->toBe(['enabled' => true, 'csrfToken' => 'laravel-token']);
 });
 
 test('a sample rate of 1.0 stays spelled as a float', function (): void {
@@ -56,7 +55,7 @@ test('a closing script tag inside a config value cannot terminate the host tag e
     $script = CaptureScript::withConfig(['ignoredErrors' => ['</script><script>alert(1)</script>']]);
 
     expect($script)->not->toContain('</script>')
-        ->and(renderedScriptConfig($script)['ignoredErrors'])->toBe(['</script><script>alert(1)</script>']);
+        ->and(capturedScriptConfig($script)['ignoredErrors'])->toBe(['</script><script>alert(1)</script>']);
 });
 
 /**

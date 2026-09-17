@@ -1,0 +1,211 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Rebuild `resources/js/error-tracker.min.js` from `resources/js/error-tracker.js`.
+ *
+ *     composer build-js
+ *
+ * The readable source is the file humans edit. The minified twin is what
+ * `Ranetrace\Php\JavaScript\CaptureScript` reads, and therefore what every
+ * visitor of every consuming site downloads inline, so it is generated here and
+ * committed rather than built on install: a PHP package is installed by Composer,
+ * which runs no JavaScript toolchain, and a consumer must never need node to use
+ * this SDK.
+ *
+ * Because the twin is committed, the two files can drift. `resources/js/build-manifest.json`
+ * records the sha256 of both and the Pest suite compares those hashes on every
+ * run, so an edit to either file without a rebuild fails the suite with the
+ * command to run. That guard needs no JavaScript toolchain, which is the point:
+ * the suite runs everywhere, this script runs only on a maintainer's machine.
+ *
+ * The esbuild version is pinned, because a different version can emit different
+ * bytes for the same input. `npm install` in this repo gets the pinned build;
+ * without a local install this script falls back to `npx --yes esbuild@<version>`,
+ * which fetches that exact version.
+ *
+ * Nothing is stamped unless the output passes every check below, so a manifest in
+ * the repository always describes a twin that was verified.
+ *
+ * Exit codes: 0 built, 1 could not build or the output failed a check.
+ */
+
+use Ranetrace\Php\JavaScript\CaptureScript;
+
+(static function (): never {
+    $root = dirname(__DIR__);
+
+    $fail = static function (string $message): never {
+        fwrite(STDERR, 'build-capture-script: '.$message."\n");
+
+        exit(1);
+    };
+
+    if (! is_file($root.'/vendor/autoload.php')) {
+        $fail('run `composer install` first: this script renders the script through CaptureScript to verify it.');
+    }
+
+    require $root.'/vendor/autoload.php';
+
+    /**
+     * The pinned toolchain. Both halves are recorded in the manifest, so the
+     * exact build is reproducible from the repository alone.
+     */
+    $esbuildVersion = '0.28.2';
+
+    /**
+     * Why each flag is here:
+     *
+     * - `--minify` is whitespace, identifiers and syntax together. Identifier
+     *   mangling is why no test may key on a local variable or function name.
+     * - `--target=es2020` is exactly what the source is written in, which uses
+     *   optional chaining. Naming the target stops esbuild from lowering the
+     *   syntax, which would grow the file and rewrite semantics, and stops it
+     *   from assuming anything newer than the source already requires. This runs
+     *   in customers' visitors' browsers, so the floor never moves by accident.
+     * - No `--bundle` and no `--format`: the source is a self-contained IIFE
+     *   meant to be inlined, it imports nothing, and wrapping it in a module
+     *   format would change the top-level shape a host inlines.
+     * - `--charset=utf8` leaves a non-ASCII string literal as itself instead of
+     *   escaping it, so the output stays readable if one is ever added.
+     * - `--legal-comments=none` means a `@license` or `@preserve` comment cannot
+     *   start shipping to browsers by being spelled a particular way.
+     */
+    $arguments = [
+        'resources/js/error-tracker.js',
+        '--minify',
+        '--target=es2020',
+        '--charset=utf8',
+        '--legal-comments=none',
+        '--log-level=warning',
+        '--outfile=resources/js/error-tracker.min.js',
+    ];
+
+    $sourcePath = $root.'/resources/js/error-tracker.js';
+    $minifiedPath = $root.'/resources/js/error-tracker.min.js';
+    $manifestPath = $root.'/resources/js/build-manifest.json';
+
+    if (! is_file($sourcePath)) {
+        $fail('no source at '.$sourcePath.'.');
+    }
+
+    $local = $root.'/node_modules/.bin/esbuild';
+    $esbuild = is_file($local) ? [$local] : ['npx', '--yes', 'esbuild@'.$esbuildVersion];
+
+    if (is_file($local)) {
+        $installed = trim((string) shell_exec(escapeshellarg($local).' --version 2>/dev/null'));
+
+        if ($installed !== $esbuildVersion) {
+            $fail(sprintf(
+                'the local esbuild is [%s] but this script is pinned to [%s]. Run `npm install` to match package.json.',
+                $installed,
+                $esbuildVersion,
+            ));
+        }
+    } else {
+        fwrite(STDOUT, "No local esbuild. Falling back to npx esbuild@{$esbuildVersion}; run `npm install` here to avoid the fetch.\n");
+    }
+
+    chdir($root);
+
+    $command = implode(' ', array_map(escapeshellarg(...), [...$esbuild, ...$arguments]));
+
+    exec($command.' 2>&1', $output, $status);
+
+    if ($status !== 0) {
+        $fail("esbuild failed:\n".implode("\n", $output));
+    }
+
+    $source = (string) file_get_contents($sourcePath);
+    $minified = (string) file_get_contents($minifiedPath);
+
+    // The token has to survive minification as a bare assignment right-hand
+    // side. Quoted, split or folded into another expression, the JSON would land
+    // somewhere it is not valid JavaScript, and the failure would be a syntax
+    // error on every page of every consuming site.
+    $occurrences = substr_count($minified, CaptureScript::CONFIG_TOKEN);
+
+    if ($occurrences !== 1) {
+        $fail('the config token appears '.$occurrences.' times in the minified output, expected exactly once.');
+    }
+
+    $tokenAt = (int) strpos($minified, CaptureScript::CONFIG_TOKEN);
+    $before = $minified[$tokenAt - 1] ?? '';
+    $after = $minified[$tokenAt + strlen(CaptureScript::CONFIG_TOKEN)] ?? '';
+
+    if ($before !== '=' || $after !== ';') {
+        $fail(sprintf('the config token sits between [%s] and [%s] in the minified output, expected [=] and [;].', $before, $after));
+    }
+
+    foreach (['/*', '*/', '<!--'] as $marker) {
+        if (str_contains($minified, $marker)) {
+            $fail('the minified output still carries a ['.$marker.'] comment marker.');
+        }
+    }
+
+    if (preg_match('#(^|\n)[ \t]*//#', $minified) === 1) {
+        $fail('the minified output still carries a line comment.');
+    }
+
+    if (strlen($minified) >= strlen($source)) {
+        $fail('the minified output is not smaller than the source, so minification did nothing.');
+    }
+
+    // A config value carries whatever a host puts in it. The JSON flags in
+    // `CaptureScript::encode()` exist so a quote, a `</script>` or a non-ASCII
+    // character cannot break the literal or the tag around it, and this proves it
+    // on the file that actually ships rather than on the readable source. U+2028
+    // and U+2029 ride through unescaped and are legal inside a string literal
+    // from ES2019 on, which the es2020 target already requires.
+    $hostile = CaptureScript::withConfig([
+        'endpoint' => '/ranetrace/js-errors?a=1&b=2',
+        'enabled' => true,
+        'sampleRate' => 1.0,
+        'csrfToken' => 'quote " apostrophe \' backslash \\ tag </script><script>alert(1)</script>',
+        'ignoredErrors' => ['naïve 日本語 🙂', '</script>', "line\nbreak", "separator \u{2028}\u{2029}"],
+        'nested' => [['deep' => [1, 2, ['deeper' => null, 'empty' => []]]]],
+    ]);
+
+    if (str_contains($hostile, '</script>')) {
+        $fail('a `</script>` in a config value survived into the rendered script, so it could close the host tag early.');
+    }
+
+    if (trim((string) shell_exec('command -v node 2>/dev/null')) === '') {
+        fwrite(STDOUT, "No node on PATH. Skipping the `node --check` syntax check of the rendered script.\n");
+    } else {
+        $checkPath = (string) tempnam(sys_get_temp_dir(), 'ranetrace-capture-').'.js';
+        file_put_contents($checkPath, $hostile);
+
+        exec('node --check '.escapeshellarg($checkPath).' 2>&1', $checkOutput, $checkStatus);
+        @unlink($checkPath);
+
+        if ($checkStatus !== 0) {
+            $fail("the rendered script is not valid JavaScript:\n".implode("\n", $checkOutput));
+        }
+    }
+
+    file_put_contents($manifestPath, json_encode([
+        'note' => 'Generated by bin/build-capture-script. Edit resources/js/error-tracker.js, then run `composer build-js`.',
+        'source' => 'error-tracker.js',
+        'minified' => 'error-tracker.min.js',
+        'esbuild' => $esbuildVersion,
+        'command' => 'esbuild '.implode(' ', $arguments),
+        'rebuild_with' => 'composer build-js',
+        'sha256' => [
+            'error-tracker.js' => hash('sha256', $source),
+            'error-tracker.min.js' => hash('sha256', $minified),
+        ],
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL);
+
+    fwrite(STDOUT, sprintf(
+        "Built resources/js/error-tracker.min.js with esbuild %s: %d bytes from %d, %d gzipped.\n",
+        $esbuildVersion,
+        strlen($minified),
+        strlen($source),
+        function_exists('gzencode') ? strlen((string) gzencode($minified, 9)) : 0,
+    ));
+
+    exit(0);
+})();

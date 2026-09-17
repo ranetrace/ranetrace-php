@@ -7,6 +7,14 @@ declare(strict_types=1);
  * guarded from here instead. These assertions are not style checks: each one
  * pins a behaviour the relay depends on, so a refactor that quietly drops one
  * fails here rather than in a customer's browser.
+ *
+ * This file guards the READABLE SOURCE, which is where the behaviour is written
+ * and the only file a human edits. What ships is its minified twin, and that is
+ * guarded separately by `JavaScriptCaptureScriptBuildTest`: the twin's hash has
+ * to match the source's stamp, so a behaviour pinned here is a behaviour the
+ * shipped script has. Because the two are tied by that stamp, the assertions
+ * below can keep reading the source's own spelling, comments, names and all,
+ * which nothing outside this file may do.
  */
 function captureScript(): string
 {
