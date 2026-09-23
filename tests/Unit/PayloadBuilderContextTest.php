@@ -13,7 +13,7 @@ use Ranetrace\Php\Support\SecretScrubber;
  * `ranetrace/ranetrace-laravel` does not read a superglobal: it states what its
  * `Request` observed and what its ROUTER says is secret-bearing, and this
  * builder does the shaping. These tests drive that seam directly, because the
- * plain-PHP reporter can never reach it — it has no router to resolve a path
+ * plain-PHP reporter can never reach it: it has no router to resolve a path
  * secret from and no clock but its own.
  */
 

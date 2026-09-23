@@ -342,7 +342,7 @@ final class FileBuffer implements BufferInterface
 
         Quietly::call(static fn (): mixed => file_put_contents($flag, (string) time()));
 
-        $this->log->warning('Ranetrace buffer overflow — oldest items dropped', [
+        $this->log->warning('Ranetrace buffer overflow: oldest items dropped', [
             'type' => $type,
             'dropped' => $dropped,
             'max' => $maxSize,

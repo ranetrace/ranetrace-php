@@ -225,7 +225,7 @@
             }
         }
 
-        // 3) Still oversize — send without keepalive (browser allows larger body
+        // 3) Still oversize: send without keepalive (browser allows larger body
         // but the request won't survive a page unload).
         return { body: body, keepalive: false };
     }
