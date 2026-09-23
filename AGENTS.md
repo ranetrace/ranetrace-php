@@ -147,7 +147,7 @@ echo $ranetrace->javascriptSnippet(['endpoint' => '/ranetrace/js-errors', 'nonce
 - **Internal diagnostics are isolated on purpose.** The SDK writes its own diagnostics to `{buffer_path}/internal-YYYY-MM-DD.log`, never through the host logger, so a failing send cannot be captured, buffered and re-sent in a loop. Do not route them into the application logger, and do not add anything to `excluded_channels` for loop protection.
 - **Two failure postures.** Malformed config throws from the constructor (non-string `key`, non-callable `user_resolver`), and an invalid event name throws from `trackEvent()`. Everything else on a capture path is caught, written to the internal log and dropped. Do not add try/catch around capture calls expecting to see failures there.
 - **`errors.capture_user_email` is off by default.** Only the user id travels until it is turned on.
-- **Both switches are needed.** `RANETRACE_ENABLED=true`, the feature flag, and a non-empty `RANETRACE_KEY`.
+- **Three conditions gate every feature:** the master switch `RANETRACE_ENABLED`, the feature's own flag, and a non-empty `RANETRACE_KEY`. The master switch, errors and events default to on, so a missing key is the usual reason nothing is captured.
 
 ## Docs
 
