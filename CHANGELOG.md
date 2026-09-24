@@ -6,8 +6,19 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-09-23
+
 ### Changed
 - `AGENTS.md` names all three conditions that gate a feature (it said "both switches" and listed three), and says that a missing `RANETRACE_KEY` is the usual reason nothing is captured, since the master switch, errors and events default to on
+
+## [1.0.2] - 2026-09-23
+
+### Changed
+- The internal log line written when the file buffer overflows reads `Ranetrace buffer overflow: oldest items dropped`. It carried an em-dash before, so a log alert or search that matched the old text has to match the new one. Nothing else in this release changes behaviour: the rest is prose in `AGENTS.md`, `CLAUDE.md`, this changelog and code comments, and a test that keeps em-dashes out of the package's prose
+
+## [1.0.1] - 2026-09-17
+
+### Changed
 - **The browser capture script is minified, so it drops from about 13.4 KB to about 4.3 KB, and from 4.0 KB to 1.7 KB over the wire.** It is inlined into every page view of every site that installs either SDK, so its comments and indentation were being downloaded by every visitor on the critical path of a page they were waiting for. With a real runtime config substituted, what `CaptureScript::withConfig()` returns goes from 13925 to 4812 bytes, 4197 to 1974 gzipped. **Behaviour is unchanged**: the same listeners, headers, breadcrumbs, deduplication, keepalive trim ladder, `window.Ranetrace` API and config keys. Nothing to do on upgrade and nothing to install: the minified file is committed and ships in the Composer package, because Composer runs no JavaScript toolchain and no consumer may need node. `resources/js/error-tracker.js` still ships as well and is the readable source of exactly the same script, which is the file to open when working out what it does. The one thing to know is that **every local variable and function in the script is renamed now**, so anything of yours that recognised the script by one of those names, or by a phrase from its header comment such as `Ranetrace JavaScript Error Tracking`, has to key on something minification keeps: a string literal, a property name, a config key, or `window.Ranetrace.captureError`
 - Maintainer note: edit `resources/js/error-tracker.js`, then run `composer build-js` (`bin/build-capture-script`). It runs a pinned esbuild command (`esbuild resources/js/error-tracker.js --minify --target=es2020 --charset=utf8 --legal-comments=none --outfile=resources/js/error-tracker.min.js`, esbuild 0.28.2), verifies the output before stamping anything, and writes `resources/js/build-manifest.json` with the sha256 of both files, the version and the command. The suite compares both hashes on every run, so a source edit without a rebuild, or a hand-edit of the generated file, fails a test that names the command instead of shipping a stale script. A hash comparison is deliberately all the guard needs: the suite runs everywhere, the build runs only on a maintainer's machine. The target is `es2020` because that is exactly what the source is written in, so esbuild neither lowers the syntax nor assumes anything newer than the script already required
 - `JavaScript\CaptureScript::CONFIG_TOKEN` is public. The build script and the guards that pin the substitution have to name the same token the class substitutes, and a second spelling of it somewhere else is the drift this class exists to prevent
