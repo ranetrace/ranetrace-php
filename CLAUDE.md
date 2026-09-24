@@ -36,6 +36,10 @@ So:
 - **Record the reasoning behind non-obvious decisions where the next maintainer will hit them**: in the docblock, in the test name, in the commit message. A rule with no recorded reason gets refactored away by someone who assumes it was arbitrary.
 - Run `vendor/bin/pint` before finishing. Run `vendor/bin/phpstan analyse` too.
 
+## Releasing
+
+- When you tag `vX.Y.Z`, move everything under `## [Unreleased]` in `CHANGELOG.md` to a new `## [X.Y.Z] - YYYY-MM-DD` heading in the commit the tag points at, and leave an empty `## [Unreleased]` above it. A tag without its own heading is a release nobody can read about: v1.0.1 to v1.0.3 shipped with every entry still under `[Unreleased]`.
+
 ## The browser capture script is a committed pair
 
 `resources/js/error-tracker.js` is the readable source and the only file to edit. `resources/js/error-tracker.min.js` is its generated twin, and it is what `JavaScript\CaptureScript` reads, because that body is inlined into every page view of every site that installs either SDK, and the twin is under a third of the source's size, under half once gzipped. `composer build-js` prints the current figures.
