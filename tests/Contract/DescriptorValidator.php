@@ -20,6 +20,10 @@ namespace Ranetrace\Php\Tests\Contract;
  * and `pattern`, with Laravel dot syntax (including `*` wildcards) for nested
  * rules. `max`, `min` and `size` follow Laravel's sizing rules: a number is
  * compared by value, an array by count, a string by character length.
+ *
+ * A `type` may also be a list of those names, for a field that takes any one of
+ * them (`["integer", "string"]`). In such a union the bounds describe the string
+ * member only, because that is the one the backend limits.
  */
 final class DescriptorValidator
 {
@@ -145,16 +149,27 @@ final class DescriptorValidator
         $value = $resolved['value'];
         $violations = [];
 
-        $type = isset($descriptor['type']) && is_string($descriptor['type']) ? $descriptor['type'] : null;
+        $types = self::declaredTypes($descriptor);
+        $type = null;
 
-        if ($type !== null && ! self::matchesType($value, $type)) {
-            return ["'{$path}' must be of type {$type}, got ".get_debug_type($value)];
+        foreach ($types as $candidate) {
+            if (self::matchesType($value, $candidate)) {
+                $type = $candidate;
+
+                break;
+            }
         }
+
+        if ($types !== [] && $type === null) {
+            return ["'{$path}' must be of type ".implode(' or ', $types).', got '.get_debug_type($value)];
+        }
+
+        $bounded = count($types) < 2 || $type === 'string';
 
         [$size, $unit] = self::measure($value, $type);
 
         foreach (['max', 'min', 'size'] as $bound) {
-            if (! isset($descriptor[$bound]) || ! is_numeric($descriptor[$bound])) {
+            if (! $bounded || ! isset($descriptor[$bound]) || ! is_numeric($descriptor[$bound])) {
                 continue;
             }
 
@@ -181,6 +196,23 @@ final class DescriptorValidator
         }
 
         return $violations;
+    }
+
+    /**
+     * The type names a descriptor declares: none, one, or the members of a union.
+     *
+     * @param  array<string, mixed>  $descriptor
+     * @return list<string>
+     */
+    private static function declaredTypes(array $descriptor): array
+    {
+        $type = $descriptor['type'] ?? null;
+
+        if (is_string($type)) {
+            return [$type];
+        }
+
+        return is_array($type) ? array_values(array_filter($type, is_string(...))) : [];
     }
 
     private static function matchesType(mixed $value, string $type): bool

@@ -43,9 +43,17 @@ The fixtures beside this file are the source of truth, not the prose below:
 - `headers.json`: the five request headers.
 - `responses.json`: the client's response matrix and the response bodies.
 
-One change is in flight: the browser name and version in the JavaScript error item's `browser_info` (the 2026-09-30 entry below). Its backend side has to be deployed before this package is released with it. Every other coordinated change below is applied on both sides.
+Two changes are in flight, both dated 2026-09-30 below. The browser name and version in the JavaScript error item's `browser_info`: its backend side has to be deployed before this package is released with it. The typed `user_id` on the JavaScript error item: backend only, with nothing for either SDK to do. Every other coordinated change below is applied on both sides.
 
 ## Change log
+
+### 2026-09-30, the JavaScript error item's `user_id` is an integer or a string
+
+Status: **backend PENDING, no SDK change needed.** The backend's `JavaScriptErrorsBatchController` validates `user_id` as null, an integer, or a string of at most 255 characters, in its main branch but not yet deployed. Until then it still takes any value. Both SDKs already send exactly that shape: `JavaScript\ErrorItemBuilder::build()` takes the host's user id as `int|string|null`, and `ranetrace/ranetrace-laravel` builds its items through it.
+
+The field had no type at ingest, so an array, a boolean or a nested object passed and was stored in the error's context. It is now typed like every other field: a wrongly typed `user_id` fails its item, and with it the whole batch, with a 422. `items/javascript_errors.json` gives the field `"type": ["integer", "string"]` with `"max": 255`, the contract's first union type; the fixture lint in `tests/Contract/DescriptorValidator.php` learned the list form, with the bound applying to the string member only.
+
+This narrows what the backend accepts, which the iron rule does not cover on its own. It is safe to ship alone because it narrows only to what every emitter already sends: no supported SDK can produce a value the new rule rejects.
 
 ### 2026-09-30, the JavaScript error item's `browser_info` carries the browser name and version
 
