@@ -6,6 +6,10 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Added
+- **Every JavaScript error item now names the browser it came from.** `browser_info` carries two more keys, `name` and `version`, so it is exactly nine keys: the seven the browser reports, then these two. They are derived on the server from the user agent the host observed, never read from the browser payload, so a tampered payload cannot set them: its own `name` or `version` is dropped and replaced. `name` is one of `Edge`, `Opera`, `Samsung Internet`, `Firefox`, `Chrome` or `Safari`. `version` is the major version as a string (`"140"`), except Safari's major.minor (`"17.6"`), because Safari ships web-platform features in point releases. Both are null for any other user agent, for a crawler that also claims Chrome (Googlebot does), for headless Chrome, and when there is no user agent at all. The browser capture script is unchanged, so there is nothing to rebuild and nothing to do on upgrade. `ranetrace/ranetrace-laravel` gets the same two keys through the shared builder
+- `Support\BrowserIdentity::fromUserAgent(?string $userAgent)` is where the name and version come from: a readonly pair of `?string $name` and `?string $version`. It reads at most the first 1024 characters of the user agent, and a version longer than five digits is treated as no version, so a crafted header cannot put arbitrary text on the wire
+
 ## [1.0.3] - 2026-09-23
 
 ### Changed

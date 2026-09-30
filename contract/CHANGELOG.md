@@ -43,9 +43,17 @@ The fixtures beside this file are the source of truth, not the prose below:
 - `headers.json`: the five request headers.
 - `responses.json`: the client's response matrix and the response bodies.
 
-Nothing is in flight. Every coordinated change below is applied on both sides.
+One change is in flight: the browser name and version in the JavaScript error item's `browser_info` (the 2026-09-30 entry below). Its backend side has to be deployed before this package is released with it. Every other coordinated change below is applied on both sides.
 
 ## Change log
+
+### 2026-09-30, the JavaScript error item's `browser_info` carries the browser name and version
+
+Status: **backend PENDING, SDK applied in this package.** The backend is learning `'browser_info.name' => 'nullable|string|max:50'` and `'browser_info.version' => 'nullable|string|max:20'` now and deploys before this package is released with the change. `ranetrace/ranetrace-laravel` builds its JavaScript error items through the shared `JavaScript\ErrorItemBuilder`, so it starts sending the two keys on its first `composer update` after that release, with no change of its own.
+
+`browser_info` goes from seven keys to nine: the seven the browser reports, then `name` and `version`. The backend's JavaScript error page shows a browser pill from exactly these two values, and no SDK sent them. They are derived on the server from the user agent the host observed, never read from the browser payload, for the same reason `user_agent` itself is: a browser can claim anything, so a payload's own `name` or `version` is dropped like every other unknown key. `name` is one of six fixed display names and `version` is digits with at most one dot, both null when the user agent names no known browser, belongs to a crawler, or is absent. `items/javascript_errors.json` describes the two fields and carries them in its `full` example.
+
+Until the backend is deployed, the JavaScript errors endpoint is not strict about its field set and drops a key it has no rule for, so a release that went out early would lose the two values rather than have its batches rejected. The ordering still holds, because a dropped value is a silent gap on the dashboard.
 
 ### 2026-08-21, the `laravel_version` error-item spelling is retired at ingest
 

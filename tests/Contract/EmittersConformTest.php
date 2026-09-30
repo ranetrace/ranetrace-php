@@ -7,6 +7,7 @@ use Monolog\LogRecord;
 use Ranetrace\Php\Contract\WireContract;
 use Ranetrace\Php\Errors\ErrorReporter;
 use Ranetrace\Php\Events\EventTracker;
+use Ranetrace\Php\JavaScript\ErrorItemBuilder;
 use Ranetrace\Php\JavaScript\Relay;
 use Ranetrace\Php\Logging\RanetraceHandler;
 use Ranetrace\Php\Support\FingerprintGenerator;
@@ -57,7 +58,11 @@ function contractEmittedPayloads(): array
     ));
 
     (new Relay($config, $buffer, $scrubber, $fingerprints, $log))->handleRequest(
-        ['HTTP_HOST' => 'app.test', 'HTTP_ORIGIN' => 'https://app.test', 'HTTP_USER_AGENT' => 'Test Browser'],
+        [
+            'HTTP_HOST' => 'app.test',
+            'HTTP_ORIGIN' => 'https://app.test',
+            'HTTP_USER_AGENT' => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+        ],
         [
             'message' => "Cannot read properties of undefined (reading 'total')",
             'url' => 'https://app.test/cart',
@@ -109,4 +114,34 @@ test('the error payload never carries the legacy laravel_version key', function 
         ->not->toHaveKey('laravel_version')
         ->toHaveKey('framework')
         ->toHaveKey('framework_version');
+});
+
+/**
+ * `browser_info` is where the SDK adds keys of its own next to what the browser
+ * reports, so its key set is pinned against the fixture both ways: a key the
+ * fixture does not declare would never reach the dashboard, and one the SDK
+ * stops sending would silently empty a column there.
+ */
+test('the emitted browser info keys are exactly the ones the fixture declares', function (): void {
+    $declared = [];
+
+    foreach (array_keys(WireContract::item('javascript_errors')['fields']) as $field) {
+        if (str_starts_with((string) $field, 'browser_info.')) {
+            $declared[] = mb_substr((string) $field, mb_strlen('browser_info.'));
+        }
+    }
+
+    expect(array_keys(contractEmittedPayloads()['javascript_errors']['browser_info']))
+        ->toBe($declared)
+        ->toBe([...ErrorItemBuilder::BROWSER_INFO_KEYS, 'name', 'version']);
+});
+
+test('the emitted javascript error satisfies the field spec, browser name and version included', function (): void {
+    $payload = contractEmittedPayloads()['javascript_errors'];
+    $spec = WireContract::item('javascript_errors');
+
+    expect($payload['browser_info'])
+        ->name->toBe('Chrome')
+        ->version->toBe('140')
+        ->and(DescriptorValidator::violations($spec['fields'], $payload, false, []))->toBe([]);
 });

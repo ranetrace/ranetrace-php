@@ -507,10 +507,12 @@ test('it scrubs the context and replaces it wholesale when it is oversize', func
         ->and($items[1]['context'])->toBe(['_truncated' => 'Context exceeded 50KB limit and was removed']);
 });
 
-test('browser info is rebuilt as exactly seven keys, dropping unknown ones', function (): void {
+test('browser info is rebuilt as exactly nine keys, dropping unknown ones', function (): void {
     $buffer = new ArrayBuffer;
 
-    relay($buffer)->handleRequest(relayServer(), relayPayload([
+    relay($buffer)->handleRequest(relayServer([
+        'HTTP_USER_AGENT' => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+    ]), relayPayload([
         'browser_info' => [
             'screen_width' => 1920,
             'connection_type' => '4g',
@@ -526,10 +528,12 @@ test('browser info is rebuilt as exactly seven keys, dropping unknown ones', fun
         'device_memory' => null,
         'hardware_concurrency' => null,
         'connection_type' => '4g',
+        'name' => 'Chrome',
+        'version' => '140',
     ]);
 });
 
-test('browser info is still the full seven keys when the browser sent none', function (): void {
+test('browser info is still the full nine keys when the browser sent none', function (): void {
     $buffer = new ArrayBuffer;
 
     relay($buffer)->handleRequest(relayServer(), relayPayload());
@@ -542,7 +546,37 @@ test('browser info is still the full seven keys when the browser sent none', fun
         'device_memory',
         'hardware_concurrency',
         'connection_type',
+        'name',
+        'version',
     ]);
+});
+
+test('the browser name and version come from the observed user agent, never from the payload', function (): void {
+    $buffer = new ArrayBuffer;
+
+    relay($buffer)->handleRequest(relayServer([
+        'HTTP_USER_AGENT' => 'Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0',
+    ]), relayPayload([
+        'browser_info' => ['name' => '<script>alert(1)</script>', 'version' => str_repeat('9', 500)],
+    ]));
+
+    expect(firstJavascriptError($buffer)['browser_info'])
+        ->name->toBe('Firefox')
+        ->version->toBe('131');
+});
+
+test('the browser name and version are null when there is no user agent', function (): void {
+    $buffer = new ArrayBuffer;
+    $server = relayServer();
+    unset($server['HTTP_USER_AGENT']);
+
+    relay($buffer)->handleRequest($server, relayPayload([
+        'browser_info' => ['name' => 'Chrome', 'version' => '140'],
+    ]));
+
+    expect(firstJavascriptError($buffer)['browser_info'])
+        ->name->toBeNull()
+        ->version->toBeNull();
 });
 
 test('the session id is hashed, never sent raw', function (): void {

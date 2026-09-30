@@ -6,6 +6,7 @@ namespace Ranetrace\Php\JavaScript;
 
 use DateTimeImmutable;
 use Ranetrace\Php\Config;
+use Ranetrace\Php\Support\BrowserIdentity;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\Scrubber;
@@ -22,12 +23,17 @@ use Ranetrace\Php\Support\Scrubber;
  * filtered: an unknown key from a tampered payload is dropped by construction
  * and a missing one is null. `user_agent`, `environment`, `user_id` and
  * `session_id` never come from the payload at all, because a browser can claim
- * anything; the host observes them and passes them in.
+ * anything; the host observes them and passes them in. For the same reason the
+ * browser's `name` and `version` in `browser_info` are derived from that
+ * host-observed user agent, never read from the payload.
  */
 final class ErrorItemBuilder
 {
     /**
-     * The only `browser_info` keys that reach the wire, in wire order.
+     * The `browser_info` keys taken from the browser payload, in wire order.
+     * On the wire they are followed by `name` and `version`, which the builder
+     * derives from the host-observed user agent, so a payload's own `name` or
+     * `version` is dropped with every other unknown key.
      *
      * @var array<int, string>
      */
@@ -102,7 +108,7 @@ final class ErrorItemBuilder
                 self::MAX_CONTEXT_BYTES,
                 'Context exceeded 50KB limit and was removed',
             ),
-            'browser_info' => $this->browserInfo($payload['browser_info'] ?? []),
+            'browser_info' => $this->browserInfo($payload['browser_info'] ?? [], $userAgent),
         ];
     }
 
@@ -143,12 +149,13 @@ final class ErrorItemBuilder
     }
 
     /**
-     * Exactly seven keys, always, in wire order. Unknown keys are dropped by
-     * construction and missing ones are null.
+     * Exactly nine keys, always, in wire order: the seven the browser reports,
+     * then the `name` and `version` its user agent names. Unknown keys are
+     * dropped by construction and missing ones are null.
      *
      * @return array<string, mixed>
      */
-    private function browserInfo(mixed $browserInfo): array
+    private function browserInfo(mixed $browserInfo, ?string $userAgent): array
     {
         $source = is_array($browserInfo) ? $browserInfo : [];
         $info = [];
@@ -156,6 +163,11 @@ final class ErrorItemBuilder
         foreach (self::BROWSER_INFO_KEYS as $key) {
             $info[$key] = $source[$key] ?? null;
         }
+
+        $browser = BrowserIdentity::fromUserAgent($userAgent);
+
+        $info['name'] = $browser->name;
+        $info['version'] = $browser->version;
 
         return $info;
     }

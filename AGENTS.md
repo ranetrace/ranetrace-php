@@ -136,6 +136,7 @@ echo $ranetrace->javascriptSnippet(['endpoint' => '/ranetrace/js-errors', 'nonce
 - **The inlined script is minified**, under a third of the readable source's size, so it does not read well on a page. `resources/js/error-tracker.js` in this package is the readable source of exactly that script, and is the file to open when working out what it does. Nothing has to be built to use the SDK: the minified twin is committed and ships in the Composer package, so no consumer needs node or a build step.
 - Set `$_SERVER['RANETRACE_SESSION_ID']` to a per-visit id if you want per-visit grouping. It is HMAC-hashed, never stored raw.
 - `user_agent`, `environment`, `user_id` and `session_id` are server-added and never read from the posted payload.
+- `browser_info.name` and `browser_info.version` are derived from that server-observed user agent (`Support\BrowserIdentity`), never read from the payload: one of Edge, Opera, Samsung Internet, Firefox, Chrome or Safari, and the major version (Safari keeps major.minor), or null for anything else, crawlers included.
 - Statuses: 200 (received, ignored by pattern, or sampled out), 403 (disabled or origin rejected), 422 (validation), 500 (internal). Never throws.
 
 ## Common pitfalls

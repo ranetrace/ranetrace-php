@@ -7,7 +7,8 @@
         "There is no allow-list here: a key outside `fields` is dropped by the validator rather than rejecting the item. Both SDKs still send exactly the fifteen top-level keys in `fields`.",
         "`user_agent`, `environment`, `user_id` and `session_id` are added by the SDK relay from the server side and are never read from the browser payload.",
         "A breadcrumb's `timestamp`, `category` and `message` are required by the app for every breadcrumb present, so a relay that keeps a breadcrumb with any of them missing poisons the batch.",
-        "`browser_info` is rebuilt from a fixed seven-key list rather than filtered, so an unknown key from a tampered browser payload never reaches the wire and a missing one arrives as null."
+        "`browser_info` is rebuilt rather than filtered, as exactly nine keys: the seven the browser reports, taken from a fixed list, then `name` and `version`, which the SDK derives from the server-observed user agent. An unknown key from a tampered browser payload never reaches the wire, a payload's own `name` or `version` is dropped and replaced by the derived value, and a missing key arrives as null.",
+        "`browser_info.name` is one of `Edge`, `Opera`, `Samsung Internet`, `Firefox`, `Chrome` or `Safari`, and null for anything else, including crawlers and an absent user agent. `browser_info.version` is the major version (`140`), except Safari's major.minor (`17.6`): always a string of digits with at most one dot, or null."
     ],
     "fields": {
         "message": {"required": true, "type": "string", "max": 2000},
@@ -35,7 +36,9 @@
         "browser_info.viewport_height": {"required": false, "type": "integer"},
         "browser_info.device_memory": {"required": false, "type": "number"},
         "browser_info.hardware_concurrency": {"required": false, "type": "integer"},
-        "browser_info.connection_type": {"required": false, "type": "string"}
+        "browser_info.connection_type": {"required": false, "type": "string"},
+        "browser_info.name": {"required": false, "type": "string", "max": 50},
+        "browser_info.version": {"required": false, "type": "string", "max": 20}
     },
     "examples": {
         "minimal": {
@@ -78,7 +81,9 @@
                 "viewport_height": 900,
                 "device_memory": 8,
                 "hardware_concurrency": 10,
-                "connection_type": "4g"
+                "connection_type": "4g",
+                "name": "Chrome",
+                "version": "140"
             }
         }
     }
