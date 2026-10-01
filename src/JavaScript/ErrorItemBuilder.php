@@ -10,6 +10,7 @@ use Ranetrace\Php\Support\BrowserIdentity;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\Scrubber;
+use Ranetrace\Php\Support\UserId;
 
 /**
  * Shapes one browser error report into the fifteen-key JavaScript error item
@@ -67,7 +68,7 @@ final class ErrorItemBuilder
     /**
      * @param  array<string, mixed>  $payload  The validated browser payload.
      * @param  string|null  $userAgent  Observed by the host, never read from the payload.
-     * @param  int|string|null  $userId  The authenticated user, as the host knows them.
+     * @param  int|string|null  $userId  The authenticated user, as the host knows them. A string the backend would reject for its length is sent as null.
      * @param  string|null  $sessionId  Already hashed. Never the raw session id: a leaked payload must not be replayable as a session.
      * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues  Path segment values to redact from the reported URL and from any URL inside the breadcrumbs or context: a fixed list, or a per-URL resolver for a host with a router.
      * @param  string|null  $timestampFallback  Used when the payload names no timestamp. Null reads this process's clock, which a host with a freezable clock of its own will not want.
@@ -100,7 +101,7 @@ final class ErrorItemBuilder
             'url' => $this->scrubber->scrubUrlPath($this->scrubber->scrubUrl($url), $sensitivePathValues),
             'timestamp' => $this->timestamp($payload, $timestampFallback),
             'environment' => (string) $this->config->get('environment', 'production'),
-            'user_id' => $userId,
+            'user_id' => UserId::accepted($userId),
             'session_id' => $sessionId,
             'breadcrumbs' => $this->breadcrumbs($payload['breadcrumbs'] ?? [], $sensitivePathValues),
             'context' => PayloadSizer::capBytes(

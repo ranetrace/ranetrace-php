@@ -6,7 +6,8 @@
         "Transcribed from the backend app's ErrorsBatchController (validator rules plus ALLOWED_ERROR_FIELDS), verified 2026-08-19; the legacy laravel_version spelling was removed from the allow-list on 2026-08-21.",
         "This is the only type with a strict allow-list: an item carrying any key outside `fields` is rejected, and one rejected item takes the whole batch down with a 422. The retired Laravel SDK spelling `laravel_version` is such a key now: it was tolerated at ingest while deployed SDKs still sent it, and both SDKs ship the generic framework pair.",
         "The canonical SDK shape is the 19 keys in `fields`, all always present, nullable ones sent as null. The `minimal` example is what the app accepts, not what any SDK sends.",
-        "The `full` example populates every field at once so a consumer exercises every rule in one POST. No single SDK run produces it: `headers`, `url` and `method` are null in a console context and `console_command`, `console_arguments` are null in a web context. The `console` example shows the real console shape."
+        "The `full` example populates every field at once so a consumer exercises every rule in one POST. No single SDK run produces it: `headers`, `url` and `method` are null in a console context and `console_command`, `console_arguments` are null in a web context. The `console` example shows the real console shape.",
+        "`user` is null or an object with only the keys `id` and `email` (Laravel's `array:id,email`); any other key rejects the batch. `user.id` is required whenever `user` is not null, as an integer or a string of at most 255 characters. `user.email` is whatever the host's user record holds, so it is a string of at most 255 characters with no address-format check, and it is null unless the host opted in to sending it."
     ],
     "fields": {
         "message": {
@@ -65,10 +66,24 @@
         },
         "user": {
             "required": false,
-            "type": "array"
+            "type": "array",
+            "keys": [
+                "id",
+                "email"
+            ]
         },
-        "user.*": {
-            "required": false
+        "user.id": {
+            "required": true,
+            "type": [
+                "integer",
+                "string"
+            ],
+            "max": 255
+        },
+        "user.email": {
+            "required": false,
+            "type": "string",
+            "max": 255
         },
         "url": {
             "required": false,

@@ -413,6 +413,49 @@ test('it sends no user when the resolver reports nobody', function (): void {
     expect($payload['user'])->toBeNull();
 });
 
+test('it sends no user when the resolver reports an id the backend would reject', function (mixed $id): void {
+    $payload = reportedPayload(new RuntimeException('Something broke'), [
+        'user_resolver' => static fn (): array => ['id' => $id, 'email' => 'jane@example.test'],
+        'errors' => ['capture_user_email' => true],
+    ]);
+
+    expect($payload['user'])->toBeNull()
+        ->and($payload['message'])->toBe('Something broke');
+})->with([
+    'float' => [42.0],
+    'boolean' => [true],
+    'array' => [[42]],
+    'object' => [new stdClass],
+    'string past 255 characters' => [str_repeat('a', 256)],
+    'multibyte string past 255 characters' => [str_repeat('é', 256)],
+]);
+
+test('it sends the user without an email when the resolver reports one the backend would reject', function (mixed $email): void {
+    $payload = reportedPayload(new RuntimeException('Something broke'), [
+        'user_resolver' => static fn (): array => ['id' => 'usr_42', 'email' => $email],
+        'errors' => ['capture_user_email' => true],
+    ]);
+
+    expect($payload['user'])->toBe(['id' => 'usr_42', 'email' => null]);
+})->with([
+    'integer' => [42],
+    'array' => [['jane@example.test']],
+    'object' => [new stdClass],
+    'string past 255 characters' => [str_repeat('a', 246).'@shop.test'],
+]);
+
+test('it sends an id and an email at the backend bound of 255 characters as they are', function (): void {
+    $id = str_repeat('é', 255);
+    $email = str_repeat('a', 245).'@shop.test';
+
+    $payload = reportedPayload(new RuntimeException('Something broke'), [
+        'user_resolver' => static fn (): array => ['id' => $id, 'email' => $email],
+        'errors' => ['capture_user_email' => true],
+    ]);
+
+    expect($payload['user'])->toBe(['id' => $id, 'email' => $email]);
+});
+
 test('it still reports the error when the host user resolver throws', function (): void {
     $payload = reportedPayload(new RuntimeException('Something broke'), [
         'user_resolver' => static fn (): array => throw new LogicException('No auth here'),

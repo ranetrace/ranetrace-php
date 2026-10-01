@@ -8,6 +8,7 @@ use DateTimeImmutable;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\Diagnostics;
 use Ranetrace\Php\Support\Scrubber;
+use Ranetrace\Php\Support\UserId;
 use Throwable;
 
 /**
@@ -413,7 +414,12 @@ final class PayloadBuilder
      * resolver is host code called from inside the capture path, so its failure
      * is contained here rather than costing the whole error report.
      *
-     * @return array{id: mixed, email: mixed}|null
+     * The backend takes the id only as an int or a string of at most 255
+     * characters and the email only as a string of at most 255 characters, and
+     * one item of any other shape rejects the whole batch, so a resolver that
+     * reports anything else sends no user, or no email, instead.
+     *
+     * @return array{id: int|string, email: ?string}|null
      */
     private function user(): ?array
     {
@@ -433,15 +439,25 @@ final class PayloadBuilder
             return null;
         }
 
-        if (! is_array($resolved) || ! array_key_exists('id', $resolved) || $resolved['id'] === null) {
+        if (! is_array($resolved)) {
             return null;
         }
 
+        $id = UserId::accepted($resolved['id'] ?? null);
+
+        if ($id === null) {
+            return null;
+        }
+
+        $email = $resolved['email'] ?? null;
+
         return [
-            'id' => $resolved['id'],
+            'id' => $id,
             'email' => $this->config->get('errors.capture_user_email') === true
-                ? ($resolved['email'] ?? null)
-                : null,
+                && is_string($email)
+                && mb_strlen($email) <= UserId::MAX_LENGTH
+                    ? $email
+                    : null,
         ];
     }
 

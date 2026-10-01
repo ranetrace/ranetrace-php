@@ -6,15 +6,16 @@
         "Transcribed from the backend app's EventsBatchController, verified 2026-08-19.",
         "There is no allow-list here: a key outside `fields` is dropped by the validator rather than rejecting the item. Both SDKs still send exactly the seven keys in `fields`, because the shape is what the dashboard reads.",
         "`additional_checks` are enforced after the field rules and reject the item (and therefore the whole batch) just as hard. An example that satisfies `fields` but trips one of them is not a valid example.",
-        "The endpoint also applies burst protection per IP, per session hash and per website before validation. That is a 429 on the request, not an item rule, so it is described in responses.json rather than here."
+        "The endpoint also applies burst protection per IP, per session hash and per website before validation. That is a 429 on the request, not an item rule, so it is described in responses.json rather than here.",
+        "`user` is null or an object with only the key `id`: events carry no email, and an `email` or any other key rejects the batch, although the endpoint drops unknown top-level keys. `user.id` is required whenever `user` is not null, as an integer or a string of at most 255 characters."
     ],
     "fields": {
         "event_name": {"required": true, "type": "string", "min": 3, "max": 50, "pattern": "/^[a-z][a-z0-9_]*$/"},
         "timestamp": {"required": true, "type": "date"},
         "properties": {"required": false, "type": "array"},
         "properties.*": {"required": false},
-        "user": {"required": false, "type": "array"},
-        "user.*": {"required": false},
+        "user": {"required": false, "type": "array", "keys": ["id"]},
+        "user.id": {"required": true, "type": ["integer", "string"], "max": 255},
         "url": {"required": false, "type": "string", "max": 2000},
         "user_agent_hash": {"required": false, "type": "string", "size": 64},
         "session_id_hash": {"required": false, "type": "string", "size": 64}

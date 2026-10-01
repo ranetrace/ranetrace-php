@@ -675,3 +675,12 @@ test('a javascript error over the per-item byte budget is shrunk before it is bu
         ->and($item['breadcrumbs'])->toBe(['_truncated' => 'Field exceeded the per-item budget and was removed'])
         ->and(mb_strlen((string) json_encode($item), '8bit'))->toBeLessThanOrEqual(ItemByteBudget::MAX_ITEM_BYTES);
 });
+
+test('the user id is null when the resolver reports a string the backend would reject for its length', function (): void {
+    $buffer = new ArrayBuffer;
+
+    relay($buffer, [], ['user_resolver' => fn (): array => ['id' => str_repeat('a', 256)]])
+        ->handleRequest(relayServer(), relayPayload());
+
+    expect(firstJavascriptError($buffer)['user_id'])->toBeNull();
+});

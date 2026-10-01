@@ -6,6 +6,7 @@ namespace Ranetrace\Php\Events;
 
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\Scrubber;
+use Ranetrace\Php\Support\UserId;
 
 /**
  * Shapes one tracked event into the seven-key event item the Ranetrace API
@@ -25,14 +26,14 @@ final class EventItemBuilder
 
     /**
      * @param  array<array-key, mixed>  $properties  Free-form; sanitized and secret-scrubbed here.
-     * @param  array{id: mixed}|null  $user  Only the id travels; events carry no email.
+     * @param  array{id: mixed}|null  $user  Only the id travels; events carry no email. An id the backend would reject sends no user.
      * @param  string  $timestamp  ISO 8601 capture time, from the host's clock.
      * @param  string|null  $url  The URL of the request the event happened in, unscrubbed. Null for a console process.
      * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues  Path segment values to redact from $url and from any URL hiding in $properties: a fixed list, or a per-URL resolver for a host with a router. Null means query-only scrubbing.
      * @return array{
      *     event_name: string,
      *     properties: mixed,
-     *     user: array{id: mixed}|null,
+     *     user: array{id: int|string}|null,
      *     timestamp: string,
      *     url: string|null,
      *     user_agent_hash: string,
@@ -49,6 +50,8 @@ final class EventItemBuilder
         string $sessionIdHash,
         array|callable|null $sensitivePathValues = null,
     ): array {
+        $userId = UserId::accepted($user['id'] ?? null);
+
         return [
             'event_name' => $name,
             // The host's declared path secrets are passed through, so a URL
@@ -58,7 +61,7 @@ final class EventItemBuilder
                 DataSanitizer::sanitizeForSerialization($properties),
                 $sensitivePathValues,
             ),
-            'user' => $user,
+            'user' => $userId === null ? null : ['id' => $userId],
             'timestamp' => $timestamp,
             'url' => $url === null ? null : $this->scrubber->scrubUrlPath(
                 $this->scrubber->scrubUrl($url),

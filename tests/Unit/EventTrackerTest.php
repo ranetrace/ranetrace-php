@@ -116,6 +116,26 @@ test('it falls back to the configured user resolver and keeps only the id', func
     expect(firstEvent($buffer)['user'])->toBe(['id' => 7]);
 });
 
+test('the user is null when the id is a string the backend would reject for its length', function (array $overrides, int|string|null $explicitId): void {
+    $buffer = new ArrayBuffer;
+
+    eventTracker($buffer, $overrides)->track('user_logged_in', [], $explicitId);
+
+    expect(firstEvent($buffer)['user'])->toBeNull();
+})->with([
+    'explicit id' => [[], str_repeat('a', 256)],
+    'resolved id' => [['user_resolver' => fn (): array => ['id' => str_repeat('a', 256)]], null],
+]);
+
+test('an id at the backend bound of 255 characters is sent as it is', function (): void {
+    $buffer = new ArrayBuffer;
+    $id = str_repeat('é', 255);
+
+    eventTracker($buffer)->track('user_logged_in', [], $id);
+
+    expect(firstEvent($buffer)['user'])->toBe(['id' => $id]);
+});
+
 test('the user is null when nothing resolves one', function (): void {
     $buffer = new ArrayBuffer;
 

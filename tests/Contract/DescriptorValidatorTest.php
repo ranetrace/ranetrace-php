@@ -28,3 +28,26 @@ test('a union type rejects a value of no member and a string past its bound', fu
     'array' => [[1, 2]],
     'string past the bound' => [str_repeat('a', 256)],
 ]);
+
+/**
+ * `keys` is the lint's spelling of Laravel's `array:id,email`: an array whose
+ * keys are all in the list, so one unknown key rejects the item.
+ */
+test('a keys list accepts an array whose keys are all in it', function (array $user): void {
+    $fields = ['user' => ['required' => false, 'type' => 'array', 'keys' => ['id', 'email']]];
+
+    expect(DescriptorValidator::violations($fields, ['user' => $user]))->toBe([]);
+})->with([
+    'every key' => [['id' => 7, 'email' => null]],
+    'some of the keys' => [['id' => 7]],
+    'no keys' => [[]],
+]);
+
+test('a keys list rejects an array with a key outside it', function (array $user): void {
+    $fields = ['user' => ['required' => false, 'type' => 'array', 'keys' => ['id', 'email']]];
+
+    expect(DescriptorValidator::violations($fields, ['user' => $user]))->toHaveCount(1);
+})->with([
+    'an extra key' => [['id' => 7, 'email' => null, 'name' => 'Jane']],
+    'a list' => [[7]],
+]);

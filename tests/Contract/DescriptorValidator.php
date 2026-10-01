@@ -16,14 +16,17 @@ namespace Ranetrace\Php\Tests\Contract;
  * this is a lint over them.
  *
  * The vocabulary it understands is the one the fixtures use: `required`, `type`
- * (string, integer, number, boolean, array, date), `max`, `min`, `size`, `enum`
- * and `pattern`, with Laravel dot syntax (including `*` wildcards) for nested
+ * (string, integer, number, boolean, array, date), `max`, `min`, `size`, `enum`,
+ * `pattern` and `keys`, with Laravel dot syntax (including `*` wildcards) for nested
  * rules. `max`, `min` and `size` follow Laravel's sizing rules: a number is
  * compared by value, an array by count, a string by character length.
  *
  * A `type` may also be a list of those names, for a field that takes any one of
  * them (`["integer", "string"]`). In such a union the bounds describe the string
  * member only, because that is the one the backend limits.
+ *
+ * `keys` lists the only keys an array may carry, Laravel's `array:id,email`: a
+ * key outside it, including a list's numeric index, breaks the rule.
  */
 final class DescriptorValidator
 {
@@ -183,6 +186,14 @@ final class DescriptorValidator
 
             if ($broken) {
                 $violations[] = "'{$path}' breaks {$bound} {$descriptor[$bound]}: {$size} {$unit}";
+            }
+        }
+
+        if (isset($descriptor['keys']) && is_array($descriptor['keys']) && is_array($value)) {
+            $unknown = array_diff(array_map(strval(...), array_keys($value)), $descriptor['keys']);
+
+            if ($unknown !== []) {
+                $violations[] = "'{$path}' carries keys outside ".implode(', ', $descriptor['keys']).': '.implode(', ', $unknown);
             }
         }
 
