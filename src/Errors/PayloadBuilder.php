@@ -6,9 +6,12 @@ namespace Ranetrace\Php\Errors;
 
 use DateTimeImmutable;
 use Ranetrace\Php\Config;
+use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\Diagnostics;
+use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
+use ReflectionMethod;
 use Throwable;
 
 /**
@@ -27,9 +30,14 @@ use Throwable;
  * observes per capture, it answers through {@see ErrorContext}. Nothing here
  * reaches for a superglobal or a framework.
  *
- * The framework identity is a pair, `framework` and `framework_version`, both
- * always present and both nullable. That is why the item is 19 keys rather than
- * the 18 the Laravel SDK once sent under `laravel_version`, which is retired.
+ * The item is 20 keys, all always present. The framework identity is a pair,
+ * `framework` and `framework_version`, both nullable, which replaced the
+ * `laravel_version` the Laravel SDK once sent and which is retired.
+ *
+ * `exception_context` is read from the throwable itself, not from
+ * {@see ErrorContext}: it is what the throwable's own `context()` method
+ * returns, the array Laravel's log reporter merges into a log entry, so it
+ * travels with the throwable and needs no adapter code in either SDK.
  */
 final class PayloadBuilder
 {
@@ -73,6 +81,27 @@ final class PayloadBuilder
     private const int MAX_CONSOLE_ARGV_LENGTH = 500;
 
     /**
+     * Bounds on `exception_context`. The backend allows 100 top-level keys, 5
+     * levels of nesting and 16,384 bytes JSON-encoded, and a context past any
+     * of them fails its item and so the whole batch with a 422. The SDK keeps
+     * half of each as headroom: a context is host data that can grow without
+     * the host noticing, and trimming it here costs part of one context where
+     * crossing the backend's line costs a batch of up to a thousand items.
+     *
+     * The byte cap equals {@see ItemByteBudget::MAX_ITEM_FIELD_BYTES}, so a
+     * context that fits here is never replaced wholesale by that budget.
+     * String values are held to the header value cap, so one long value cannot
+     * crowd out every key after it.
+     */
+    private const int MAX_EXCEPTION_CONTEXT_KEYS = 50;
+
+    private const int MAX_EXCEPTION_CONTEXT_DEPTH = 3;
+
+    private const int MAX_EXCEPTION_CONTEXT_STRING_LENGTH = 500;
+
+    private const int MAX_EXCEPTION_CONTEXT_BYTES = 8_192;
+
+    /**
      * Request headers considered safe to capture in plaintext. Every other
      * header is masked, so a header carrying a secret that we did not
      * anticipate is masked by default rather than leaked.
@@ -107,7 +136,7 @@ final class PayloadBuilder
     ) {}
 
     /**
-     * Build the 19-key error item.
+     * Build the 20-key error item.
      *
      * @return array{
      *     message: string,
@@ -129,6 +158,7 @@ final class PayloadBuilder
      *     is_console: bool,
      *     console_command: string|null,
      *     console_arguments: array<int, string>|null,
+     *     exception_context: array<array-key, mixed>|null,
      * }
      */
     public function build(Throwable $throwable, ErrorContext $context): array
@@ -164,7 +194,111 @@ final class PayloadBuilder
             'is_console' => $isConsole,
             'console_command' => $isConsole ? $this->consoleCommand($context) : null,
             'console_arguments' => $isConsole ? $this->consoleArguments($context) : null,
+            'exception_context' => $this->exceptionContext($throwable, $context),
         ];
+    }
+
+    /**
+     * What the throwable's own public `context()` method returns, flattened,
+     * scrubbed and bounded, or null when it has none to give.
+     *
+     * The method is host code called from inside the capture path, so a
+     * `context()` that throws costs the context and nothing else. URL values
+     * are scrubbed with the per-URL resolver the Referer uses, because a
+     * context holds URLs from requests other than this one.
+     *
+     * @return array<array-key, mixed>|null
+     */
+    private function exceptionContext(Throwable $throwable, ErrorContext $context): ?array
+    {
+        if (! method_exists($throwable, 'context') || ! (new ReflectionMethod($throwable, 'context'))->isPublic()) {
+            return null;
+        }
+
+        try {
+            $raw = $throwable->context();
+
+            if (! is_array($raw) || $raw === []) {
+                return null;
+            }
+
+            $scrubbed = $this->scrubber->scrubDeep(
+                DataSanitizer::sanitizeForSerialization($raw),
+                $context->refererPathValues(...),
+            );
+        } catch (Throwable $failure) {
+            $this->log->warning('Ranetrace could not read the exception context', [
+                'exception' => $failure->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        if (! is_array($scrubbed) || $scrubbed === []) {
+            return null;
+        }
+
+        return $this->fitExceptionContext($this->boundExceptionContextLevel(
+            array_slice($scrubbed, 0, self::MAX_EXCEPTION_CONTEXT_KEYS, true),
+            1,
+        ));
+    }
+
+    /**
+     * Cut every array nested past the depth cap down to the depth marker, and
+     * every string value down to the string cap. `$level` is the nesting level
+     * of `$values` itself, counted the way the backend does: a flat array is
+     * level 1.
+     *
+     * @param  array<array-key, mixed>  $values
+     * @return array<array-key, mixed>
+     */
+    private function boundExceptionContextLevel(array $values, int $level): array
+    {
+        foreach ($values as $key => $value) {
+            if (is_array($value)) {
+                $values[$key] = $level >= self::MAX_EXCEPTION_CONTEXT_DEPTH
+                    ? DataSanitizer::MAX_DEPTH_MARKER
+                    : $this->boundExceptionContextLevel($value, $level + 1);
+
+                continue;
+            }
+
+            if (is_string($value)) {
+                $values[$key] = $this->truncate($value, self::MAX_EXCEPTION_CONTEXT_STRING_LENGTH);
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * Drop trailing top-level keys until the context fits the byte cap, null
+     * when not even its first key does.
+     *
+     * A context JSON cannot encode at all (invalid UTF-8, an infinite float) is
+     * null too: sent as it is, it would fail to encode the whole batch.
+     *
+     * @param  array<array-key, mixed>  $bounded
+     * @return array<array-key, mixed>|null
+     */
+    private function fitExceptionContext(array $bounded): ?array
+    {
+        while ($bounded !== []) {
+            $encoded = json_encode($bounded);
+
+            if ($encoded === false) {
+                return null;
+            }
+
+            if (mb_strlen($encoded, '8bit') <= self::MAX_EXCEPTION_CONTEXT_BYTES) {
+                return $bounded;
+            }
+
+            array_pop($bounded);
+        }
+
+        return null;
     }
 
     /**

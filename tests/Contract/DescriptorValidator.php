@@ -27,6 +27,11 @@ namespace Ranetrace\Php\Tests\Contract;
  *
  * `keys` lists the only keys an array may carry, Laravel's `array:id,email`: a
  * key outside it, including a list's numeric index, breaks the rule.
+ *
+ * `max_depth` and `max_json_bytes` bound a free-shape array the way the
+ * backend's custom rules do: how many levels it nests, where a flat `{"a": 1}`
+ * is one and an empty array counts as a level of its own, and how many bytes
+ * it takes JSON-encoded.
  */
 final class DescriptorValidator
 {
@@ -197,6 +202,19 @@ final class DescriptorValidator
             }
         }
 
+        if (isset($descriptor['max_depth']) && is_int($descriptor['max_depth']) && is_array($value)
+            && self::depth($value) > $descriptor['max_depth']) {
+            $violations[] = "'{$path}' breaks max_depth {$descriptor['max_depth']}: ".self::depth($value).' levels';
+        }
+
+        if (isset($descriptor['max_json_bytes']) && is_int($descriptor['max_json_bytes']) && is_array($value)) {
+            $bytes = mb_strlen((string) json_encode($value), '8bit');
+
+            if ($bytes > $descriptor['max_json_bytes']) {
+                $violations[] = "'{$path}' breaks max_json_bytes {$descriptor['max_json_bytes']}: {$bytes} bytes";
+            }
+        }
+
         if (isset($descriptor['enum']) && is_array($descriptor['enum']) && ! in_array($value, $descriptor['enum'], true)) {
             $violations[] = "'{$path}' is not one of ".implode(', ', array_map(strval(...), $descriptor['enum']));
         }
@@ -207,6 +225,25 @@ final class DescriptorValidator
         }
 
         return $violations;
+    }
+
+    /**
+     * How many levels an array nests: one for the array itself, plus the
+     * deepest of its children.
+     *
+     * @param  array<array-key, mixed>  $value
+     */
+    private static function depth(array $value): int
+    {
+        $deepest = 0;
+
+        foreach ($value as $child) {
+            if (is_array($child)) {
+                $deepest = max($deepest, self::depth($child));
+            }
+        }
+
+        return 1 + $deepest;
     }
 
     /**

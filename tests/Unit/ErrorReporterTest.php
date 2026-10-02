@@ -37,6 +37,7 @@ function errorPayloadKeys(): array
         'is_console',
         'console_command',
         'console_arguments',
+        'exception_context',
     ];
 }
 
@@ -99,10 +100,46 @@ function reportedPayload(Throwable $throwable, array $overrides = [], ?array $se
     return $buffer->payloads('errors')[0] ?? [];
 }
 
-test('it buffers exactly the nineteen keys the API accepts', function (): void {
+test('it buffers exactly the twenty keys the API accepts', function (): void {
     $payload = reportedPayload(new RuntimeException('Something broke'));
 
     expect(array_keys($payload))->toEqualCanonicalizing(errorPayloadKeys());
+});
+
+test('it forwards the context the throwable carries, read by the shared builder', function (): void {
+    $throwable = new class('Price not found') extends RuntimeException
+    {
+        /**
+         * @return array<string, mixed>
+         */
+        public function context(): array
+        {
+            return ['user_id' => 42, 'price' => 'price_123', 'password' => 'hunter2'];
+        }
+    };
+
+    $payload = reportedPayload($throwable);
+
+    expect(array_keys($payload))->toBe(errorPayloadKeys())
+        ->and($payload['exception_context'])->toBe(['user_id' => 42, 'price' => 'price_123', 'password' => '[REDACTED]']);
+});
+
+test('it still reports the error when the throwable context method throws', function (): void {
+    $throwable = new class('Price not found') extends RuntimeException
+    {
+        /**
+         * @return array<string, mixed>
+         */
+        public function context(): array
+        {
+            throw new LogicException('context broke');
+        }
+    };
+
+    $payload = reportedPayload($throwable);
+
+    expect($payload['message'])->toBe('Price not found')
+        ->and($payload['exception_context'])->toBeNull();
 });
 
 test('it captures the throwable identity, the environment and the runtime', function (): void {

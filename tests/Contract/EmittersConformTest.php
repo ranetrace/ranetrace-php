@@ -145,3 +145,49 @@ test('the emitted javascript error satisfies the field spec, browser name and ve
         ->version->toBe('140')
         ->and(DescriptorValidator::violations($spec['fields'], $payload, false, []))->toBe([]);
 });
+
+/**
+ * The context a throwable carries is the error item's one free-shape field, so
+ * the bounded value the builder emits is checked against the fixture's depth,
+ * key-count and encoded-size rules, not only its type.
+ */
+test('the emitted error context satisfies the field spec, bounds included', function (): void {
+    $config = testConfig(['environment' => 'testing', 'internal_logging' => ['enabled' => false]]);
+    $log = new InternalLogger($config);
+    $buffer = new ArrayBuffer;
+
+    $context = [];
+
+    for ($index = 1; $index <= 120; $index++) {
+        $context["key_{$index}"] = ['a' => ['b' => ['c' => ['d' => ['e' => ['f' => str_repeat('x', 300)]]]]]];
+    }
+
+    $throwable = new class('Something broke', $context) extends RuntimeException
+    {
+        /**
+         * @param  array<string, mixed>  $context
+         */
+        public function __construct(string $message, private readonly array $context)
+        {
+            parent::__construct($message);
+        }
+
+        /**
+         * @return array<string, mixed>
+         */
+        public function context(): array
+        {
+            return $this->context;
+        }
+    };
+
+    $reporter = new ErrorReporter($config, $buffer, new SecretScrubber($config, $log), $log);
+    $reporter->setServerContext([], true);
+    $reporter->report($throwable);
+
+    $payload = $buffer->payloads('errors')[0];
+    $spec = WireContract::item('errors');
+
+    expect($payload['exception_context'])->toBeArray()->not->toBeEmpty()
+        ->and(DescriptorValidator::violations($spec['fields'], $payload, true))->toBe([]);
+});

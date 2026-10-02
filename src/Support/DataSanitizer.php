@@ -20,6 +20,12 @@ use Throwable;
 final class DataSanitizer
 {
     /**
+     * What a value past a depth ceiling becomes. Public so a caller with a
+     * tighter ceiling of its own marks the cut in the same words.
+     */
+    public const string MAX_DEPTH_MARKER = '[Max depth exceeded]';
+
+    /**
      * Hard recursion ceiling. Bounds deep or circular object/array graphs so a
      * pathological structure cannot recurse to stack exhaustion, which would be
      * an uncatchable fatal, defeating the capture paths' failure isolation.
@@ -33,7 +39,7 @@ final class DataSanitizer
     public static function sanitizeForSerialization(mixed $data, int $depth = 0): mixed
     {
         if ($depth >= self::MAX_DEPTH) {
-            return '[Max depth exceeded]';
+            return self::MAX_DEPTH_MARKER;
         }
 
         if (is_array($data)) {
