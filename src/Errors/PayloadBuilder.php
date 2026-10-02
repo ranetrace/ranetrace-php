@@ -11,6 +11,7 @@ use Ranetrace\Php\Support\Diagnostics;
 use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
+use Ranetrace\Php\Support\Utf8;
 use ReflectionMethod;
 use Throwable;
 
@@ -38,6 +39,10 @@ use Throwable;
  * {@see ErrorContext}: it is what the throwable's own `context()` method
  * returns, the array Laravel's log reporter merges into a log entry, so it
  * travels with the throwable and needs no adapter code in either SDK.
+ *
+ * Every string taken from the throwable or the host passes through
+ * {@see Utf8::repair()} before it is scrubbed or capped, so an invalid byte
+ * becomes U+FFFD inside the cap rather than failing the JSON encode of its item.
  */
 final class PayloadBuilder
 {
@@ -175,17 +180,17 @@ final class PayloadBuilder
         // strings, "invalid api_key=…"), and getTraceAsString() can carry them
         // in argument values.
         return [
-            'message' => $this->truncate($this->scrubber->scrubString($throwable->getMessage()), self::MAX_MESSAGE_LENGTH),
+            'message' => $this->truncate($this->scrubber->scrubString(Utf8::repair($throwable->getMessage())), self::MAX_MESSAGE_LENGTH),
             'file' => $this->boundFilePath($file),
             'line' => $line,
-            'type' => $throwable::class,
+            'type' => Utf8::repair($throwable::class),
             'environment' => $this->stringConfig('environment'),
-            'trace' => $this->truncate($this->scrubber->scrubString($throwable->getTraceAsString()), self::MAX_TRACE_LENGTH),
+            'trace' => $this->truncate($this->scrubber->scrubString(Utf8::repair($throwable->getTraceAsString())), self::MAX_TRACE_LENGTH),
             'headers' => $isConsole ? null : $this->headers($context),
             'context' => $source,
             'highlight_line' => $highlightLine,
             'user' => $this->user(),
-            'timestamp' => $context->timestamp ?? (new DateTimeImmutable)->format('c'),
+            'timestamp' => Utf8::repairNullable($context->timestamp) ?? (new DateTimeImmutable)->format('c'),
             'url' => $isConsole ? null : $this->url($context),
             'method' => $isConsole ? null : $this->method($context),
             'php_version' => (string) phpversion(),
@@ -223,7 +228,7 @@ final class PayloadBuilder
             }
 
             $scrubbed = $this->scrubber->scrubDeep(
-                DataSanitizer::sanitizeForSerialization($raw),
+                Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($raw)),
                 $context->refererPathValues(...),
             );
         } catch (Throwable $failure) {
@@ -276,8 +281,10 @@ final class PayloadBuilder
      * Drop trailing top-level keys until the context fits the byte cap, null
      * when not even its first key does.
      *
-     * A context JSON cannot encode at all (invalid UTF-8, an infinite float) is
-     * null too: sent as it is, it would fail to encode the whole batch.
+     * A context JSON cannot encode at all is null too: sent as it is, it would
+     * fail to encode the whole batch. Invalid UTF-8 never gets this far, since
+     * {@see exceptionContext()} repairs it, so what is left is a float JSON has
+     * no spelling for (INF, NAN).
      *
      * @param  array<array-key, mixed>  $bounded
      * @return array<array-key, mixed>|null
@@ -347,6 +354,7 @@ final class PayloadBuilder
      */
     private function capContextLine(string $line): string
     {
+        $line = Utf8::repair($line);
         $newline = str_ends_with($line, "\n") ? "\n" : '';
         $content = mb_rtrim($line, "\n");
 
@@ -406,11 +414,17 @@ final class PayloadBuilder
             return $file;
         }
 
-        $root = $this->stringConfig('project_root');
+        // Compared byte for byte against the raw path, so the root is read
+        // unrepaired: a repaired copy would no longer prefix a raw path that
+        // shares its invalid bytes.
+        $root = $this->config->get('project_root');
+        $root = is_scalar($root) ? (string) $root : '';
 
         if ($root !== '' && str_starts_with($file, $root)) {
             $file = mb_ltrim(mb_substr($file, mb_strlen($root)), '/\\');
         }
+
+        $file = Utf8::repair($file);
 
         if (mb_strlen($file) > self::MAX_FILE_PATH_LENGTH) {
             $file = mb_substr($file, -self::MAX_FILE_PATH_LENGTH);
@@ -439,6 +453,8 @@ final class PayloadBuilder
         $bounded = [];
 
         foreach (array_slice($headers, 0, self::MAX_HEADER_COUNT, true) as $name => $values) {
+            $name = is_string($name) ? Utf8::repair($name) : $name;
+
             if (! in_array($name, self::SAFE_HEADERS, true)) {
                 $bounded[$name] = ['***'];
 
@@ -448,7 +464,7 @@ final class PayloadBuilder
             // A header bag can hold a null value, so every value is cast the
             // way `(string) $value` always did rather than type-hinted away.
             $bounded[$name] = array_map(
-                fn (mixed $value): string => $this->boundHeaderValue($name, is_scalar($value) ? (string) $value : '', $context),
+                fn (mixed $value): string => $this->boundHeaderValue($name, is_scalar($value) ? Utf8::repair((string) $value) : '', $context),
                 is_array($values) ? array_values($values) : [$values],
             );
         }
@@ -485,7 +501,7 @@ final class PayloadBuilder
 
         return $this->truncate(
             (string) $this->scrubber->scrubUrlPath(
-                $this->scrubber->scrubUrl($context->url),
+                $this->scrubber->scrubUrl(Utf8::repair($context->url)),
                 $context->sensitivePathValues,
             ),
             self::MAX_URL_LENGTH,
@@ -496,7 +512,7 @@ final class PayloadBuilder
     {
         $method = $context->method;
 
-        return $method === null || $method === '' ? null : mb_strtoupper($method);
+        return $method === null || $method === '' ? null : mb_strtoupper(Utf8::repair($method));
     }
 
     /**
@@ -507,7 +523,7 @@ final class PayloadBuilder
     {
         $command = $context->consoleCommand;
 
-        return $command === null ? null : $this->scrubber->scrubString($command);
+        return $command === null ? null : $this->scrubber->scrubString(Utf8::repair($command));
     }
 
     /**
@@ -527,7 +543,7 @@ final class PayloadBuilder
 
         foreach ($arguments as $argument) {
             if (is_scalar($argument)) {
-                $strings[] = (string) $argument;
+                $strings[] = Utf8::repair((string) $argument);
             }
         }
 
@@ -584,6 +600,7 @@ final class PayloadBuilder
         }
 
         $email = $resolved['email'] ?? null;
+        $email = is_string($email) ? Utf8::repair($email) : $email;
 
         return [
             'id' => $id,
@@ -612,13 +629,13 @@ final class PayloadBuilder
     {
         $value = $this->config->get($dotKey);
 
-        return is_scalar($value) ? (string) $value : '';
+        return is_scalar($value) ? Utf8::repair((string) $value) : '';
     }
 
     private function nullableStringConfig(string $dotKey): ?string
     {
         $value = $this->config->get($dotKey);
 
-        return is_scalar($value) && (string) $value !== '' ? (string) $value : null;
+        return is_scalar($value) && (string) $value !== '' ? Utf8::repair((string) $value) : null;
     }
 }

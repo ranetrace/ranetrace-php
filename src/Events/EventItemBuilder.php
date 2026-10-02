@@ -7,6 +7,7 @@ namespace Ranetrace\Php\Events;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
+use Ranetrace\Php\Support\Utf8;
 
 /**
  * Shapes one tracked event into the seven-key event item the Ranetrace API
@@ -19,6 +20,9 @@ use Ranetrace\Php\Support\UserId;
  * The fingerprints arrive already hashed, by {@see \Ranetrace\Php\Support\FingerprintGenerator}
  * in both SDKs. They are not computed here because the builder is handed a
  * finished observation of the request, not the request itself.
+ *
+ * Every string, property keys included, passes through {@see Utf8} first, so an
+ * invalid byte becomes U+FFFD rather than failing the JSON encode of the item.
  */
 final class EventItemBuilder
 {
@@ -53,22 +57,22 @@ final class EventItemBuilder
         $userId = UserId::accepted($user['id'] ?? null);
 
         return [
-            'event_name' => $name,
+            'event_name' => Utf8::repair($name),
             // The host's declared path secrets are passed through, so a URL
             // property loses its `{token}` segment the same way the event's own
             // `url` field does.
             'properties' => $this->scrubber->scrubDeep(
-                DataSanitizer::sanitizeForSerialization($properties),
+                Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($properties)),
                 $sensitivePathValues,
             ),
             'user' => $userId === null ? null : ['id' => $userId],
-            'timestamp' => $timestamp,
+            'timestamp' => Utf8::repair($timestamp),
             'url' => $url === null ? null : $this->scrubber->scrubUrlPath(
-                $this->scrubber->scrubUrl($url),
+                $this->scrubber->scrubUrl(Utf8::repair($url)),
                 $sensitivePathValues,
             ),
-            'user_agent_hash' => $userAgentHash,
-            'session_id_hash' => $sessionIdHash,
+            'user_agent_hash' => Utf8::repair($userAgentHash),
+            'session_id_hash' => Utf8::repair($sessionIdHash),
         ];
     }
 }

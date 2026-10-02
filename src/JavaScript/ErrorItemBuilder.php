@@ -11,6 +11,7 @@ use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
+use Ranetrace\Php\Support\Utf8;
 
 /**
  * Shapes one browser error report into the fifteen-key JavaScript error item
@@ -27,6 +28,10 @@ use Ranetrace\Php\Support\UserId;
  * anything; the host observes them and passes them in. For the same reason the
  * browser's `name` and `version` in `browser_info` are derived from that
  * host-observed user agent, never read from the payload.
+ *
+ * Every string, array keys included, passes through {@see Utf8} before it is
+ * scrubbed or capped. A JSON body cannot carry an invalid byte, but a payload a
+ * host decoded from a form post can, and so can the user agent header.
  */
 final class ErrorItemBuilder
 {
@@ -87,22 +92,22 @@ final class ErrorItemBuilder
         $url = isset($payload['url']) && is_scalar($payload['url']) ? (string) $payload['url'] : '';
 
         return [
-            'message' => $this->scrubber->scrubString($message),
-            'stack' => is_string($stack) ? $this->scrubber->scrubString($stack) : null,
-            'type' => isset($payload['type']) && is_string($payload['type']) ? $payload['type'] : 'Error',
-            'filename' => isset($payload['filename']) && is_string($payload['filename']) ? $payload['filename'] : null,
+            'message' => $this->scrubber->scrubString(Utf8::repair($message)),
+            'stack' => is_string($stack) ? $this->scrubber->scrubString(Utf8::repair($stack)) : null,
+            'type' => isset($payload['type']) && is_string($payload['type']) ? Utf8::repair($payload['type']) : 'Error',
+            'filename' => isset($payload['filename']) && is_string($payload['filename']) ? Utf8::repair($payload['filename']) : null,
             'line' => $this->intOrNull($payload['line'] ?? null),
             'column' => $this->intOrNull($payload['column'] ?? null),
-            'user_agent' => $userAgent,
+            'user_agent' => Utf8::repairNullable($userAgent),
             // The reported URL is the page the error happened on, not the
             // endpoint it was posted to, so it gets scrubbed on its own terms:
             // query first, then whichever path segments the host declared
             // secret-bearing for THAT url.
-            'url' => $this->scrubber->scrubUrlPath($this->scrubber->scrubUrl($url), $sensitivePathValues),
+            'url' => $this->scrubber->scrubUrlPath($this->scrubber->scrubUrl(Utf8::repair($url)), $sensitivePathValues),
             'timestamp' => $this->timestamp($payload, $timestampFallback),
-            'environment' => (string) $this->config->get('environment', 'production'),
+            'environment' => Utf8::repair((string) $this->config->get('environment', 'production')),
             'user_id' => UserId::accepted($userId),
-            'session_id' => $sessionId,
+            'session_id' => Utf8::repairNullable($sessionId),
             'breadcrumbs' => $this->breadcrumbs($payload['breadcrumbs'] ?? [], $sensitivePathValues),
             'context' => PayloadSizer::capBytes(
                 $this->scrubbedArray($payload['context'] ?? [], $sensitivePathValues),
@@ -137,9 +142,9 @@ final class ErrorItemBuilder
             $breadcrumb = is_array($breadcrumb) ? $breadcrumb : [];
 
             return [
-                'timestamp' => $breadcrumb['timestamp'] ?? null,
-                'category' => $breadcrumb['category'] ?? null,
-                'message' => $breadcrumb['message'] ?? null,
+                'timestamp' => Utf8::repairDeep($breadcrumb['timestamp'] ?? null),
+                'category' => Utf8::repairDeep($breadcrumb['category'] ?? null),
+                'message' => Utf8::repairDeep($breadcrumb['message'] ?? null),
                 'data' => PayloadSizer::capBytes(
                     $this->scrubbedArray($breadcrumb['data'] ?? [], $sensitivePathValues),
                     self::MAX_BREADCRUMB_DATA_BYTES,
@@ -162,7 +167,7 @@ final class ErrorItemBuilder
         $info = [];
 
         foreach (self::BROWSER_INFO_KEYS as $key) {
-            $info[$key] = $source[$key] ?? null;
+            $info[$key] = Utf8::repairDeep($source[$key] ?? null);
         }
 
         $browser = BrowserIdentity::fromUserAgent($userAgent);
@@ -188,7 +193,7 @@ final class ErrorItemBuilder
     private function scrubbedArray(mixed $value, array|callable|null $sensitivePathValues): array
     {
         $scrubbed = $this->scrubber->scrubDeep(
-            DataSanitizer::sanitizeForSerialization($value),
+            Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($value)),
             $sensitivePathValues,
         );
 
@@ -201,12 +206,13 @@ final class ErrorItemBuilder
     private function timestamp(array $payload, ?string $fallback): string
     {
         $timestamp = $payload['timestamp'] ?? null;
+        $timestamp = is_string($timestamp) ? Utf8::repair($timestamp) : null;
 
-        if (is_string($timestamp) && mb_trim($timestamp) !== '') {
+        if ($timestamp !== null && mb_trim($timestamp) !== '') {
             return $timestamp;
         }
 
-        return $fallback ?? (new DateTimeImmutable)->format('c');
+        return Utf8::repairNullable($fallback) ?? (new DateTimeImmutable)->format('c');
     }
 
     private function intOrNull(mixed $value): ?int

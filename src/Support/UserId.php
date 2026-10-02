@@ -17,12 +17,20 @@ final class UserId
     public const int MAX_LENGTH = 255;
 
     /**
-     * The id unchanged when the backend takes it, null otherwise.
+     * The id when the backend takes it, null otherwise. A string id is sent
+     * through {@see Utf8::repair()}, since an id JSON cannot encode fails its
+     * batch just as an overlong one does.
      */
     public static function accepted(mixed $id): int|string|null
     {
-        if (is_int($id) || (is_string($id) && mb_strlen($id) <= self::MAX_LENGTH)) {
+        if (is_int($id)) {
             return $id;
+        }
+
+        if (is_string($id)) {
+            $id = Utf8::repair($id);
+
+            return mb_strlen($id) <= self::MAX_LENGTH ? $id : null;
         }
 
         return null;

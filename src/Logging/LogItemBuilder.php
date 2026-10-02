@@ -8,6 +8,7 @@ use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\Scrubber;
+use Ranetrace\Php\Support\Utf8;
 
 /**
  * Shapes one log record into the six-key log item the Ranetrace API accepts.
@@ -20,6 +21,10 @@ use Ranetrace\Php\Support\Scrubber;
  * themselves keep a 1000-item batch under the API's 5MB request limit; that is
  * the transport's pre-flight byte-budget trim. NOT user-tunable: raising any of
  * them widens per-item size and the 413 risk.
+ *
+ * Every string, array keys included, passes through {@see Utf8} before it is
+ * scrubbed or capped, so an invalid byte becomes U+FFFD inside the caps rather
+ * than failing the JSON encode of the item.
  */
 final class LogItemBuilder
 {
@@ -60,19 +65,19 @@ final class LogItemBuilder
         array|callable|null $sensitivePathValues = null,
     ): array {
         return [
-            'level' => mb_strtolower($level),
+            'level' => mb_strtolower(Utf8::repair($level)),
             'message' => $this->message($message),
             // Sanitize for serialization, redact secrets (by sensitive key name,
             // plus tokens inside URL-shaped string values), then cap size,
             // replacing mid-structure rather than truncating, since partial JSON
             // is not JSON.
             'context' => PayloadSizer::capBytes(
-                (array) $this->scrubber->scrubDeep(DataSanitizer::sanitizeForSerialization($context), $sensitivePathValues),
+                (array) $this->scrubber->scrubDeep(Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($context)), $sensitivePathValues),
                 self::MAX_CONTEXT_BYTES,
                 'Context exceeded 50KB limit and was removed',
             ),
-            'channel' => $channel,
-            'timestamp' => $timestamp,
+            'channel' => Utf8::repair($channel),
+            'timestamp' => Utf8::repair($timestamp),
             'extra' => $this->extra($extra, $sensitivePathValues),
         ];
     }
@@ -83,7 +88,7 @@ final class LogItemBuilder
      */
     private function message(string $message): string
     {
-        $message = $this->scrubber->scrubString($message);
+        $message = $this->scrubber->scrubString(Utf8::repair($message));
 
         if (mb_strlen($message) <= self::MAX_MESSAGE_LENGTH) {
             return $message;
@@ -109,7 +114,7 @@ final class LogItemBuilder
     private function extra(array $extra, array|callable|null $sensitivePathValues): array
     {
         $capped = PayloadSizer::capBytes(
-            (array) $this->scrubber->scrubDeep(DataSanitizer::sanitizeForSerialization($extra), $sensitivePathValues),
+            (array) $this->scrubber->scrubDeep(Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($extra)), $sensitivePathValues),
             self::MAX_EXTRA_BYTES,
             'Extra data exceeded 10KB limit and was removed',
         );
@@ -117,7 +122,7 @@ final class LogItemBuilder
         $environment = $this->config->get('environment');
 
         $vocabulary = [
-            'environment' => is_scalar($environment) ? (string) $environment : '',
+            'environment' => is_scalar($environment) ? Utf8::repair((string) $environment) : '',
             'php_version' => (string) phpversion(),
         ];
 
@@ -125,7 +130,7 @@ final class LogItemBuilder
             $value = $this->config->get($key);
 
             if (is_string($value) && $value !== '') {
-                $vocabulary[$key] = $value;
+                $vocabulary[$key] = Utf8::repair($value);
             }
         }
 

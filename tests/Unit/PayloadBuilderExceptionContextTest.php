@@ -235,9 +235,27 @@ test('a context JSON cannot encode is sent as null rather than failing the batch
 
     expect($payload['exception_context'])->toBeNull();
 })->with([
-    'invalid UTF-8' => ["\xB1\x31"],
     'infinity' => [INF],
+    'not a number' => [NAN],
 ]);
+
+test('invalid UTF-8 in a context key or value is replaced rather than costing the context', function (): void {
+    $payload = exceptionContextPayload(throwableWithContext(static fn (): array => [
+        "column\xB1" => ['value' => "\xB1\x31"],
+    ]));
+
+    expect($payload['exception_context'])->toBe(["column\u{FFFD}" => ['value' => "\u{FFFD}1"]]);
+});
+
+test('a context string of invalid bytes past the string cap is cut inside the cap', function (): void {
+    $value = exceptionContextPayload(throwableWithContext(static fn (): array => [
+        'value' => str_repeat("\xB1", 600),
+    ]))['exception_context']['value'];
+
+    expect(mb_strlen($value))->toBe(500)
+        ->and(mb_check_encoding($value, 'UTF-8'))->toBeTrue()
+        ->and($value)->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX);
+});
 
 test('a list context is sent as a list', function (): void {
     expect(exceptionContextPayload(throwableWithContext(static fn (): array => [42, 'price_123']))['exception_context'])
