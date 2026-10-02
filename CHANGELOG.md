@@ -6,6 +6,8 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-10-02
+
 ### Added
 - **An error item carries the context the throwable itself carries, as `exception_context`.** When a throwable has a public `context()` method returning a non-empty array, as Laravel's exceptions and many of a developer's own do, that array is sent with the error: objects, closures and resources flattened, secret keys and secrets in URL values masked, at most 50 top-level keys, 3 levels deep (a deeper value becomes `[Max depth exceeded]`), string values of at most 500 characters, and at most 8,192 bytes JSON-encoded, reached by dropping trailing top-level keys. Otherwise the key is null, including when `context()` throws, which never costs the error itself. The error item is 20 keys now. The backend has to accept the key before this ships, or it rejects every error batch, so this is not released until it does. `ranetrace/ranetrace-laravel` gets the key through the shared builder
 
