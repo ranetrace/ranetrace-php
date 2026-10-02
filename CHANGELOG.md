@@ -6,6 +6,8 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-10-02
+
 ### Added
 - `Support\DeviceType::fromUserAgent(?string $userAgent)` says what kind of device a user agent comes from: a string-backed enum whose four values, `mobile`, `tablet`, `desktop` and `console`, are the ones the backend takes for a visit's `device_type`. It gives null for a null or empty user agent; any other string is classified, and one no rule recognises is `desktop`. Consoles are checked first, tokens are matched case-sensitively and never inside a longer word, and it reads at most the first 1024 characters of the user agent. An iPad on iPadOS 13 or later is `desktop`, because its browser sends the same user agent as Safari on a Mac. `ranetrace/ranetrace-laravel` uses it for the device type of a visit
 
