@@ -104,9 +104,9 @@ final class FileBuffer implements BufferInterface
     }
 
     /**
-     * Takes the lock with the same `batch.lock_wait` as capture. Laravel's
-     * cache lock can outlive a holder that died, so its buffer waits that out
-     * here; `flock` is released by the OS when its holder dies, so a miss is
+     * Takes the lock with the same `batch.lock_wait` as capture, where the
+     * Laravel SDK waits longer: its cache lock can outlive a holder that died,
+     * while `flock` is released by the OS when its holder dies. A miss here is
      * contention or an unwritable path, and waiting longer cures neither.
      */
     public function returnItems(string $type, array $envelopes): void
