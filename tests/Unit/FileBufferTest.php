@@ -270,6 +270,48 @@ it('logs the loss with type and count when returned items cannot get the lock', 
         ->and(file_get_contents($directory.'/errors.json'))->toBe($before);
 });
 
+/**
+ * A buffer whose internal log lives in its own directory, so a buffer path
+ * that cannot be written still leaves a log to read back.
+ */
+function fileBufferLoggingElsewhere(string $bufferPath, string $logDirectory): FileBuffer
+{
+    $logging = ['internal_logging' => ['enabled' => true, 'level' => 'debug']];
+
+    return new FileBuffer(
+        testConfig(['buffer_path' => $bufferPath, ...$logging]),
+        new InternalLogger(testConfig(['buffer_path' => $logDirectory, ...$logging])),
+    );
+}
+
+it('logs the loss with type and count when returned items find no writable directory', function (): void {
+    $blocker = tempDirectory().'/a-file';
+    file_put_contents($blocker, '');
+    $logDirectory = tempDirectory();
+
+    fileBufferLoggingElsewhere($blocker.'/buffer', $logDirectory)->returnItems('errors', [
+        ['id' => 'a', 'data' => ['message' => 'lost'], 'timestamp' => time()],
+    ]);
+
+    expect(internalLogContents($logDirectory))
+        ->toContain('ranetrace_internal.ERROR: Could not return items to the buffer, items lost {"type":"errors","count":1}');
+});
+
+it('logs the loss and keeps the buffer as it was when the returned items cannot be written', function (): void {
+    $directory = tempDirectory();
+    $buffer = fileBuffer($directory);
+    $buffer->addItem('errors', ['message' => 'already buffered']);
+    $before = file_get_contents($directory.'/errors.json');
+
+    $buffer->returnItems('errors', [
+        ['id' => 'a', 'data' => ['ratio' => INF], 'timestamp' => time()],
+    ]);
+
+    expect(internalLogContents($directory))
+        ->toContain('ranetrace_internal.ERROR: Could not return items to the buffer, items lost {"type":"errors","count":1}')
+        ->and(file_get_contents($directory.'/errors.json'))->toBe($before);
+});
+
 it('discards an unreadable buffer file rather than choking on it', function (): void {
     $directory = tempDirectory();
     $buffer = fileBuffer($directory);
