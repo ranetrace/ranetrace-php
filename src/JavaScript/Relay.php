@@ -207,8 +207,9 @@ final class Relay
             // A rejected write is a transient drop (lock contention, unwritable
             // spool), already recorded by the buffer's own diagnostics. The
             // browser can do nothing about it and retrying would only amplify
-            // whatever is wrong, so the report is acknowledged and dropped.
-            $this->log->warning('JavaScript error could not be buffered', ['message' => $message]);
+            // whatever is wrong, so the report is acknowledged and dropped. The
+            // built item's message is logged, already repaired and scrubbed.
+            $this->log->warning('JavaScript error could not be buffered', ['message' => $item['message']]);
         }
 
         return new RelayResponse(200, [

@@ -684,3 +684,22 @@ test('the user id is null when the resolver reports a string the backend would r
 
     expect(firstJavascriptError($buffer)['user_id'])->toBeNull();
 });
+
+test('a rejected buffer write logs the message as it was built, invalid bytes repaired', function (): void {
+    $directory = tempDirectory();
+    $buffer = new ArrayBuffer;
+    $buffer->rejectWrites = true;
+
+    relay($buffer, [], [
+        'buffer_path' => $directory,
+        'internal_logging' => ['enabled' => true, 'level' => 'debug'],
+    ])->handleRequest(relayServer(), relayPayload(['message' => "Bad \xB1 input"]));
+
+    $log = implode('', array_map(
+        static fn (string $file): string => (string) file_get_contents($file),
+        glob($directory.'/internal-*.log') ?: [],
+    ));
+
+    expect($log)->toContain('JavaScript error could not be buffered')
+        ->toContain('"message":"Bad \\ufffd input"');
+});
