@@ -39,8 +39,7 @@ test('it ships the documented feature defaults', function (): void {
 test('it ships the documented batch, scrubbing and internal logging defaults', function (): void {
     $config = new Config;
 
-    expect($config->get('batch.buffer_ttl'))->toBe(3600)
-        ->and($config->get('batch.max_buffer_size'))->toBe(5000)
+    expect($config->get('batch.max_buffer_size'))->toBe(5000)
         ->and($config->get('batch.lock_wait'))->toBe(1)
         ->and($config->get('scrubbing.extra_keys'))->toBe([])
         ->and($config->get('internal_logging.enabled'))->toBeTrue()

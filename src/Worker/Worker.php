@@ -84,8 +84,8 @@ final class Worker
      *
      * The buffer is drained regardless of a feature's `enabled` flag: an
      * operator who turns a feature off should still see what was already
-     * captured, and leaving items to rot until the idle TTL discards them would
-     * lose data that was already collected.
+     * captured, and leaving the items spooled would hold back data that was
+     * already collected.
      */
     public function run(?string $type = null): void
     {

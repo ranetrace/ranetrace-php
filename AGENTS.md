@@ -89,7 +89,6 @@ Event names must be snake_case, 3 to 50 characters, starting with a letter: `/^[
 | `RANETRACE_JAVASCRIPT_ERRORS_THROTTLE` | `javascript_errors.throttle` | `'60,1'` (carried for parity, **not enforced**) |
 | `RANETRACE_JAVASCRIPT_ERRORS_TIMEOUT` | `javascript_errors.timeout` | `10` |
 | (config only) | `javascript_errors.ignored_errors` | 15 built-in noise patterns |
-| `RANETRACE_BATCH_BUFFER_TTL` | `batch.buffer_ttl` | `3600` |
 | `RANETRACE_BATCH_MAX_BUFFER_SIZE` | `batch.max_buffer_size` | `5000` |
 | `RANETRACE_BATCH_LOCK_WAIT` | `batch.lock_wait` | `1` |
 | `RANETRACE_SCRUBBING_EXTRA_KEYS` | `scrubbing.extra_keys` | `[]` (csv in env, added to built-ins) |
@@ -113,7 +112,7 @@ Two things are not automatic. Without either, the SDK captures or delivers nothi
 
 Every minute matches the API's 60 requests per minute per endpoint per key; one run sends at most one batch per type. The binary is configured **entirely from the environment** (a cron entry has no bootstrap), sets `flush_on_shutdown => false` for itself, prints nothing on success, exits `1` when it could not run, and takes `--type=errors|events|logs|javascript_errors`. Shutdown flush and cron compose safely: the spool is locked and drained atomically.
 
-A spool that goes untouched for `batch.buffer_ttl` (3600s), neither written to nor drained, is discarded, so "no cron and almost no traffic" means data loss.
+A spool that nothing drains is kept until it is delivered, up to `batch.max_buffer_size` items per type, with the oldest dropped first beyond that. So with no cron and almost no traffic, captured data waits on disk for the next flush, however long that takes, and nothing is lost below the cap.
 
 ## JavaScript relay
 

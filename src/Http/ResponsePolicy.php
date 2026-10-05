@@ -23,8 +23,8 @@ final class ResponsePolicy
 {
     /**
      * The standard back-off. Long enough that a degraded endpoint gets real
-     * relief, short enough that a recovered one is retried within the buffer's
-     * idle TTL.
+     * relief, short enough that a recovered one gets the waiting backlog soon
+     * after it recovers.
      */
     public const int PAUSE_SECONDS = 900;
 

@@ -228,8 +228,8 @@ final class FileBuffer implements BufferInterface
     }
 
     /**
-     * Discard everything spooled for a type. Used by the idle-TTL sweep and
-     * available to operators who need to abandon a poisoned backlog.
+     * Discard everything spooled for a type, for operators who need to abandon
+     * a poisoned backlog.
      */
     public function clear(string $type): void
     {
@@ -272,13 +272,13 @@ final class FileBuffer implements BufferInterface
     }
 
     /**
-     * Read the spool for a type, dropping it wholesale when it has gone stale.
+     * Read the spool for a type, however long it has sat untouched.
      *
-     * The idle TTL is expressed as the data file's mtime, which every write
-     * refreshes because writes land through `rename` of a freshly written temp
-     * file. A buffer nobody has drained for an hour describes a host whose
-     * worker is not running; keeping it would mean eventually shipping hours-old
-     * telemetry that no longer matches anything.
+     * Nothing here expires. Each envelope carries its own capture time, which
+     * the API stores and accepts however old it is, so a backlog that waited
+     * for a stopped worker is still worth delivering, and dropping it would
+     * also hide the stalled drain `oldestTimestamp()` exists to reveal.
+     * `batch.max_buffer_size` is the only bound.
      *
      * @return array<int, array{id: string, data: array<string, mixed>, timestamp: int}>
      */
@@ -289,18 +289,6 @@ final class FileBuffer implements BufferInterface
         clearstatcache(true, $file);
 
         if (! is_file($file)) {
-            return [];
-        }
-
-        if ($this->isExpired($file)) {
-            $this->log->info('Discarded a buffer that exceeded its idle TTL', [
-                'type' => $type,
-                'ttl' => $this->bufferTtl(),
-            ]);
-
-            JsonFile::delete($file);
-            $this->clearOverflowFlag($type);
-
             return [];
         }
 
@@ -328,8 +316,7 @@ final class FileBuffer implements BufferInterface
 
     /**
      * Persist a buffer atomically through `JsonFile`. An empty buffer is spelled
-     * as no file at all rather than as `[]`, so a drained type stops refreshing
-     * an mtime the idle TTL reads.
+     * as no file at all rather than as `[]`.
      *
      * The encode happens here rather than inside `JsonFile::write()` because an
      * unencodable buffer is the one failure worth naming in the diagnostics log:
@@ -445,19 +432,6 @@ final class FileBuffer implements BufferInterface
         return false;
     }
 
-    private function isExpired(string $file): bool
-    {
-        $ttl = $this->bufferTtl();
-
-        if ($ttl < 1) {
-            return false;
-        }
-
-        $modified = Quietly::call(static fn (): mixed => filemtime($file));
-
-        return is_int($modified) && $modified + $ttl < time();
-    }
-
     private function isKnownType(string $type): bool
     {
         if (in_array($type, self::TYPES, true)) {
@@ -496,12 +470,5 @@ final class FileBuffer implements BufferInterface
         $max = $this->config->get('batch.max_buffer_size', 5000);
 
         return is_numeric($max) && (int) $max > 0 ? (int) $max : 5000;
-    }
-
-    private function bufferTtl(): int
-    {
-        $ttl = $this->config->get('batch.buffer_ttl', 3600);
-
-        return is_numeric($ttl) ? (int) $ttl : 3600;
     }
 }

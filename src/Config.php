@@ -228,7 +228,6 @@ final class Config
             'javascript_errors.max_breadcrumbs' => ['env' => 'RANETRACE_JAVASCRIPT_ERRORS_MAX_BREADCRUMBS', 'default' => 20, 'type' => 'int'],
             'javascript_errors.allowed_origins' => ['env' => 'RANETRACE_JAVASCRIPT_ERRORS_ALLOWED_ORIGINS', 'default' => [], 'type' => 'array'],
 
-            'batch.buffer_ttl' => ['env' => 'RANETRACE_BATCH_BUFFER_TTL', 'default' => 3600, 'type' => 'int'],
             'batch.max_buffer_size' => ['env' => 'RANETRACE_BATCH_MAX_BUFFER_SIZE', 'default' => 5000, 'type' => 'int'],
             'batch.lock_wait' => ['env' => 'RANETRACE_BATCH_LOCK_WAIT', 'default' => 1, 'type' => 'int'],
 

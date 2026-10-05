@@ -13,7 +13,7 @@
         "shape": {
             "id": {"type": "string", "note": "Spool-local identifier, unique per buffered item."},
             "data": {"type": "object", "note": "The item object itself. This is the only part that crosses the wire."},
-            "timestamp": {"type": "integer", "note": "Unix timestamp of the moment the item was buffered, used for the spool's idle TTL."}
+            "timestamp": {"type": "integer", "note": "Unix timestamp of the moment the item was buffered. It stays with the item when an undelivered batch is put back."}
         },
         "note": "The shape both SDKs spool locally. `id` and `timestamp` are client bookkeeping and never reach the API; the batch body carries the `data` objects only."
     },

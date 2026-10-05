@@ -158,42 +158,32 @@ it('records the dropped count and the cap in the overflow log', function (): voi
     expect(internalLogContents($directory))->toContain('"type":"errors","dropped":2,"max":2');
 });
 
-it('discards a buffer that has been idle past its ttl', function (): void {
+it('keeps a spool that nothing has touched for a long time', function (int $idleSeconds): void {
     $directory = tempDirectory();
-    $buffer = fileBuffer($directory, ['batch' => ['buffer_ttl' => 60]]);
-    $buffer->addItem('errors', ['message' => 'stale']);
+    $buffer = fileBuffer($directory);
+    $buffer->addItem('errors', ['message' => 'waiting']);
+    $capturedAt = $buffer->oldestTimestamp('errors');
 
-    touch($directory.'/errors.json', time() - 120);
+    touch($directory.'/errors.json', time() - $idleSeconds);
     clearstatcache();
 
-    expect($buffer->count('errors'))->toBe(0)
-        ->and(is_file($directory.'/errors.json'))->toBeFalse();
-});
+    expect($buffer->count('errors'))->toBe(1)
+        ->and($buffer->oldestTimestamp('errors'))->toBe($capturedAt)
+        ->and(array_column($buffer->take('errors', 10), 'data'))->toBe([['message' => 'waiting']]);
+})->with([
+    'two hours' => [2 * 3600],
+    'a week' => [7 * 86400],
+]);
 
-it('keeps a buffer that is still within its ttl', function (): void {
+it('ignores a buffer ttl a host still passes', function (): void {
     $directory = tempDirectory();
-    $buffer = fileBuffer($directory, ['batch' => ['buffer_ttl' => 3600]]);
-    $buffer->addItem('errors', ['message' => 'fresh']);
+    $buffer = fileBuffer($directory, ['batch' => ['buffer_ttl' => 60]]);
+    $buffer->addItem('errors', ['message' => 'waiting']);
 
     touch($directory.'/errors.json', time() - 120);
     clearstatcache();
 
     expect($buffer->count('errors'))->toBe(1);
-});
-
-it('refreshes the ttl on every write', function (): void {
-    $directory = tempDirectory();
-    $buffer = fileBuffer($directory, ['batch' => ['buffer_ttl' => 60]]);
-    $buffer->addItem('errors', ['message' => 'first']);
-
-    touch($directory.'/errors.json', time() - 30);
-    clearstatcache();
-
-    $buffer->addItem('errors', ['message' => 'second']);
-    clearstatcache();
-
-    expect(filemtime($directory.'/errors.json'))->toBeGreaterThan(time() - 5)
-        ->and($buffer->count('errors'))->toBe(2);
 });
 
 /**

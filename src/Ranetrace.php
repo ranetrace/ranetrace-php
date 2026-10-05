@@ -36,7 +36,7 @@ use Throwable;
  *
  * Second, `flush_on_shutdown` is on by default. Without a queue there is no
  * background process to hand a batch to, so a host with no cron entry would
- * otherwise buffer forever and drop everything at the idle TTL. Draining on
+ * otherwise buffer until `batch.max_buffer_size` drops the oldest. Draining on
  * shutdown means telemetry leaves the process even in the simplest deployment;
  * `bin/ranetrace-flush` on a schedule is the better arrangement, and the two
  * compose safely because the buffer is locked and drained atomically.
