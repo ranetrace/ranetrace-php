@@ -20,11 +20,11 @@ use Throwable;
  * here, and only those: a field whose wire type is a number never does, because
  * a string there would reject the batch.
  *
- * Ported verbatim from `ranetrace/ranetrace-laravel`
- * (`src/Utilities/DataSanitizer.php`). The markers it emits (`[Closure]`,
- * `[Resource: …]`, `[Object: …]`, `[Max depth exceeded]`) show up in captured
- * payloads, so their wording and the depth ceiling must not drift between the
- * two SDKs. Pure static, no configuration.
+ * Shared with `ranetrace/ranetrace-laravel`, which reaches it through the
+ * shared item builders and keeps no copy of its own. The markers it emits
+ * (`[Closure]`, `[Resource: …]`, `[Object: …]`, `[Max depth exceeded]`) show up
+ * in captured payloads, so their wording and the depth ceiling are part of what
+ * both SDKs send. Pure static, no configuration.
  */
 final class DataSanitizer
 {
