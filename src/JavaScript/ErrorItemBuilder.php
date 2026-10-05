@@ -215,12 +215,28 @@ final class ErrorItemBuilder
         return Utf8::repairNullable($fallback) ?? (new DateTimeImmutable)->format('c');
     }
 
+    /**
+     * The value as an integer, or null when it is not a number or is one no
+     * integer can represent (INF, NAN, past the integer range). Casting such a
+     * float warns on PHP 8.5, which a host that turns warnings into exceptions
+     * would turn into a lost report.
+     */
     private function intOrNull(mixed $value): ?int
     {
-        if ($value === null || is_bool($value)) {
+        if (! (is_int($value) || is_float($value) || is_string($value)) || ! is_numeric($value)) {
             return null;
         }
 
-        return is_numeric($value) ? (int) $value : null;
+        $number = $value + 0;
+
+        if (is_int($number)) {
+            return $number;
+        }
+
+        if (! is_finite($number) || $number < PHP_INT_MIN || $number >= PHP_INT_MAX) {
+            return null;
+        }
+
+        return (int) $number;
     }
 }
