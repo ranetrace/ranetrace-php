@@ -408,6 +408,11 @@ final class PayloadBuilder
      * root (a PHP built-in, an eval'd file) is kept absolute but LEFT-truncated:
      * when a path is too long it is the tail, not the head, that says which file
      * this is.
+     *
+     * The root is stripped only at a directory boundary, so a root of `/app`
+     * leaves `/application/x.php` alone, and a trailing separator on the root
+     * makes no difference. A path equal to the root names no file inside it
+     * and is kept as it is.
      */
     private function boundFilePath(string $file): string
     {
@@ -421,8 +426,15 @@ final class PayloadBuilder
         $root = $this->config->get('project_root');
         $root = is_scalar($root) ? (string) $root : '';
 
-        if ($root !== '' && str_starts_with($file, $root)) {
-            $file = mb_ltrim(mb_substr($file, mb_strlen($root)), '/\\');
+        if ($root !== '') {
+            $root = mb_rtrim($root, '/\\');
+
+            // The separator after the root is ASCII, so the root ends on a
+            // whole character in the path and the character offset below
+            // matches the byte prefix compared here.
+            if (str_starts_with($file, $root.'/') || str_starts_with($file, $root.'\\')) {
+                $file = mb_ltrim(mb_substr($file, mb_strlen($root)), '/\\');
+            }
         }
 
         $file = Utf8::repair($file);

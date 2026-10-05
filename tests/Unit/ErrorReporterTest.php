@@ -218,6 +218,20 @@ test('it reports the file relative to the configured project root', function ():
         ->and($payload['line'])->toBe(42);
 });
 
+test('it strips the project root only at a directory boundary, with or without a trailing slash', function (string $root, string $file, string $expected): void {
+    $payload = reportedPayload(exceptionAt($file, 1), ['project_root' => $root]);
+
+    expect($payload['file'])->toBe($expected);
+})->with([
+    'a sibling that shares the root as a prefix' => ['/app', '/application/x.php', '/application/x.php'],
+    'a root without a trailing slash' => ['/app', '/app/src/x.php', 'src/x.php'],
+    'a root with a trailing slash' => ['/app/', '/app/src/x.php', 'src/x.php'],
+    'a sibling of a root with a trailing slash' => ['/app/', '/application/x.php', '/application/x.php'],
+    'a Windows root' => ['C:\\app', 'C:\\app\\src\\x.php', 'src\\x.php'],
+    'the filesystem root' => ['/', '/src/x.php', 'src/x.php'],
+    'the root itself, which names no file in it' => ['/app', '/app', '/app'],
+]);
+
 test('it left-truncates a file path longer than the cap, keeping the tail', function (): void {
     $root = tempDirectory();
     $relative = str_repeat('nested/', 100).'Deep.php';
