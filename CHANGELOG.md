@@ -6,6 +6,8 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-10-05
+
 ### Changed
 - **Breaking: the buffer no longer expires, and `batch.buffer_ttl` is gone.** `FileBuffer` discarded a whole type's spool once its file had gone `batch.buffer_ttl` seconds (3600 by default) without a write, with only an info line in the internal log. So a quiet host whose cron had stopped lost everything it had captured, and the stalled drain that `oldestTimestamp()` exists to reveal disappeared with it. The API stores each item's own time and accepts an old one, so a backlog is still worth delivering. A spool is now kept until it is delivered, and `batch.max_buffer_size` is its only bound: past it the oldest items are dropped, with a logged overflow. On upgrade, remove `RANETRACE_BATCH_BUFFER_TTL` from the environment and `batch.buffer_ttl` from an array config if you set either; both are ignored now
 - **Breaking for a custom buffer: `Buffer\BufferInterface` requires `returnItems(string $type, array $envelopes): void`.** The worker puts every undelivered envelope back through it rather than through `addItems()`. It takes envelopes as `take()` handed them out, puts them back at the head in the order given and unchanged, keeps the newest items when that overflows `batch.max_buffer_size`, and logs a failure itself, because the caller has nowhere else to keep the items. A host that wrote its own buffer has to implement it; there is no default. A host on `FileBuffer` has nothing to do
