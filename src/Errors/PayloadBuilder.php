@@ -282,9 +282,10 @@ final class PayloadBuilder
      * when not even its first key does.
      *
      * A context JSON cannot encode at all is null too: sent as it is, it would
-     * fail to encode the whole batch. Invalid UTF-8 never gets this far, since
-     * {@see exceptionContext()} repairs it, so what is left is a float JSON has
-     * no spelling for (INF, NAN).
+     * fail to encode the whole batch. Nothing known gets this far, since
+     * {@see exceptionContext()} repairs invalid UTF-8 and
+     * {@see DataSanitizer::sanitizeForSerialization()} spells INF and NAN as
+     * strings, so this is a backstop for whatever else JSON may refuse.
      *
      * @param  array<array-key, mixed>  $bounded
      * @return array<array-key, mixed>|null

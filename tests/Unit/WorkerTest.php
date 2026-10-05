@@ -368,3 +368,60 @@ it('never throws when the buffer refuses to take items back', function (): void 
 
     expect($harness['pauses']->featurePause('errors')['reason'])->toBe('500');
 });
+
+/**
+ * @return array{worker: Worker, buffer: ArrayBuffer, pauses: PauseStore, http: FakeHttpClient, config: Config, directory: string}
+ */
+function loggingWorkerHarness(FakeHttpClient $http): array
+{
+    return workerHarness($http, ['internal_logging' => ['enabled' => true, 'level' => 'debug']]);
+}
+
+function workerLogContents(string $directory): string
+{
+    $files = glob($directory.'/internal-*.log') ?: [];
+
+    return implode('', array_map(static fn (string $file): string => (string) file_get_contents($file), $files));
+}
+
+it('drops an item it cannot encode from the batch and sends the rest, never measuring it as zero bytes', function (): void {
+    $harness = loggingWorkerHarness(FakeHttpClient::respondingWith(200));
+    $harness['buffer']->addItem('logs', ['message' => 'before']);
+    $harness['buffer']->addItem('logs', ['message' => 'poison', 'context' => ['ratio' => INF]]);
+    $harness['buffer']->addItem('logs', ['message' => 'after']);
+
+    $harness['worker']->run('logs');
+
+    expect($harness['http']->requests)->toHaveCount(1)
+        ->and(array_column($harness['http']->payload()['logs'], 'message'))->toBe(['before', 'after'])
+        ->and($harness['buffer']->count('logs'))->toBe(0)
+        ->and($harness['pauses']->featurePause('logs'))->toBeNull()
+        ->and(workerLogContents($harness['directory']))
+        ->toContain('Dropped items that could not be encoded as JSON')
+        ->toContain('"type":"logs"')
+        ->toContain('"dropped":1');
+});
+
+it('sends nothing and pauses nothing when every item in the batch cannot be encoded', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    $harness['buffer']->addItem('events', ['properties' => ['average' => NAN]]);
+    $harness['buffer']->addItem('events', ['properties' => ['trend' => -INF]]);
+
+    $harness['worker']->run('events');
+
+    expect($harness['http']->requests)->toBe([])
+        ->and($harness['buffer']->count('events'))->toBe(0)
+        ->and($harness['pauses']->featurePause('events'))->toBeNull();
+});
+
+it('keeps at least one encodable item when an unencodable one comes first', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    $harness['buffer']->addItem('errors', ['message' => 'poison', 'line' => NAN]);
+    $harness['buffer']->addItem('errors', ['message' => 'big', 'blob' => str_repeat('x', 5_000_000)]);
+    $harness['buffer']->addItem('errors', ['message' => 'next']);
+
+    $harness['worker']->run('errors');
+
+    expect(array_column($harness['http']->payload()['errors'], 'message'))->toBe(['big'])
+        ->and($harness['buffer']->payloads('errors'))->toBe([['message' => 'next']]);
+});

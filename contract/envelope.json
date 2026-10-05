@@ -32,13 +32,15 @@
         "order": [
             "Measure the JSON-encoded size of the item. Within max_item_bytes, send it unchanged.",
             "Over budget: cut every string field longer than max_item_field_bytes, and replace every array field larger than max_item_field_bytes wholesale (truncating a structure mid-way yields invalid JSON).",
-            "Still over budget: drop the item and record the loss in the SDK's internal diagnostics log."
+            "Still over budget: drop the item and record the loss in the SDK's internal diagnostics log.",
+            "An item, or an array field, that cannot be JSON-encoded at all is over every budget rather than zero bytes: the field gets the `_truncated` marker, and an item still unencodable after that is dropped."
         ],
         "never_send_marker_key": true,
         "note": "The dropped item is never replaced with a placeholder or marker payload at the item's top level. The wire shape is fixed per type, so a marker key belongs to no type; on the errors endpoint its strict allow-list would 422 the item and take the whole batch with it, which is the exact failure this budget exists to prevent. Losing one item is cheaper than losing up to a thousand plus a fifteen-minute feature pause. A `_truncated` key nested inside a free-shape field (log `context`/`extra`, JS-error `context`, breadcrumb `data`) is a different thing and is allowed."
     },
     "notes": [
         "client_trim_bytes is the client's soft budget for one request body, deliberately below server_max_body_bytes so the JSON envelope's own overhead cannot push a batch into a 413.",
-        "A batch trimmed at the byte budget always keeps at least one item: a single over-budget item cannot be split, and the per-item policy already bounds it, so sending it and letting the server judge beats spooling it forever."
+        "A batch trimmed at the byte budget always keeps at least one item: a single over-budget item cannot be split, and the per-item policy already bounds it, so sending it and letting the server judge beats spooling it forever.",
+        "A buffered item whose data cannot be JSON-encoded is dropped from its batch at send time and recorded in the internal diagnostics log, never sent and never re-buffered, so it cannot fail the encode of the items around it. It does not count as the one item a trimmed batch keeps."
     ]
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\ItemByteBudget;
+use Ranetrace\Php\Support\PayloadSizer;
 
 /**
  * The budget is the last thing that touches an item before the buffer, and the
@@ -124,4 +125,34 @@ test('multibyte strings are measured and cut by bytes, and stay valid UTF-8', fu
     expect(mb_check_encoding($item['message'], 'UTF-8'))->toBeTrue()
         ->and(mb_strlen($item['message'], '8bit'))->toBeLessThanOrEqual(ItemByteBudget::MAX_ITEM_FIELD_BYTES + 15)
         ->and(json_encode($item))->not->toBeFalse();
+});
+
+test('an item JSON cannot encode counts as over budget, so its unencodable array field is marked and the rest kept', function (): void {
+    $directory = tempDirectory();
+
+    $item = itemBudget($directory)->cap('logs', [
+        'message' => 'Ratio computed',
+        'context' => ['ratio' => INF],
+        'channel' => 'app',
+    ]);
+
+    expect($item)->toBe([
+        'message' => 'Ratio computed',
+        'context' => ['_truncated' => PayloadSizer::UNENCODABLE_REASON],
+        'channel' => 'app',
+    ])
+        ->and(json_encode($item))->not->toBeFalse()
+        ->and(budgetLogContents($directory))
+        ->toContain('Captured item could not be encoded as JSON and a field was removed')
+        ->toContain('"type":"logs"');
+});
+
+test('an item still unencodable after the shrink pass is dropped, never measured as zero bytes', function (): void {
+    $directory = tempDirectory();
+
+    expect(itemBudget($directory)->cap('javascript_errors', ['message' => 'boom', 'line' => NAN]))->toBeNull()
+        ->and(budgetLogContents($directory))
+        ->toContain('Captured item could not be encoded as JSON and was dropped')
+        ->toContain('"type":"javascript_errors"')
+        ->not->toContain('byte budget');
 });

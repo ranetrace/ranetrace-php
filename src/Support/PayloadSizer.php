@@ -18,8 +18,18 @@ namespace Ranetrace\Php\Support;
 final class PayloadSizer
 {
     /**
+     * The marker's reason when the data cannot be JSON-encoded at all, in place
+     * of the caller's size reason, which would misstate why it went.
+     */
+    public const string UNENCODABLE_REASON = 'Field could not be encoded as JSON and was removed';
+
+    /**
      * Return $data unchanged when its JSON-encoded byte size is within
      * $maxBytes; otherwise return a `['_truncated' => $reason]` marker.
+     *
+     * Data that cannot be encoded at all is over every budget: it gets the
+     * marker with {@see UNENCODABLE_REASON}. Measured as zero bytes it would be
+     * kept, and then fail the encode of its item or of the batch it is sent in.
      *
      * Byte size is measured with `mb_strlen(..., '8bit')` (NOT `strlen`: the
      * repo's Pint `mb_str_functions` rule would rewrite `strlen` to a
@@ -30,7 +40,13 @@ final class PayloadSizer
      */
     public static function capBytes(array $data, int $maxBytes, string $reason): array
     {
-        if (mb_strlen((string) json_encode($data), '8bit') > $maxBytes) {
+        $encoded = json_encode($data);
+
+        if ($encoded === false) {
+            return ['_truncated' => self::UNENCODABLE_REASON];
+        }
+
+        if (mb_strlen($encoded, '8bit') > $maxBytes) {
             return ['_truncated' => $reason];
         }
 

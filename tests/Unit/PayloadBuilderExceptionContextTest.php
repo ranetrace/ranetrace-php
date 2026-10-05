@@ -230,13 +230,14 @@ test('a context whose first key alone is over the byte cap is sent as null', fun
         ->and($payload['message'])->toBe('Something broke');
 });
 
-test('a context JSON cannot encode is sent as null rather than failing the batch', function (mixed $value): void {
-    $payload = exceptionContextPayload(throwableWithContext(static fn (): array => ['value' => $value]));
+test('a float JSON cannot spell is sent as its string spelling rather than costing the context', function (float $value, string $spelled): void {
+    $payload = exceptionContextPayload(throwableWithContext(static fn (): array => ['value' => $value, 'kept' => 1]));
 
-    expect($payload['exception_context'])->toBeNull();
+    expect($payload['exception_context'])->toBe(['value' => $spelled, 'kept' => 1]);
 })->with([
-    'infinity' => [INF],
-    'not a number' => [NAN],
+    'infinity' => [INF, 'INF'],
+    'negative infinity' => [-INF, '-INF'],
+    'not a number' => [NAN, 'NAN'],
 ]);
 
 test('invalid UTF-8 in a context key or value is replaced rather than costing the context', function (): void {

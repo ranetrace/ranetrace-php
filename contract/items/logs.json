@@ -6,7 +6,7 @@
         "Transcribed from the backend app's LogsBatchController, verified 2026-08-19.",
         "There is no allow-list here: a key outside `fields` is dropped by the validator rather than rejecting the item. Both SDKs still send exactly the six keys in `fields`.",
         "`context` and `extra` are free-shape arrays at ingest. Anything the SDKs agree to put inside them is a convention between the SDKs, not a rule the server enforces, which is why it lives in `extra_vocabulary` rather than in `fields`.",
-        "Both SDKs may replace an oversized `context` or `extra` wholesale with a single `_truncated` key carrying the reason. That is legal here precisely because these fields are free-shape."
+        "Both SDKs may replace an oversized or unencodable `context` or `extra` wholesale with a single `_truncated` key carrying the reason. That is legal here precisely because these fields are free-shape."
     ],
     "fields": {
         "level": {

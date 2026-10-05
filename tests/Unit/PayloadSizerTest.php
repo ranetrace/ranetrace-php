@@ -41,3 +41,9 @@ test('an empty array fits any realistic budget', function (): void {
     expect(PayloadSizer::capBytes([], 2, 'too big'))->toBe([])
         ->and(PayloadSizer::capBytes([], 1, 'too big'))->toBe(['_truncated' => 'too big']);
 });
+
+test('data JSON cannot encode is replaced by the marker with its own reason, never measured as zero bytes', function (): void {
+    expect(PayloadSizer::capBytes(['ratio' => INF], 51_200, 'Context exceeded 50KB limit and was removed'))
+        ->toBe(['_truncated' => PayloadSizer::UNENCODABLE_REASON])
+        ->and(json_encode(PayloadSizer::capBytes(['ratio' => NAN], 51_200, 'too big')))->not->toBeFalse();
+});

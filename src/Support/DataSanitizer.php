@@ -9,7 +9,16 @@ use Throwable;
 
 /**
  * Flattens arbitrary user data into something JSON can carry: closures,
- * resources and objects become descriptive strings or their array form.
+ * resources and objects become descriptive strings or their array form, and a
+ * float JSON has no spelling for (INF, -INF, NAN) becomes the string PHP spells
+ * it as, `"INF"`, `"-INF"` or `"NAN"`.
+ *
+ * `json_encode` refuses the whole value when one float in it is not finite, so
+ * a single ratio divided by zero in a log context or an event property would
+ * otherwise cost its item, or in a host whose buffer does not encode, the batch
+ * it is sent in. Every shared item builder runs its free-shape fields through
+ * here, and only those: a field whose wire type is a number never does, because
+ * a string there would reject the batch.
  *
  * Ported verbatim from `ranetrace/ranetrace-laravel`
  * (`src/Utilities/DataSanitizer.php`). The markers it emits (`[Closure]`,
@@ -82,7 +91,24 @@ final class DataSanitizer
             return '[Resource: '.get_resource_type($data).']';
         }
 
+        if (is_float($data) && ! is_finite($data)) {
+            return self::spellNonFinite($data);
+        }
+
         // Return primitive values as-is.
         return $data;
+    }
+
+    /**
+     * Spelled out rather than cast: PHP 8.5 warns when NAN is cast to a string,
+     * and a host that turns warnings into exceptions would lose the item to it.
+     */
+    private static function spellNonFinite(float $value): string
+    {
+        if (is_nan($value)) {
+            return 'NAN';
+        }
+
+        return $value > 0 ? 'INF' : '-INF';
     }
 }

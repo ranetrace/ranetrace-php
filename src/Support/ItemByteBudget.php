@@ -77,15 +77,25 @@ final class ItemByteBudget
      * marker inside a free-shape field is a different thing and stays allowed;
      * `contract/envelope.json` records both rules.
      *
+     * An item JSON cannot encode is over every budget, never zero bytes, so it
+     * takes the same path: an unencodable array field gets the `_truncated`
+     * marker from {@see PayloadSizer::capBytes()}, and an item that still
+     * cannot be encoded after that is dropped. Kept, it would fail the encode
+     * of the buffer it is written to or of the batch it is sent in.
+     *
      * @param  string  $type  Buffer type, for the diagnostics entry.
      * @param  array<string, mixed>  $payload
      * @return array<string, mixed>|null Null when the item is irreducibly over budget.
      */
     public function cap(string $type, array $payload): ?array
     {
-        if (self::encodedBytes($payload) <= self::MAX_ITEM_BYTES) {
+        $bytes = self::encodedBytes($payload);
+
+        if ($bytes !== null && $bytes <= self::MAX_ITEM_BYTES) {
             return $payload;
         }
+
+        $encodable = $bytes !== null;
 
         foreach ($payload as $key => $value) {
             if (is_string($value) && mb_strlen($value, '8bit') > self::MAX_ITEM_FIELD_BYTES) {
@@ -99,13 +109,27 @@ final class ItemByteBudget
             }
         }
 
-        if (self::encodedBytes($payload) > self::MAX_ITEM_BYTES) {
+        $bytes = self::encodedBytes($payload);
+
+        if ($bytes === null) {
+            $this->log->warning('Captured item could not be encoded as JSON and was dropped', ['type' => $type]);
+
+            return null;
+        }
+
+        if ($bytes > self::MAX_ITEM_BYTES) {
             $this->log->warning('Captured item exceeded the per-item byte budget and was dropped', [
                 'type' => $type,
                 'max_bytes' => self::MAX_ITEM_BYTES,
             ]);
 
             return null;
+        }
+
+        if (! $encodable) {
+            $this->log->warning('Captured item could not be encoded as JSON and a field was removed', ['type' => $type]);
+
+            return $payload;
         }
 
         $this->log->warning('Captured item exceeded the per-item byte budget and was shrunk', [
@@ -119,12 +143,15 @@ final class ItemByteBudget
     /**
      * Byte size, measured with `mb_strlen(..., '8bit')` (NOT `strlen`: the
      * repo's Pint `mb_str_functions` rule would rewrite `strlen` to a
-     * char-counting `mb_strlen`, breaking the budget on multibyte data).
+     * char-counting `mb_strlen`, breaking the budget on multibyte data). Null
+     * when the payload cannot be encoded at all.
      *
      * @param  array<string, mixed>  $payload
      */
-    private static function encodedBytes(array $payload): int
+    private static function encodedBytes(array $payload): ?int
     {
-        return mb_strlen((string) json_encode($payload), '8bit');
+        $encoded = json_encode($payload);
+
+        return $encoded === false ? null : mb_strlen($encoded, '8bit');
     }
 }

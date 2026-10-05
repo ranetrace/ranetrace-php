@@ -145,3 +145,47 @@ test('it handles deeply nested structures', function (): void {
     expect($result['level1']['level2']['level3']['closure'])->toBe('[Closure]')
         ->and($result['level1']['level2']['level3']['value'])->toBe('deep');
 });
+
+test('a float JSON cannot spell becomes the string PHP spells it as', function (float $value, string $spelled): void {
+    expect(DataSanitizer::sanitizeForSerialization(['value' => $value]))->toBe(['value' => $spelled]);
+})->with([
+    'infinity' => [INF, 'INF'],
+    'negative infinity' => [-INF, '-INF'],
+    'not a number' => [NAN, 'NAN'],
+]);
+
+test('finite floats JSON can spell keep their type, at both ends of the range', function (): void {
+    $data = ['negative_zero' => -0.0, 'huge' => PHP_FLOAT_MAX, 'tiny' => PHP_FLOAT_MIN, 'plain' => 1.5];
+
+    $sanitized = DataSanitizer::sanitizeForSerialization($data);
+
+    expect($sanitized)->toBe($data)
+        ->and(json_encode($sanitized))->not->toBeFalse();
+});
+
+test('a non-finite float inside an object flattened through jsonSerialize or toArray is spelled too', function (): void {
+    $serializable = new class implements JsonSerializable
+    {
+        /**
+         * @return array<string, float>
+         */
+        public function jsonSerialize(): array
+        {
+            return ['ratio' => INF];
+        }
+    };
+
+    $arrayable = new class
+    {
+        /**
+         * @return array<string, float>
+         */
+        public function toArray(): array
+        {
+            return ['ratio' => NAN];
+        }
+    };
+
+    expect(DataSanitizer::sanitizeForSerialization(['a' => $serializable, 'b' => $arrayable, 'c' => [[[INF]]]]))
+        ->toBe(['a' => ['ratio' => 'INF'], 'b' => ['ratio' => 'NAN'], 'c' => [[['INF']]]]);
+});

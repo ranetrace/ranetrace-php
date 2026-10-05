@@ -134,27 +134,47 @@ final class Worker
     }
 
     /**
-     * Split a batch at the byte budget, returning [kept, deferred]. Always keeps
-     * at least one item: a single over-budget item cannot be split, and the
-     * per-field caps already bound individual payloads, so sending it and
+     * Split a batch at the byte budget, returning [kept, deferred, dropped].
+     *
+     * Always keeps at least one item: a single over-budget item cannot be split,
+     * and the per-field caps already bound individual payloads, so sending it and
      * letting the server judge beats spooling it forever.
      *
+     * An item whose data cannot be JSON-encoded is dropped instead, and only
+     * counted. It is over every budget rather than zero bytes, and kept in the
+     * batch it would fail the encode of the whole request, re-buffered it would
+     * do the same on every later run. The capture paths already make such an
+     * item impossible; this keeps one that got past them from holding up the
+     * items around it.
+     *
      * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
-     * @return array{0: array<int, array{id: string, data: array<string, mixed>, timestamp: int}>, 1: array<int, array{id: string, data: array<string, mixed>, timestamp: int}>}
+     * @return array{0: list<array{id: string, data: array<string, mixed>, timestamp: int}>, 1: list<array{id: string, data: array<string, mixed>, timestamp: int}>, 2: int}
      */
     private static function trimToByteBudget(array $items): array
     {
+        $kept = [];
+        $dropped = 0;
         $bytes = 0;
 
-        foreach ($items as $index => $item) {
-            $bytes += mb_strlen((string) json_encode($item['data']), '8bit');
+        foreach (array_values($items) as $index => $item) {
+            $encoded = json_encode($item['data']);
 
-            if ($index > 0 && $bytes > self::MAX_BATCH_BYTES) {
-                return [array_slice($items, 0, $index), array_slice($items, $index)];
+            if ($encoded === false) {
+                $dropped++;
+
+                continue;
             }
+
+            $bytes += mb_strlen($encoded, '8bit');
+
+            if ($kept !== [] && $bytes > self::MAX_BATCH_BYTES) {
+                return [$kept, array_values(array_slice($items, $index)), $dropped];
+            }
+
+            $kept[] = $item;
         }
 
-        return [$items, []];
+        return [$kept, [], $dropped];
     }
 
     /**
@@ -201,7 +221,14 @@ final class Worker
             return;
         }
 
-        [$items, $deferred] = self::trimToByteBudget($items);
+        [$items, $deferred, $dropped] = self::trimToByteBudget($items);
+
+        if ($dropped > 0) {
+            $this->log->error('Dropped items that could not be encoded as JSON', [
+                'type' => $type,
+                'dropped' => $dropped,
+            ]);
+        }
 
         if ($deferred !== []) {
             $this->buffer->addItems($type, array_column($deferred, 'data'));
@@ -211,6 +238,10 @@ final class Worker
                 'sent' => count($items),
                 'deferred' => count($deferred),
             ]);
+        }
+
+        if ($items === []) {
+            return;
         }
 
         $endpoint = $this->endpoints->get($type);
