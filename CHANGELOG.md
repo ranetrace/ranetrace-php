@@ -6,6 +6,8 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-10-05
+
 ### Fixed
 - **A float JSON cannot spell no longer costs the item it is in.** `json_encode` refuses the whole value when one float in it is INF, -INF or NAN, as a ratio divided by zero in a log context or an event property is. The file buffer then failed to write, so the item was dropped with an internal log line, and in a host whose buffer does not encode, the batch carrying it could not be sent at all. Such a float in a log record's context or extra, an event's properties, a throwable's `context()` or a JavaScript error's context or breadcrumb data is now sent as the string `"INF"`, `"-INF"` or `"NAN"`, through `Support\DataSanitizer`. A number field of an item is never touched. An `exception_context` holding one is now sent with the string instead of as null. `ranetrace/ranetrace-laravel` gets the fix through the shared builders, and there is nothing to do on upgrade
 - **Nothing that cannot be encoded is measured as zero bytes any more.** `Support\PayloadSizer::capBytes()` replaces an array field it cannot encode with the `_truncated` marker, with the reason `Field could not be encoded as JSON and was removed`; `Support\ItemByteBudget::cap()` treats an item it cannot encode as over budget, so that field is marked and an item still unencodable after that is dropped with an internal log line; and the worker drops an item it cannot encode from the batch it is about to send, with an internal log line naming the type and the count, and sends the rest. Before, each of them measured such a value as zero bytes and kept it, so one item could fail the encode of the whole request
