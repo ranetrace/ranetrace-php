@@ -47,6 +47,15 @@ class ArrayBuffer implements BufferInterface
         return $taken;
     }
 
+    public function returnItems(string $type, array $envelopes): void
+    {
+        if ($this->rejectWrites) {
+            return;
+        }
+
+        $this->items[$type] = [...array_values($envelopes), ...$this->items[$type] ?? []];
+    }
+
     public function count(string $type): int
     {
         return count($this->items[$type] ?? []);

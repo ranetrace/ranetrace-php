@@ -196,6 +196,90 @@ it('refreshes the ttl on every write', function (): void {
         ->and($buffer->count('errors'))->toBe(2);
 });
 
+/**
+ * Write a spool file holding exactly these envelopes, as an earlier capture would
+ * have left it.
+ *
+ * @param  list<array{id: string, data: array<string, mixed>, timestamp: int}>  $envelopes
+ */
+function writeSpool(string $directory, string $type, array $envelopes): void
+{
+    file_put_contents($directory.'/'.$type.'.json', json_encode($envelopes));
+}
+
+it('keeps the capture time of an item that was taken and put back', function (): void {
+    $directory = tempDirectory();
+    $capturedAt = time() - 3600;
+    writeSpool($directory, 'errors', [['id' => 'old', 'data' => ['message' => 'boom'], 'timestamp' => $capturedAt]]);
+    $buffer = fileBuffer($directory);
+
+    $buffer->returnItems('errors', $buffer->take('errors', 10));
+
+    expect($buffer->oldestTimestamp('errors'))->toBe($capturedAt);
+});
+
+it('puts returned items back at the head, unchanged and in the order given', function (): void {
+    $buffer = fileBuffer(tempDirectory());
+    $buffer->addItems('errors', [['message' => 'one'], ['message' => 'two']]);
+    $taken = $buffer->take('errors', 10);
+
+    $buffer->addItem('errors', ['message' => 'captured meanwhile']);
+    $buffer->returnItems('errors', $taken);
+
+    $drained = $buffer->take('errors', 10);
+
+    expect(array_slice($drained, 0, 2))->toBe($taken)
+        ->and($drained[2]['data'])->toBe(['message' => 'captured meanwhile']);
+});
+
+it('drops returned items first when putting them back overflows the buffer', function (): void {
+    $directory = tempDirectory();
+    $buffer = fileBuffer($directory, ['batch' => ['max_buffer_size' => 3]]);
+    $buffer->addItems('errors', [['message' => 'one'], ['message' => 'two']]);
+    $taken = $buffer->take('errors', 10);
+
+    $buffer->addItems('errors', [['message' => 'three'], ['message' => 'four']]);
+    $buffer->returnItems('errors', $taken);
+
+    expect(array_column($buffer->take('errors', 10), 'data'))->toBe([
+        ['message' => 'two'],
+        ['message' => 'three'],
+        ['message' => 'four'],
+    ])->and(internalLogContents($directory))->toContain('"type":"errors","dropped":1,"max":3');
+});
+
+it('treats returning nothing as a no-op without touching disk', function (): void {
+    $directory = tempDirectory();
+
+    fileBuffer($directory)->returnItems('errors', []);
+
+    expect(glob($directory.'/*'))->toBe([]);
+});
+
+it('logs the loss with type and count when returned items cannot get the lock', function (): void {
+    $directory = tempDirectory();
+    $buffer = fileBuffer($directory, ['batch' => ['lock_wait' => 0]]);
+    $buffer->addItem('errors', ['message' => 'already buffered']);
+    $before = file_get_contents($directory.'/errors.json');
+
+    $contender = fopen($directory.'/errors.lock', 'c');
+    flock($contender, LOCK_EX);
+
+    try {
+        $buffer->returnItems('errors', [
+            ['id' => 'a', 'data' => ['message' => 'lost'], 'timestamp' => time()],
+            ['id' => 'b', 'data' => ['message' => 'lost too'], 'timestamp' => time()],
+        ]);
+    } finally {
+        flock($contender, LOCK_UN);
+        fclose($contender);
+    }
+
+    expect(internalLogContents($directory))
+        ->toContain('ranetrace_internal.ERROR: Could not return items to the buffer, items lost {"type":"errors","count":2}')
+        ->and(file_get_contents($directory.'/errors.json'))->toBe($before);
+});
+
 it('discards an unreadable buffer file rather than choking on it', function (): void {
     $directory = tempDirectory();
     $buffer = fileBuffer($directory);

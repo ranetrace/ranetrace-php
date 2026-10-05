@@ -34,12 +34,27 @@ interface BufferInterface
      * Atomically remove and return up to $limit envelopes from the head.
      *
      * Envelope shape: ['id' => string, 'data' => array, 'timestamp' => int].
-     * Items leave the buffer before any send is attempted; failed sends
-     * re-buffer via addItems(), which is what makes delivery at-least-once.
+     * Items leave the buffer before any send is attempted; what was not
+     * delivered goes back through returnItems(), which is what makes delivery
+     * at-least-once.
      *
      * @return array<int, array{id: string, data: array<string, mixed>, timestamp: int}>
      */
     public function take(string $type, int $limit): array;
+
+    /**
+     * Put envelopes taken with take() back at the head of the buffer, in the
+     * order given and unchanged (same id, data and timestamp), so a batch that
+     * was not delivered keeps its ids and capture times and is sent before
+     * anything captured since. A buffer over its maximum size keeps its newest
+     * items, so the returned ones are dropped first.
+     *
+     * The caller has nowhere else to keep the items, so a failure to put them
+     * back is logged here as their loss, which is why nothing is returned.
+     *
+     * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $envelopes
+     */
+    public function returnItems(string $type, array $envelopes): void;
 
     public function count(string $type): int;
 

@@ -136,9 +136,9 @@ test('the response policy reads the 200 counters and unprocessed indexes the con
         ->and($outcome->counters?->ignored)->toBe(0)
         ->and($outcome->counters?->hasFailures())->toBeTrue()
         ->and($outcome->unprocessedIndexes)->toBe([3])
-        ->and($outcome->unprocessedPayloads([
+        ->and($outcome->unprocessedItems([
             3 => ['id' => 'd', 'data' => ['message' => 'fourth'], 'timestamp' => 0],
-        ]))->toBe([['message' => 'fourth']]);
+        ]))->toBe([['id' => 'd', 'data' => ['message' => 'fourth'], 'timestamp' => 0]]);
 });
 
 test('the worker batch budgets equal the envelope contract', function (): void {

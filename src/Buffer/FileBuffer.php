@@ -30,8 +30,9 @@ use Ranetrace\Php\Support\Quietly;
  *    concurrent reader sees either the whole old buffer or the whole new one,
  *    never a half-written file.
  * 3. `take()` removes items before anything is sent. Delivery is therefore
- *    at-least-once: a failed send re-buffers through `addItems()`, and the worst
- *    case is a duplicate rather than a silent loss.
+ *    at-least-once: a failed send puts its envelopes back through
+ *    `returnItems()`, and the worst case is a duplicate rather than a silent
+ *    loss.
  *
  * No HTTP ever happens inside the lock; critical sections are sub-millisecond.
  */
@@ -96,19 +97,45 @@ final class FileBuffer implements BufferInterface
                 ];
             }
 
-            $maxSize = $this->maxBufferSize();
+            return $this->writeWithinMaxSize($type, $buffer);
+        } finally {
+            $lock->release($handle);
+        }
+    }
 
-            if (count($buffer) > $maxSize) {
-                $dropped = count($buffer) - $maxSize;
+    /**
+     * Takes the lock with the same `batch.lock_wait` as capture. Laravel's
+     * cache lock can outlive a holder that died, so its buffer waits that out
+     * here; `flock` is released by the OS when its holder dies, so a miss is
+     * contention or an unwritable path, and waiting longer cures neither.
+     */
+    public function returnItems(string $type, array $envelopes): void
+    {
+        if (! $this->isKnownType($type) || $envelopes === []) {
+            return;
+        }
 
-                // Keep the newest. Under sustained overflow the recent past
-                // describes the incident better than the start of the backlog.
-                $buffer = array_slice($buffer, -$maxSize);
+        if (! $this->ensureDirectory()) {
+            $this->logReturnLost($type, $envelopes);
 
-                $this->logOverflowOnce($type, $dropped, $maxSize);
+            return;
+        }
+
+        $lock = $this->lock($type);
+        $handle = $lock->acquire();
+
+        if ($handle === null) {
+            $this->logReturnLost($type, $envelopes);
+
+            return;
+        }
+
+        try {
+            $buffer = [...array_values($envelopes), ...$this->read($type)];
+
+            if (! $this->writeWithinMaxSize($type, $buffer)) {
+                $this->logReturnLost($type, $envelopes);
             }
-
-            return $this->write($type, $buffer);
         } finally {
             $lock->release($handle);
         }
@@ -183,9 +210,15 @@ final class FileBuffer implements BufferInterface
 
     /**
      * Unix timestamp of the oldest spooled item, or null when the buffer is
-     * empty. Items are appended in arrival order and drained FIFO, so the head
-     * is always the oldest. Lets diagnostics tell a buffer that is simply
-     * waiting for its next drain apart from one that is genuinely stalled.
+     * empty. Captures append, drains take from the head and put-backs return
+     * to the head, so the head is the oldest. Lets diagnostics tell a buffer
+     * that is simply waiting for its next drain apart from one that is
+     * genuinely stalled.
+     *
+     * The worker takes no run lock, so two overlapping runs (cron plus a
+     * shutdown flush) can each take a slice. A slice returned by one of them is
+     * then not always older than everything still buffered, and this reads the
+     * head regardless.
      */
     public function oldestTimestamp(string $type): ?int
     {
@@ -324,6 +357,38 @@ final class FileBuffer implements BufferInterface
         }
 
         return JsonFile::writeEncoded($file, $encoded);
+    }
+
+    /**
+     * Persist a buffer, keeping only its newest `batch.max_buffer_size` items.
+     * Under sustained overflow the recent past describes the incident better
+     * than the start of the backlog. Must be called under the type's lock.
+     *
+     * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $buffer
+     */
+    private function writeWithinMaxSize(string $type, array $buffer): bool
+    {
+        $maxSize = $this->maxBufferSize();
+
+        if (count($buffer) > $maxSize) {
+            $dropped = count($buffer) - $maxSize;
+            $buffer = array_slice($buffer, -$maxSize);
+
+            $this->logOverflowOnce($type, $dropped, $maxSize);
+        }
+
+        return $this->write($type, $buffer);
+    }
+
+    /**
+     * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $envelopes
+     */
+    private function logReturnLost(string $type, array $envelopes): void
+    {
+        $this->log->error('Could not return items to the buffer, items lost', [
+            'type' => $type,
+            'count' => count($envelopes),
+        ]);
     }
 
     /**

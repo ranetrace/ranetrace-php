@@ -45,22 +45,21 @@ final readonly class BatchOutcome
     }
 
     /**
-     * The payloads of the items named by {@see $unprocessedIndexes}, in the
-     * order the server named them.
+     * The items of the batch the server named as unprocessed, each once and in
+     * batch order, so the oldest stays at the head of the buffer. A position
+     * outside the batch names nothing.
      *
-     * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items  The batch as it was sent.
-     * @return list<array<string, mixed>>
+     * Generic over the item shape because each SDK passes its own envelopes;
+     * what comes back is exactly those envelopes, never just their payloads, so
+     * a put-back keeps their ids and capture times.
+     *
+     * @template TItem
+     *
+     * @param  array<int, TItem>  $items  The batch as it was sent, keyed by its position in the request.
+     * @return list<TItem>
      */
-    public function unprocessedPayloads(array $items): array
+    public function unprocessedItems(array $items): array
     {
-        $payloads = [];
-
-        foreach ($this->unprocessedIndexes as $index) {
-            if (isset($items[$index])) {
-                $payloads[] = $items[$index]['data'];
-            }
-        }
-
-        return $payloads;
+        return array_values(array_intersect_key($items, array_flip($this->unprocessedIndexes)));
     }
 }

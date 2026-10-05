@@ -6,6 +6,14 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Changed
+- **Breaking for a custom buffer: `Buffer\BufferInterface` requires `returnItems(string $type, array $envelopes): void`.** The worker puts every undelivered envelope back through it rather than through `addItems()`. It takes envelopes as `take()` handed them out, puts them back at the head in the order given and unchanged, keeps the newest items when that overflows `batch.max_buffer_size`, and logs a failure itself, because the caller has nowhere else to keep the items. A host that wrote its own buffer has to implement it; there is no default. A host on `FileBuffer` has nothing to do
+- **Breaking: `Http\BatchOutcome::unprocessedPayloads()` is replaced by `unprocessedItems()`.** It returns the whole items the server named in `unprocessed_indexes`, not just their payloads, each once and in batch order, whatever order the server named them in; an index outside the batch names nothing. It is generic over the item shape, so `ranetrace/ranetrace-laravel` can hand it its own envelopes. A caller of the old method switches to the new one and reads `['data']` from each item if it wants the payloads
+
+### Fixed
+- **A batch that could not be delivered keeps its ids and capture times, and goes back to the front of the buffer.** The worker put a failed batch, the items the server reported as unprocessed and the items deferred to keep a request under the byte budget back through `addItems()`, which gave each a new id and the current time and appended it. So a batch failing for hours looked freshly captured to `FileBuffer::oldestTimestamp()`, which is how a stalled drain is told apart from one waiting for its next run, and it was sent after everything captured since. They now go back at the head of the buffer, unchanged, and a failed batch lands ahead of the items deferred from it, where it was before. Nothing to do on upgrade
+- **Items the worker cannot put back are logged as lost.** When putting a batch back failed, because the buffer lock stayed contended for `batch.lock_wait`, the buffer directory was not writable or the write failed, the items were gone and only a generic lock warning said so, which read like a capture that had been skipped. Each such loss now writes `Could not return items to the buffer, items lost` to the internal log at error level, with the type and the number of items
+
 ## [1.0.8] - 2026-10-05
 
 ### Fixed

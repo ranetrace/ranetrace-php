@@ -348,6 +348,72 @@ it('always sends at least one item even when it alone exceeds the budget', funct
         ->and($harness['buffer']->payloads('errors'))->toBe([['message' => 'next']]);
 });
 
+/**
+ * Envelopes as an earlier capture left them: fixed ids, an old capture time.
+ *
+ * @param  list<array<string, mixed>>  $payloads
+ * @return list<array{id: string, data: array<string, mixed>, timestamp: int}>
+ */
+function seedEnvelopes(ArrayBuffer $buffer, string $type, array $payloads): array
+{
+    $envelopes = [];
+
+    foreach ($payloads as $index => $data) {
+        $envelopes[] = ['id' => 'envelope-'.$index, 'data' => $data, 'timestamp' => time() - 3600 + $index];
+    }
+
+    $buffer->items[$type] = $envelopes;
+
+    return $envelopes;
+}
+
+it('puts a failed batch back with its ids and capture times', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(500));
+    $envelopes = seedEnvelopes($harness['buffer'], 'errors', [['message' => 'one'], ['message' => 'two']]);
+
+    $harness['worker']->run('errors');
+
+    expect($harness['buffer']->items['errors'])->toBe($envelopes);
+});
+
+it('puts the unprocessed items back with their envelopes, in batch order', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200, [
+        'items' => ['received' => 4, 'processed' => 2, 'unprocessed' => 2],
+        'unprocessed_indexes' => [3, 1],
+    ]));
+    $envelopes = seedEnvelopes($harness['buffer'], 'errors', [
+        ['message' => 'zero'], ['message' => 'one'], ['message' => 'two'], ['message' => 'three'],
+    ]);
+
+    $harness['worker']->run('errors');
+
+    expect($harness['buffer']->items['errors'])->toBe([$envelopes[1], $envelopes[3]]);
+});
+
+it('puts the items deferred by the byte budget back with their envelopes', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    $envelopes = seedEnvelopes($harness['buffer'], 'errors', array_map(
+        static fn (string $marker): array => ['message' => $marker, 'blob' => str_repeat($marker, 2_000_000)],
+        ['a', 'b', 'c'],
+    ));
+
+    $harness['worker']->run('errors');
+
+    expect($harness['buffer']->items['errors'])->toBe([$envelopes[2]]);
+});
+
+it('puts a failed batch back ahead of the items deferred from it', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(500));
+    $envelopes = seedEnvelopes($harness['buffer'], 'errors', array_map(
+        static fn (string $marker): array => ['message' => $marker, 'blob' => str_repeat($marker, 2_000_000)],
+        ['a', 'b', 'c'],
+    ));
+
+    $harness['worker']->run('errors');
+
+    expect($harness['buffer']->items['errors'])->toBe($envelopes);
+});
+
 it('does not send when the api key is missing', function (): void {
     $harness = workerHarness(FakeHttpClient::respondingWith(200), ['key' => '']);
     seedBuffer($harness['buffer'], 'errors', 1);

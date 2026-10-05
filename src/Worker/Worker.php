@@ -231,7 +231,7 @@ final class Worker
         }
 
         if ($deferred !== []) {
-            $this->buffer->addItems($type, array_column($deferred, 'data'));
+            $this->buffer->returnItems($type, $deferred);
 
             $this->log->info('Deferred items to keep the batch under the size limit', [
                 'type' => $type,
@@ -286,7 +286,7 @@ final class Worker
         }
 
         if ($outcome->counters?->hasUnprocessed() === true) {
-            $this->buffer->addItems($type, $outcome->unprocessedPayloads($items));
+            $this->buffer->returnItems($type, $outcome->unprocessedItems($items));
         }
 
         $seconds = $outcome->pauseSeconds ?? ResponsePolicy::PAUSE_SECONDS;
@@ -383,11 +383,15 @@ final class Worker
     }
 
     /**
+     * Return the whole batch to the head of the buffer, envelopes unchanged.
+     * Anything deferred by trimToByteBudget() is already there, and lands
+     * behind the batch, where it was before.
+     *
      * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
      */
     private function reBuffer(string $type, array $items): void
     {
-        $this->buffer->addItems($type, array_column($items, 'data'));
+        $this->buffer->returnItems($type, $items);
     }
 
     private function timeout(string $dotKey): int
