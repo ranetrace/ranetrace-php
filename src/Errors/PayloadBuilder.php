@@ -22,9 +22,9 @@ use Throwable;
  * here too, handing over what only a framework can answer through
  * {@see ErrorContext} rather than keeping a second copy of the caps. Every cap,
  * every truncation rule and the header allowlist are part of the wire contract:
- * the backend does strict field-set matching, so a payload with an extra key, a
- * missing key or a wrong type gets the WHOLE batch rejected with a 422, dropping
- * every item in it and pausing the feature for fifteen minutes.
+ * the backend does strict field-set matching, so an item with an extra key, a
+ * missing key or a wrong type is refused and counted as failed, never sent
+ * again, and a builder that gets it wrong loses every error it builds.
  *
  * What a host is told to answer, it answers through {@see Config}: `environment`,
  * `project_root`, `framework`, `framework_version` and `user_resolver`. What it
@@ -88,10 +88,10 @@ final class PayloadBuilder
     /**
      * Bounds on `exception_context`. The backend allows 100 top-level keys, 5
      * levels of nesting and 16,384 bytes JSON-encoded, and a context past any
-     * of them fails its item and so the whole batch with a 422. The SDK keeps
-     * half of each as headroom: a context is host data that can grow without
-     * the host noticing, and trimming it here costs part of one context where
-     * crossing the backend's line costs a batch of up to a thousand items.
+     * of them refuses its item. The SDK keeps half of each as headroom: a
+     * context is host data that can grow without the host noticing, and
+     * trimming it here costs part of one context where crossing the backend's
+     * line costs the whole error report.
      *
      * The byte cap equals {@see ItemByteBudget::MAX_ITEM_FIELD_BYTES}, so a
      * context that fits here is never replaced wholesale by that budget.
@@ -579,7 +579,7 @@ final class PayloadBuilder
      *
      * The backend takes the id only as an int or a string of at most 255
      * characters and the email only as a string of at most 255 characters, and
-     * one item of any other shape rejects the whole batch, so a resolver that
+     * an item of any other shape is refused whole, so a resolver that
      * reports anything else sends no user, or no email, instead.
      *
      * @return array{id: int|string, email: ?string}|null

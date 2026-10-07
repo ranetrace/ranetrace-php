@@ -12,7 +12,7 @@ Its sibling is `ranetrace/ranetrace-laravel` (working copy at `../ranetrace-lara
 
 ## The wire contract is sacred
 
-The Ranetrace API does **strict field-set matching**: a payload with an extra key, a missing key or a wrong type gets the **whole batch** rejected with a 422, which drops every item in it and pauses the feature for fifteen minutes. There is no additive-field tolerance and no partial acceptance.
+The Ranetrace API does **strict field-set matching**: an item with an extra key, a missing key or a wrong type is **refused**. The server does not store it and counts it as failed, which is final: it is never sent again. There is no additive-field tolerance, and every item of a type carries the same keys, so one wrong key in a builder loses every item of that type.
 
 The contract is written down in `contract/`, which ships with the package so the Laravel SDK and the backend application can test against the same artifact rather than three drifting descriptions of it:
 

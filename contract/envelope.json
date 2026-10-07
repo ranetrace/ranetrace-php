@@ -36,7 +36,7 @@
             "An item, or an array field, that cannot be JSON-encoded at all is over every budget rather than zero bytes: the field gets the `_truncated` marker, and an item still unencodable after that is dropped."
         ],
         "never_send_marker_key": true,
-        "note": "The dropped item is never replaced with a placeholder or marker payload at the item's top level. The wire shape is fixed per type, so a marker key belongs to no type; on the errors endpoint its strict allow-list would 422 the item and take the whole batch with it, which is the exact failure this budget exists to prevent. Losing one item is cheaper than losing up to a thousand plus a fifteen-minute feature pause. A `_truncated` key nested inside a free-shape field (log `context`/`extra`, JS-error `context`, breadcrumb `data`) is a different thing and is allowed."
+        "note": "The dropped item is never replaced with a placeholder or marker payload at the item's top level. The wire shape is fixed per type, so a marker key belongs to no type; on the errors endpoint its strict allow-list would refuse the item, so the marker would cost the item anyway while hiding why. Dropping it here keeps the loss in the SDK's own diagnostics log. A `_truncated` key nested inside a free-shape field (log `context`/`extra`, JS-error `context`, breadcrumb `data`) is a different thing and is allowed."
     },
     "notes": [
         "client_trim_bytes is the client's soft budget for one request body, deliberately below server_max_body_bytes so the JSON envelope's own overhead cannot push a batch into a 413.",

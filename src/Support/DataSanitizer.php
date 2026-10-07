@@ -18,7 +18,7 @@ use Throwable;
  * otherwise cost its item, or in a host whose buffer does not encode, the batch
  * it is sent in. Every shared item builder runs its free-shape fields through
  * here, and only those: a field whose wire type is a number never does, because
- * a string there would reject the batch.
+ * a string there would refuse the item.
  *
  * Shared with `ranetrace/ranetrace-laravel`, which reaches it through the
  * shared item builders and keeps no copy of its own. The markers it emits

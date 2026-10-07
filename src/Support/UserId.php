@@ -6,9 +6,9 @@ namespace Ranetrace\Php\Support;
 
 /**
  * The host's user id as the backend takes it on every ingest endpoint: an int,
- * or a string of at most 255 characters. Any other value rejects the whole
- * batch it travels in, so the item builders send no user rather than one the
- * backend would refuse. The id is the host's own, and a host can report
+ * or a string of at most 255 characters. Any other value refuses the item it
+ * travels in, losing the whole report for its user, so the item builders send
+ * no user rather than one the backend would refuse. The id is the host's own, and a host can report
  * anything here, so this is checked where each item is built.
  */
 final class UserId

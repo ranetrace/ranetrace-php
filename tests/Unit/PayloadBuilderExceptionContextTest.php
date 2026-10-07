@@ -10,7 +10,7 @@ use Ranetrace\Php\Support\SecretScrubber;
 /**
  * `exception_context` is read from the throwable itself, the way Laravel's log
  * reporter reads it, so both SDKs get it from this one builder. The backend
- * fails the whole batch on a context past 100 keys, 5 levels or 16,384 bytes,
+ * refuses an item whose context is past 100 keys, 5 levels or 16,384 bytes,
  * so these tests pin the tighter bounds the SDK holds it to.
  */
 function exceptionContextBuilder(): PayloadBuilder

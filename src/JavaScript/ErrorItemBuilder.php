@@ -19,7 +19,7 @@ use Ranetrace\Php\Support\Utf8;
  *
  * Shared with `ranetrace/ranetrace-laravel`. Every key is always present and the
  * set is exact: the API does strict field-set matching, so one extra or missing
- * key rejects the whole batch.
+ * key refuses the item, and with it every item this builder makes.
  *
  * The payload is entirely untrusted, so the item is REBUILT from it rather than
  * filtered: an unknown key from a tampered payload is dropped by construction

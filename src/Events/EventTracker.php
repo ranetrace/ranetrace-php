@@ -24,7 +24,7 @@ use Throwable;
  * injected, because this SDK has no container to reach into.
  *
  * The wire shape is exactly seven keys (spec section 4) and the API does strict
- * field-set matching, so an added or dropped key rejects the whole batch. Tests
+ * field-set matching, so an added or dropped key refuses every event. Tests
  * assert the key set, not just the values.
  *
  * Two failure postures sit side by side in {@see track()} and the split is

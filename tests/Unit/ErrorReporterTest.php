@@ -10,8 +10,8 @@ use Ranetrace\Php\Support\SecretScrubber;
 use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 
 /**
- * The exact field set the API accepts. A missing or extra key is a 422 for the
- * whole batch, so the tests pin the key set itself, not just the values.
+ * The exact field set the API accepts. A missing or extra key refuses every
+ * error item, so the tests pin the key set itself, not just the values.
  *
  * @return array<int, string>
  */

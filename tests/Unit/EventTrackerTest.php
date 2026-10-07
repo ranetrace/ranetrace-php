@@ -11,8 +11,8 @@ use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 
 /**
  * The exact key set the events endpoint accepts. An extra or missing key here
- * is a 422 on the whole batch in production, so the tests below assert the key
- * set itself, not only the values.
+ * refuses every event in production, so the tests below assert the key set
+ * itself, not only the values.
  *
  * @var array<int, string>
  */

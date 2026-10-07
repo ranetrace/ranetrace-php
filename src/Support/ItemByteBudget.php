@@ -70,10 +70,9 @@ final class ItemByteBudget
      * An item still over budget after both is dropped outright, and is NOT
      * replaced with a marker payload: the wire shape is an allow-list per type,
      * so a top-level marker key belongs to no type and the backend's strict
-     * field matching would reject the item, discarding the whole batch of up to
-     * a thousand items and pausing the type, which is precisely the failure
-     * this budget exists to prevent. Dropping loses one item and nothing else,
-     * and the internal log keeps that loss visible. The nested `_truncated`
+     * field matching would refuse the item anyway, out of the SDK's sight.
+     * Dropping it here loses the same one item, and the internal log keeps
+     * that loss visible. The nested `_truncated`
      * marker inside a free-shape field is a different thing and stays allowed;
      * `contract/envelope.json` records both rules.
      *

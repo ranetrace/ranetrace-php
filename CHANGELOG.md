@@ -6,6 +6,9 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Changed
+- **The contract describes an invalid item as refused on its own.** The backend now validates each item of a batch by itself: an invalid one is not stored and is counted as failed in a 200, and the rest of the batch is stored, where before one invalid item failed the whole batch with a 422. `contract/responses.json`, the item and envelope notes, and the docblocks that gave the old rule as the reason for a guard now say so; a 422 is described as a request body of the wrong shape. The SDK's behaviour is unchanged: a failed item was already final, and a 422 is still dropped with a feature pause. The guards stay, because an item they let through malformed is still lost. The contract also notes that an error's, a log record's or a breadcrumb's `message` may be an empty string. Nothing to do on upgrade
+
 ## [1.0.9] - 2026-10-05
 
 ### Changed

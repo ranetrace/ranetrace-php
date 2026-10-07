@@ -39,8 +39,8 @@ final readonly class BatchCounters
     }
 
     /**
-     * Items the server rejected individually. Terminal by design: it would
-     * reject them again, so re-sending would loop forever.
+     * Items the server refused or failed to store, each on its own. Terminal by
+     * design: it would fail them again, so re-sending would loop forever.
      */
     public function hasFailures(): bool
     {

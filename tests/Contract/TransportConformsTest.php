@@ -173,8 +173,8 @@ test('an item the budget dropped is never replaced with a marker payload', funct
     }
 
     // Null, not an item carrying `_truncated` or any other stand-in key: the
-    // errors endpoint matches field sets strictly, so a marker key would take
-    // the whole batch of up to a thousand items down with it.
+    // errors endpoint matches field sets strictly, so a marker key would only
+    // get the item refused out of the SDK's sight.
     expect($budget->cap('errors', $item))->toBeNull();
 });
 

@@ -8,7 +8,7 @@
             "pause_scope": null,
             "pause_seconds": null,
             "drop": false,
-            "note": "Validation passed for the whole batch and processing ran per item. Items named by unprocessed_indexes are re-buffered for the next run; items counted as failed are terminal, because the server rejected them individually and would reject them again. The run stamps the last-successful-batch time for this type."
+            "note": "The server validates the items one by one and processes the valid ones. An invalid item is refused on its own: it is not stored and is counted as failed, and the items around it are processed as usual. Items named by unprocessed_indexes are re-buffered for the next run; items counted as failed are terminal, whether refused by validation or failed while being stored, because the server would fail them again. The run stamps the last-successful-batch time for this type."
         },
         "401": {
             "rebuffer": true,
@@ -36,7 +36,7 @@
             "pause_scope": "feature",
             "pause_seconds": 900,
             "drop": true,
-            "note": "One or more items failed validation, which rejects the whole batch. Dropped, because the server validates every item and these items are invalid and always will be. This is the failure the strict field sets in contract/items/ exist to prevent."
+            "note": "The request body is of the wrong shape: the wrapper key is missing, its value is not a list, or the list is empty. An invalid item never causes it; the server refuses that item alone and counts it as failed in a 200. Dropped, because re-sending the same body would fail identically."
         },
         "429": {
             "rebuffer": true,

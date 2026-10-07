@@ -14,7 +14,7 @@ use Ranetrace\Php\Support\Utf8;
  * accepts.
  *
  * Shared with `ranetrace/ranetrace-laravel`. The API does strict field-set
- * matching, so an added or dropped key rejects the whole batch; the key set is
+ * matching, so an added or dropped key refuses every event; the key set is
  * exactly these seven and the tests assert it rather than only the values.
  *
  * The fingerprints arrive already hashed, by {@see \Ranetrace\Php\Support\FingerprintGenerator}

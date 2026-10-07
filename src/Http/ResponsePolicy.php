@@ -79,10 +79,10 @@ final class ResponsePolicy
     }
 
     /**
-     * Validation passed for the whole batch and processing ran per item. Items
-     * named by `unprocessed_indexes` come back; items counted as failed are
-     * terminal, because the server rejected them individually and would reject
-     * them again.
+     * The server validated each item on its own and processed the valid ones.
+     * Items named by `unprocessed_indexes` come back; items counted as failed
+     * are terminal, whether refused by validation or failed while stored,
+     * because the server would fail them again.
      *
      * @param  array<string, mixed>  $body
      */

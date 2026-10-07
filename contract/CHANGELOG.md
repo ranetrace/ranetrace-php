@@ -14,7 +14,7 @@ The fixtures next to this file describe the contract as it stands. This file rec
 
 **The backend must accept a new shape before either SDK ships it.**
 
-The ingest endpoints validate every item in a batch before processing any of it, and the errors endpoint additionally allow-lists its field set. One wrong key in one item fails the whole batch with a 422. The client's response matrix then drops every item in that batch and pauses the feature for fifteen minutes. There is no additive-field tolerance and no partial acceptance, so an SDK that ships a field the backend has not learned yet does not degrade, it goes dark.
+The ingest endpoints validate every item on its own, and the errors endpoint additionally allow-lists its field set. One wrong key in an item refuses that item: the server does not store it and counts it as failed, which the client treats as final. There is no additive-field tolerance, and an SDK puts the same keys on every item of a type, so an SDK that ships a field the backend has not learned yet does not degrade, it goes dark: every item of that type it sends is refused.
 
 That makes the ordering non-negotiable:
 
@@ -43,9 +43,15 @@ The fixtures beside this file are the source of truth, not the prose below:
 - `headers.json`: the five request headers.
 - `responses.json`: the client's response matrix and the response bodies.
 
-Four changes are in flight. The error item's `exception_context` (2026-10-02): its backend side has to be deployed before this package is released with it. The browser name and version in the JavaScript error item's `browser_info` (2026-09-30): its backend side has to be deployed before this package is released with it. The typed `user_id` on the JavaScript error item (2026-09-30): backend only, with nothing for either SDK to do. The allow-listed `user` on the error and event items (2026-10-01): the backend side and this package's narrowing of the error item's `user` can ship in either order. Every other coordinated change below is applied on both sides.
+Five changes are in flight. An invalid item is refused on its own instead of failing its batch (2026-10-07): backend only, with nothing for either SDK to do. The error item's `exception_context` (2026-10-02): its backend side has to be deployed before this package is released with it. The browser name and version in the JavaScript error item's `browser_info` (2026-09-30): its backend side has to be deployed before this package is released with it. The typed `user_id` on the JavaScript error item (2026-09-30): backend only, with nothing for either SDK to do. The allow-listed `user` on the error and event items (2026-10-01): the backend side and this package's narrowing of the error item's `user` can ship in either order. Every other coordinated change below is applied on both sides.
 
 ## Change log
+
+### 2026-10-07, an invalid item is refused on its own, not with its batch
+
+Status: **backend PENDING, no SDK change needed.** The backend's five batch ingest controllers validate each item as strictly as before, but an item that fails validation, including one that is not an object at all, no longer fails its batch with a 422. It is not stored, it is counted as `failed` in the ordinary 200 response, and the valid items around it are processed as usual. A batch whose every item is invalid answers 200 with `processed` 0. A 422 now means only a request body of the wrong shape: the wrapper key is missing, its value is not a list, or the list is empty. An over-size batch is still a 413. The change is in the backend's main branch but not yet deployed.
+
+Both SDKs already treat a `failed` item as final and log it, and the success body keeps its shape and its invariant, so neither needs a release. Before, one malformed item cost the up to 999 items batched with it and paused the feature for fifteen minutes; now it costs that item. `responses.json` describes the 200 and the 422 as they now are, and the item and envelope notes say an invalid item is refused rather than taking its batch down. The notes of `items/errors.json`, `items/logs.json` and `items/javascript_errors.json` also record that `message`, and a breadcrumb's `message`, may be an empty string: the key must be present and a string, which the backend has accepted since it learned to store an exception or a log record without a message.
 
 ### 2026-10-02, the error item carries the throwable's own context as `exception_context`
 
