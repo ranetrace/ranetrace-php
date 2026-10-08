@@ -332,7 +332,7 @@ final class Worker
                 'items_count' => count($items),
                 'message' => ResponsePolicy::errorMessage($data, 'Payload Too Large'),
             ]),
-            422 => $this->log->error('Validation failed, indicates schema drift or malformed items', [
+            422 => $this->log->error('Request body rejected as malformed, indicates a client bug', [
                 'type' => $type,
                 'items_count' => count($items),
                 'message' => ResponsePolicy::errorMessage($data, 'Unprocessable Entity'),
