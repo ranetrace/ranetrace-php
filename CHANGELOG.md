@@ -10,6 +10,9 @@ This file starts here, so releases before it are not recorded; the git history i
 - **The contract describes an invalid item as refused on its own.** The backend now validates each item of a batch by itself: an invalid one is not stored and is counted as failed in a 200, and the rest of the batch is stored, where before one invalid item failed the whole batch with a 422. `contract/responses.json`, the item and envelope notes, and the docblocks that gave the old rule as the reason for a guard now say so; a 422 is described as a request body of the wrong shape. The SDK's behaviour is unchanged: a failed item was already final, and a 422 is still dropped with a feature pause. The guards stay, because an item they let through malformed is still lost. The contract also notes that an error's, a log record's or a breadcrumb's `message` may be an empty string. Nothing to do on upgrade
 - The worker's log line for a 422 now says the request body was rejected as malformed, which indicates a client bug, instead of blaming schema drift or malformed items: an invalid item no longer causes a 422. No behaviour changes, and nothing to do on upgrade
 
+### Fixed
+- **A key of nothing but whitespace now counts as missing.** `Config` kept the key as given, so `RANETRACE_KEY=" "` switched capture on, went out as the Bearer token, was refused with a 401 and paused every feature, where it should have read as a missing key. The key is now trimmed where `Config` reads it, from the array or the environment, so such a key leaves capture off and nothing is sent, and a real key with stray edge whitespace is sent without it. Nothing to do on upgrade, unless `RANETRACE_KEY` holds only whitespace, in which case set the real key. A key that had edge whitespace and no `fingerprint_salt` beside it also salted the visitor and user fingerprints with that whitespace, so those fingerprints change once on upgrade
+
 ## [1.0.9] - 2026-10-05
 
 ### Changed

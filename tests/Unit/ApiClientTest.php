@@ -101,6 +101,28 @@ it('refuses to send without an api key', function (): void {
         ->and($http->requests)->toBe([]);
 });
 
+it('refuses to send with a key of nothing but whitespace', function (string $key): void {
+    $http = FakeHttpClient::respondingWith(200);
+
+    $result = apiClient($http, ['key' => $key])
+        ->sendBatch('/errors/store', 'errors', 'Ranetrace-PHP/Errors/1.0', 10, [['message' => 'boom']]);
+
+    expect($result['error'])->toBe('API key not configured')
+        ->and($http->requests)->toBe([]);
+})->with([
+    'a space' => [' '],
+    'tabs and newlines' => ["\t\n "],
+]);
+
+it('sends a padded key as the trimmed Bearer token', function (): void {
+    $http = FakeHttpClient::respondingWith(200);
+
+    apiClient($http, ['key' => "  real-key\n"])
+        ->sendBatch('/errors/store', 'errors', 'Ranetrace-PHP/Errors/1.0', 10, [['message' => 'boom']]);
+
+    expect($http->requests[0]['headers']['Authorization'])->toBe('Bearer real-key');
+});
+
 it('refuses to send an empty batch', function (): void {
     $http = FakeHttpClient::respondingWith(200);
 

@@ -314,7 +314,10 @@ final class Config
 
     /**
      * Normalise a value to its declared type. Environment values always arrive
-     * as strings, so this is where `'false'` stops being truthy.
+     * as strings, so this is where `'false'` stops being truthy. The key is
+     * trimmed, because a real key never has edge whitespace: a key of nothing
+     * but whitespace then reads as missing everywhere, instead of switching
+     * capture on and going out as a Bearer token the API refuses.
      *
      * @throws InvalidArgumentException
      */
@@ -333,7 +336,7 @@ final class Config
                 ));
             }
 
-            return $value;
+            return mb_trim($value);
         }
 
         if ($type === 'callable') {

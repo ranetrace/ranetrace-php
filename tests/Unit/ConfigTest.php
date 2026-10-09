@@ -160,6 +160,33 @@ test('key returns an empty string when nothing configured one', function (): voi
         ->and((new Config(['key' => null]))->key())->toBe('');
 });
 
+test('a key of nothing but whitespace counts as missing and keeps capture off', function (string $key): void {
+    $config = new Config(['key' => $key]);
+
+    expect($config->key())->toBe('')
+        ->and($config->enabled())->toBeFalse()
+        ->and($config->enabled('errors'))->toBeFalse();
+})->with([
+    'a space' => [' '],
+    'tabs and newlines' => ["\t\n "],
+]);
+
+test('a whitespace-only key from the environment counts as missing', function (): void {
+    withEnv('RANETRACE_KEY', "\t\n ");
+
+    $config = new Config;
+
+    expect($config->key())->toBe('')
+        ->and($config->enabled('errors'))->toBeFalse();
+});
+
+test('a real key padded with whitespace is trimmed', function (): void {
+    withEnv('RANETRACE_KEY', " env-key\n");
+
+    expect((new Config(['key' => '  array-key  ']))->key())->toBe('array-key')
+        ->and((new Config)->key())->toBe('env-key');
+});
+
 test('a non-string key is a loud configuration error', function (): void {
     new Config(['key' => 12345]);
 })->throws(InvalidArgumentException::class, 'must be a string');

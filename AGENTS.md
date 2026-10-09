@@ -97,7 +97,7 @@ Event names must be snake_case, 3 to 50 characters, starting with a letter: `/^[
 | `RANETRACE_INTERNAL_LOGGING_DAYS` | `internal_logging.days` | `14` |
 | `RANETRACE_INTERNAL_STDERR_FALLBACK` | `internal_logging.stderr_fallback` | `true` |
 
-`enabled()` requires all three: the master switch, the feature's own switch, and a non-empty key.
+`enabled()` requires all three: the master switch, the feature's own switch, and a key that is not blank (the key is trimmed where `Config` reads it).
 
 ## Required wiring
 
@@ -149,7 +149,7 @@ echo $ranetrace->javascriptSnippet(['endpoint' => '/ranetrace/js-errors', 'nonce
 - **`errors.capture_user_email` is off by default.** Only the user id travels until it is turned on.
 - **A float JSON cannot spell arrives as a string.** INF, -INF and NAN in a log record's context or extra, an event's properties, a throwable's `context()` or a JavaScript error's context are sent as `"INF"`, `"-INF"` and `"NAN"`, so a dashboard or query that expects a number there finds a string.
 - **A throwable's own `context()` travels with its error.** A public `context()` method returning an array (Laravel's exceptions have one) is sent as the item's `exception_context`, scrubbed and trimmed to 50 top-level keys, 3 levels and 8 KB JSON-encoded. Put identifiers there, not payloads: what does not fit is dropped from the end.
-- **Three conditions gate every feature:** the master switch `RANETRACE_ENABLED`, the feature's own flag, and a non-empty `RANETRACE_KEY`. The master switch, errors and events default to on, so a missing key is the usual reason nothing is captured.
+- **Three conditions gate every feature:** the master switch `RANETRACE_ENABLED`, the feature's own flag, and a `RANETRACE_KEY` that is not blank. The master switch, errors and events default to on, so a missing key is the usual reason nothing is captured.
 
 ## Docs
 
