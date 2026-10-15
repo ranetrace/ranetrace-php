@@ -6,6 +6,16 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Added
+- **Errors carry structured stack frames, source lines around them and the chain of previous exceptions.** The error item gains `frames`, `frames_omitted` and `previous` (23 keys, up from 20), as `contract/items/errors.json` describes. Each frame is the trace's `file`, `line`, `class`, `function` and call `type`, with paths relative to `project_root`, absolute paths inside closure and anonymous class names made relative too, and `is_vendor` set for a file under `{project_root}/vendor`. A frame in your own code carries the lines around it (up to five either side, at most 2,015 characters each, dedented and secret-scrubbed) as `source`; a vendor frame carries none. A trace longer than 50 frames keeps its 40 innermost and 10 outermost and counts the rest in `frames_omitted`. Up to 5 previous exceptions travel, nearest first, each with its type, scrubbed message, throw site, the source lines there (vendor or not) and its own frames; a chain that loops back stops at the first repeat, and a failure while it is read costs the chain, never the report. **Argument values are never sent**: a frame's `args` are not read at all, whatever `zend.exception_ignore_args` says. Each source file is read at most once per error, and only a regular, readable file under 1 MB that is not eval'd code
+- **`errors.capture_source` (`RANETRACE_ERRORS_CAPTURE_SOURCE`), default `true`.** Set it to `false` to send no source line at all: every frame's `source` is null, and so are the error's existing `context` and `highlight_line`
+- **`Errors\FrameMapper`**, an optional list passed as `PayloadBuilder`'s fourth constructor argument. Each mapper gets a frame's absolute location (`Errors\FrameLocation`, file and line) and returns the location a developer wrote, or null. Mapping happens before the path is made relative, before the vendor check and before the source is read, so a compiled template frame can arrive as its template, line and template source. It applies to frames and to each previous exception's throw site, not to the error's own `file` and `line`. A mapper that throws costs that one mapping. `ranetrace/ranetrace-laravel` will use it for compiled Blade views
+
+### Changed
+- **The error's `context` lines are secret-scrubbed** like every other source line, where before they were sent as written. A `key=value` secret on a line near the throw site now arrives as `[REDACTED]`
+- **An over-budget error item sheds its frames before anything else is cut.** `Support\ItemByteBudget::cap()` hands an `errors` item to `Errors\ErrorItemShedder` first, which drops source objects (the previous exceptions' frames first, then the error's own frames from the outermost, its first app frame and the throw sites last), then frames from the middle of each list, then previous exceptions from the far end, stopping as soon as the item fits. `frames` and `previous` are never replaced by the `_truncated` marker, which the backend refuses there. Other item types are cut exactly as before
+- **Not releasable until the backend accepts `frames`, `frames_omitted` and `previous`.** The errors endpoint allow-lists its field set, so until then every error item would be refused. See `contract/CHANGELOG.md`
+
 ## [1.0.10] - 2026-10-09
 
 ### Changed

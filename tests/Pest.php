@@ -127,3 +127,98 @@ function capturedScriptConfig(string $rendered): array
 
     return json_decode(mb_substr($rendered, $start, $end - $start), true, 512, JSON_THROW_ON_ERROR);
 }
+
+/**
+ * A throwaway project root for the frame tests: a fresh temp directory under
+ * its real path, since PHP names an included file by its real path and the
+ * builder compares frame files against the root byte for byte.
+ */
+function frameProject(): string
+{
+    return (string) realpath(tempDirectory('ranetrace-frames-'));
+}
+
+/**
+ * Write a file into a frame-test project and return its absolute path.
+ */
+function writeProjectFile(string $root, string $relative, string $contents): string
+{
+    $path = $root.'/'.$relative;
+
+    if (! is_dir(dirname($path))) {
+        mkdir(dirname($path), 0775, true);
+    }
+
+    file_put_contents($path, $contents);
+
+    return $path;
+}
+
+/**
+ * A PayloadBuilder rooted at $root, with internal logging written into the
+ * root's own `diagnostics` directory so a test can read what it logged.
+ *
+ * @param  array<string, mixed>  $overrides
+ * @param  list<Ranetrace\Php\Errors\FrameMapper>  $mappers
+ */
+function frameBuilder(string $root, array $overrides = [], array $mappers = [], ?Ranetrace\Php\Support\Scrubber $scrubber = null): Ranetrace\Php\Errors\PayloadBuilder
+{
+    $config = testConfig(array_replace_recursive([
+        'project_root' => $root,
+        'buffer_path' => $root.'/diagnostics',
+        'internal_logging' => ['enabled' => true, 'level' => 'debug', 'stderr_fallback' => false],
+    ], $overrides));
+    $log = new Ranetrace\Php\Support\InternalLogger($config);
+
+    return new Ranetrace\Php\Errors\PayloadBuilder($config, $scrubber ?? new Ranetrace\Php\Support\SecretScrubber($config, $log), $log, $mappers);
+}
+
+/**
+ * The item a frame-test builder makes of $throwable, in a console context.
+ *
+ * @return array<string, mixed>
+ */
+function framePayload(Ranetrace\Php\Errors\PayloadBuilder $builder, Throwable $throwable): array
+{
+    return $builder->build($throwable, Ranetrace\Php\Errors\ErrorContext::provided(isConsole: true));
+}
+
+/**
+ * What a frame-test builder wrote to its diagnostics log.
+ */
+function frameDiagnostics(string $root): string
+{
+    $files = glob($root.'/diagnostics/internal-*.log') ?: [];
+
+    return implode('', array_map(static fn (string $file): string => (string) file_get_contents($file), $files));
+}
+
+/**
+ * Run $callback in a project file that recurses $depth times before throwing,
+ * and return what it threw.
+ */
+function deepRecursionException(string $root, int $depth, string $padding = ''): RuntimeException
+{
+    $recurse = require writeProjectFile($root, 'app/Recurse.php', <<<PHP
+        <?php
+
+        \$recurse = static function (int \$depth) use (&\$recurse): void { // {$padding}
+            if (\$depth === 0) { // {$padding}
+                throw new RuntimeException('bottom'); // {$padding}
+            } // {$padding}
+
+            \$recurse(\$depth - 1); // {$padding}
+        }; // {$padding}
+
+        return \$recurse;
+
+        PHP);
+
+    try {
+        $recurse($depth);
+    } catch (RuntimeException $exception) {
+        return $exception;
+    }
+
+    throw new LogicException('The recursion did not throw.');
+}

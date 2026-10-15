@@ -38,6 +38,9 @@ function errorPayloadKeys(): array
         'console_command',
         'console_arguments',
         'exception_context',
+        'frames',
+        'frames_omitted',
+        'previous',
     ];
 }
 
@@ -100,7 +103,7 @@ function reportedPayload(Throwable $throwable, array $overrides = [], ?array $se
     return $buffer->payloads('errors')[0] ?? [];
 }
 
-test('it buffers exactly the twenty keys the API accepts', function (): void {
+test('it buffers exactly the twenty-three keys the API accepts', function (): void {
     $payload = reportedPayload(new RuntimeException('Something broke'));
 
     expect(array_keys($payload))->toEqualCanonicalizing(errorPayloadKeys());

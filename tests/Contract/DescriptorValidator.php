@@ -32,6 +32,21 @@ namespace Ranetrace\Php\Tests\Contract;
  * backend's custom rules do: how many levels it nests, where a flat `{"a": 1}`
  * is one and an empty array counts as a level of its own, and how many bytes
  * it takes JSON-encoded.
+ *
+ * Four more describe the error item's structured frames, which the backend
+ * checks with rules of its own:
+ *
+ * - `present`: the key must be there, though it may be null (Laravel's
+ *   `present`).
+ * - `increasing`, on a list of objects, names a key whose integer values must
+ *   be distinct and strictly increasing down the list.
+ * - `null_with` names a sibling key: this field is null exactly when that one
+ *   is, a missing key counting as null.
+ * - `null_when_true` names a sibling key: when that sibling is `true`, this
+ *   field must be null.
+ *
+ * Nested rules reach any depth through `*`, so `previous.*.frames.*.source.lines.*`
+ * judges every line of every frame of every previous exception.
  */
 final class DescriptorValidator
 {
@@ -102,12 +117,13 @@ final class DescriptorValidator
      * ancestor's own descriptor is what judges the ancestor.
      *
      * @param  list<string>  $segments
-     * @return list<array{path: string, exists: bool, value: mixed}>
+     * @param  array<array-key, mixed>  $parent  The array holding $value, for the sibling rules.
+     * @return list<array{path: string, exists: bool, value: mixed, parent: array<array-key, mixed>}>
      */
-    private static function resolve(mixed $value, array $segments, string $path): array
+    private static function resolve(mixed $value, array $segments, string $path, array $parent = []): array
     {
         if ($segments === []) {
-            return [['path' => $path, 'exists' => true, 'value' => $value]];
+            return [['path' => $path, 'exists' => true, 'value' => $value, 'parent' => $parent]];
         }
 
         if (! is_array($value)) {
@@ -120,7 +136,7 @@ final class DescriptorValidator
             $resolved = [];
 
             foreach ($value as $key => $child) {
-                $resolved = array_merge($resolved, self::resolve($child, $segments, self::join($path, (string) $key)));
+                $resolved = array_merge($resolved, self::resolve($child, $segments, self::join($path, (string) $key), $value));
             }
 
             return $resolved;
@@ -129,10 +145,10 @@ final class DescriptorValidator
         $childPath = self::join($path, $segment);
 
         if (! array_key_exists($segment, $value)) {
-            return $segments === [] ? [['path' => $childPath, 'exists' => false, 'value' => null]] : [];
+            return $segments === [] ? [['path' => $childPath, 'exists' => false, 'value' => null, 'parent' => $value]] : [];
         }
 
-        return self::resolve($value[$segment], $segments, $childPath);
+        return self::resolve($value[$segment], $segments, $childPath, $value);
     }
 
     private static function join(string $path, string $segment): string
@@ -142,20 +158,24 @@ final class DescriptorValidator
 
     /**
      * @param  array<string, mixed>  $descriptor
-     * @param  array{path: string, exists: bool, value: mixed}  $resolved
+     * @param  array{path: string, exists: bool, value: mixed, parent: array<array-key, mixed>}  $resolved
      * @return list<string>
      */
     private static function check(array $descriptor, array $resolved): array
     {
         $path = $resolved['path'];
         $required = ($descriptor['required'] ?? false) === true;
+        $violations = self::checkSiblings($descriptor, $resolved);
+
+        if (! $resolved['exists'] && ($descriptor['present'] ?? false) === true) {
+            $violations[] = "'{$path}' must be present";
+        }
 
         if (! $resolved['exists'] || $resolved['value'] === null) {
-            return $required ? ["'{$path}' is required and must not be null"] : [];
+            return $required ? [...$violations, "'{$path}' is required and must not be null"] : $violations;
         }
 
         $value = $resolved['value'];
-        $violations = [];
 
         $types = self::declaredTypes($descriptor);
         $type = null;
@@ -219,12 +239,75 @@ final class DescriptorValidator
             $violations[] = "'{$path}' is not one of ".implode(', ', array_map(strval(...), $descriptor['enum']));
         }
 
+        if (isset($descriptor['increasing']) && is_string($descriptor['increasing']) && is_array($value)) {
+            $violations = array_merge($violations, self::checkIncreasing($path, $descriptor['increasing'], $value));
+        }
+
         if (isset($descriptor['pattern']) && is_string($descriptor['pattern']) && is_string($value)
             && preg_match($descriptor['pattern'], $value) !== 1) {
             $violations[] = "'{$path}' does not match {$descriptor['pattern']}";
         }
 
         return $violations;
+    }
+
+    /**
+     * The rules that judge a field against a sibling: `null_with` and
+     * `null_when_true`. A missing field or sibling counts as null.
+     *
+     * @param  array<string, mixed>  $descriptor
+     * @param  array{path: string, exists: bool, value: mixed, parent: array<array-key, mixed>}  $resolved
+     * @return list<string>
+     */
+    private static function checkSiblings(array $descriptor, array $resolved): array
+    {
+        $path = $resolved['path'];
+        $isNull = ! $resolved['exists'] || $resolved['value'] === null;
+        $violations = [];
+
+        if (isset($descriptor['null_with']) && is_string($descriptor['null_with'])) {
+            $sibling = $descriptor['null_with'];
+            $siblingIsNull = ($resolved['parent'][$sibling] ?? null) === null;
+
+            if ($isNull !== $siblingIsNull) {
+                $violations[] = "'{$path}' must be null exactly when '{$sibling}' is null";
+            }
+        }
+
+        if (isset($descriptor['null_when_true']) && is_string($descriptor['null_when_true'])
+            && ($resolved['parent'][$descriptor['null_when_true']] ?? null) === true && ! $isNull) {
+            $violations[] = "'{$path}' must be null when '{$descriptor['null_when_true']}' is true";
+        }
+
+        return $violations;
+    }
+
+    /**
+     * Every way a list's `$key` values fail to be integers that strictly
+     * increase.
+     *
+     * @param  array<array-key, mixed>  $value
+     * @return list<string>
+     */
+    private static function checkIncreasing(string $path, string $key, array $value): array
+    {
+        $previous = null;
+
+        foreach ($value as $position => $entry) {
+            $current = is_array($entry) ? ($entry[$key] ?? null) : null;
+
+            if (! is_int($current)) {
+                return ["'{$path}.{$position}.{$key}' must be an integer for the list to be ordered by it"];
+            }
+
+            if ($previous !== null && $current <= $previous) {
+                return ["'{$path}' must have strictly increasing '{$key}' values: {$current} follows {$previous}"];
+            }
+
+            $previous = $current;
+        }
+
+        return [];
     }
 
     /**

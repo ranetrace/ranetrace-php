@@ -23,6 +23,7 @@ test('it ships the documented feature defaults', function (): void {
     expect($config->get('errors.enabled'))->toBeTrue()
         ->and($config->get('errors.timeout'))->toBe(10)
         ->and($config->get('errors.capture_user_email'))->toBeFalse()
+        ->and($config->get('errors.capture_source'))->toBeTrue()
         ->and($config->get('events.enabled'))->toBeTrue()
         ->and($config->get('events.timeout'))->toBe(10)
         ->and($config->get('logging.enabled'))->toBeFalse()

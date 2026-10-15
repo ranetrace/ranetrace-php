@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ranetrace\Php\Errors;
 
 use DateTimeImmutable;
+use InvalidArgumentException;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\Diagnostics;
@@ -31,9 +32,20 @@ use Throwable;
  * observes per capture, it answers through {@see ErrorContext}. Nothing here
  * reaches for a superglobal or a framework.
  *
- * The item is 20 keys, all always present. The framework identity is a pair,
+ * The item is 23 keys, all always present. The framework identity is a pair,
  * `framework` and `framework_version`, both nullable, which replaced the
  * `laravel_version` the Laravel SDK once sent and which is retired.
+ *
+ * `frames` is the trace as structured frames, `previous` the chain of previous
+ * exceptions, nearest first. A frame never carries `args`: the trace's `args`
+ * key is not read at all, because with `zend.exception_ignore_args` off a
+ * frame's arguments are live values, objects holding credentials among them.
+ * What a frame does carry is a few scrubbed source lines when it is in the
+ * application's own code, so source lines leave the host by default; the
+ * `errors.capture_source` switch turns every source line off, the item's
+ * `context` included. {@see FrameCap} decides which frames a long trace keeps,
+ * {@see SourceReader} reads every line, and {@see ErrorItemShedder} sheds
+ * sources and frames first when the item is over the byte budget.
  *
  * `exception_context` is read from the throwable itself, not from
  * {@see ErrorContext}: it is what the throwable's own `context()` method
@@ -66,16 +78,18 @@ final class PayloadBuilder
 
     private const int MAX_URL_LENGTH = 2_000;
 
-    private const int MAX_SOURCE_FILE_BYTES = 1_048_576;
+    /**
+     * A frame's `class` and `function`, and a previous exception's `type`, as
+     * the backend bounds them.
+     */
+    private const int MAX_CODE_NAME_LENGTH = 1_000;
 
-    private const int MAX_CONTEXT_LINE_LENGTH = 2_000;
+    private const int MAX_TYPE_LENGTH = 255;
 
     /**
-     * The source preview is the failing line plus five lines either side.
+     * How many previous exceptions the item carries, nearest first.
      */
-    private const int CONTEXT_LINES = 11;
-
-    private const int CONTEXT_LINES_BEFORE = 5;
+    private const int MAX_PREVIOUS = 5;
 
     private const int MAX_HEADER_COUNT = 50;
 
@@ -134,14 +148,39 @@ final class PayloadBuilder
         'x-forwarded-host',
     ];
 
+    /**
+     * @var list<FrameMapper>
+     */
+    private readonly array $frameMappers;
+
+    /**
+     * Set per build, so a mapper that fails on every frame writes one
+     * diagnostics line per item rather than one per frame.
+     */
+    private bool $frameMapperFailureLogged = false;
+
+    /**
+     * @param  list<FrameMapper>  $frameMappers  Tried in order for every frame and previous throw site; the first non-null answer wins.
+     *
+     * @throws InvalidArgumentException When an entry is not a {@see FrameMapper}: a wiring mistake the developer can still fix.
+     */
     public function __construct(
         private readonly Config $config,
         private readonly Scrubber $scrubber,
         private readonly Diagnostics $log,
-    ) {}
+        array $frameMappers = [],
+    ) {
+        foreach ($frameMappers as $mapper) {
+            if (! $mapper instanceof FrameMapper) {
+                throw new InvalidArgumentException('Every frame mapper must implement '.FrameMapper::class.', got '.get_debug_type($mapper).'.');
+            }
+        }
+
+        $this->frameMappers = array_values($frameMappers);
+    }
 
     /**
-     * Build the 20-key error item.
+     * Build the 23-key error item.
      *
      * @return array{
      *     message: string,
@@ -164,15 +203,35 @@ final class PayloadBuilder
      *     console_command: string|null,
      *     console_arguments: array<int, string>|null,
      *     exception_context: array<array-key, mixed>|null,
+     *     frames: list<array<string, mixed>>|null,
+     *     frames_omitted: int|null,
+     *     previous: list<array<string, mixed>>|null,
      * }
      */
     public function build(Throwable $throwable, ErrorContext $context): array
     {
-        $file = $throwable->getFile();
-        $line = $throwable->getLine();
+        $this->frameMapperFailureLogged = false;
+        $captureSource = $this->config->get('errors.capture_source') === true;
+        $reader = new SourceReader($this->scrubber, $this->log);
+
+        // The item's own throw site is NOT passed through the frame mappers:
+        // its `file` and `line` decide grouping, so mapping them is a separate
+        // decision. To map it, wrap this location in $this->mapped(...).
+        $throwSite = new FrameLocation($throwable->getFile(), $throwable->getLine());
+        $file = $throwSite->file;
+        $line = $throwSite->line;
         $isConsole = $context->isConsole;
 
-        [$source, $highlightLine] = $this->sourceContext($file, $line);
+        // Every location is announced to the reader before any is read, so
+        // each file is read once however many frames share it.
+        [$frames, $framesOmitted] = $this->draftFrames($throwable->getTrace(), $reader, $captureSource);
+        $previous = $this->draftPreviousChain($throwable, $reader, $captureSource);
+
+        if ($captureSource && $file !== '') {
+            $reader->want($file, $line);
+        }
+
+        [$source, $highlightLine] = $captureSource ? $this->sourceContext($reader, $file, $line) : [null, null];
 
         // The message and the trace are secret-scrubbed BEFORE truncation, so a
         // secret cannot survive by being split across the length boundary. An
@@ -200,7 +259,251 @@ final class PayloadBuilder
             'console_command' => $isConsole ? $this->consoleCommand($context) : null,
             'console_arguments' => $isConsole ? $this->consoleArguments($context) : null,
             'exception_context' => $this->exceptionContext($throwable, $context),
+            'frames' => $this->resolveFrameSources($frames, $reader),
+            'frames_omitted' => $framesOmitted,
+            'previous' => $previous === null ? null : array_map(
+                fn (array $entry): array => $this->resolvePreviousSources($entry, $reader),
+                $previous,
+            ),
         ];
+    }
+
+    /**
+     * The kept frames of a trace, as draft frames whose `source` is still the
+     * location to read, together with how many middle frames were dropped.
+     *
+     * Only the keys a frame needs are read from each trace frame. `args` is
+     * never touched.
+     *
+     * @param  array<int, array<string, mixed>>  $trace
+     * @return array{0: list<array<string, mixed>>, 1: int}
+     */
+    private function draftFrames(array $trace, SourceReader $reader, bool $captureSource): array
+    {
+        $trace = array_values($trace);
+        $positions = FrameCap::positions(count($trace), FrameCap::MAX_FRAMES);
+        $frames = [];
+
+        foreach ($positions as $position) {
+            $raw = $trace[$position];
+
+            $file = isset($raw['file']) && is_string($raw['file']) && $raw['file'] !== '' ? $raw['file'] : null;
+            $line = isset($raw['line']) && is_int($raw['line']) ? $raw['line'] : null;
+            $location = null;
+
+            if ($file !== null && $line !== null) {
+                $location = $this->mapped(new FrameLocation($file, $line));
+                $file = $location->file;
+                $line = $location->line;
+            }
+
+            $isVendor = $file !== null && $this->isVendor($file);
+            $wantsSource = $captureSource && ! $isVendor && $location !== null && $line >= 1;
+
+            if ($wantsSource) {
+                $reader->want($location->file, $location->line);
+            }
+
+            $type = $raw['type'] ?? null;
+
+            $frames[] = [
+                'index' => $position,
+                'file' => $file === null ? null : $this->boundFilePath($file),
+                'line' => $line === null ? null : max(0, $line),
+                'class' => $this->codeName($raw['class'] ?? null, self::MAX_CODE_NAME_LENGTH),
+                'function' => $this->codeName($raw['function'] ?? null, self::MAX_CODE_NAME_LENGTH),
+                'type' => $type === '->' || $type === '::' ? $type : null,
+                'is_vendor' => $isVendor,
+                'source' => $wantsSource ? $location : null,
+            ];
+        }
+
+        return [$frames, count($trace) - count($frames)];
+    }
+
+    /**
+     * The previous exceptions, nearest first, at most {@see MAX_PREVIOUS}, as
+     * drafts; null when there are none.
+     *
+     * A chain that loops back on itself (only reflection can build one) stops
+     * at the first exception already seen. Anything failing while the chain is
+     * read costs the chain, never the error report.
+     *
+     * @return list<array<string, mixed>>|null
+     */
+    private function draftPreviousChain(Throwable $throwable, SourceReader $reader, bool $captureSource): ?array
+    {
+        $chain = [];
+        $seen = [spl_object_id($throwable) => true];
+
+        try {
+            $current = $throwable->getPrevious();
+
+            while ($current !== null && count($chain) < self::MAX_PREVIOUS && ! isset($seen[spl_object_id($current)])) {
+                $seen[spl_object_id($current)] = true;
+                $chain[] = $this->draftPrevious($current, $reader, $captureSource);
+                $current = $current->getPrevious();
+            }
+        } catch (Throwable $failure) {
+            $this->log->warning('Ranetrace could not read the previous exception chain', [
+                'exception' => $failure->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        return $chain === [] ? null : $chain;
+    }
+
+    /**
+     * One previous exception, with its own throw site and its own frames. Its
+     * throw site always gets a source, vendor or not, like the item's
+     * `context`.
+     *
+     * @return array<string, mixed>
+     */
+    private function draftPrevious(Throwable $previous, SourceReader $reader, bool $captureSource): array
+    {
+        $location = new FrameLocation($previous->getFile(), $previous->getLine());
+
+        if ($location->file !== '') {
+            $location = $this->mapped($location);
+        }
+
+        $wantsSource = $captureSource && $location->file !== '' && $location->line >= 1;
+
+        if ($wantsSource) {
+            $reader->want($location->file, $location->line);
+        }
+
+        [$frames, $framesOmitted] = $this->draftFrames($previous->getTrace(), $reader, $captureSource);
+
+        return [
+            'type' => (string) $this->codeName($previous::class, self::MAX_TYPE_LENGTH),
+            'message' => $this->truncate($this->scrubber->scrubString(Utf8::repair($previous->getMessage())), self::MAX_MESSAGE_LENGTH),
+            'file' => $this->boundFilePath($location->file),
+            'line' => max(0, $location->line),
+            'source' => $wantsSource ? $location : null,
+            'frames' => $frames,
+            'frames_omitted' => $framesOmitted,
+        ];
+    }
+
+    /**
+     * Swap each draft frame's location for the source object read there.
+     *
+     * @param  list<array<string, mixed>>  $frames
+     * @return list<array<string, mixed>>
+     */
+    private function resolveFrameSources(array $frames, SourceReader $reader): array
+    {
+        foreach ($frames as $position => $frame) {
+            $frames[$position]['source'] = $this->sourceObject($frame['source'], $reader);
+        }
+
+        return $frames;
+    }
+
+    /**
+     * @param  array<string, mixed>  $entry
+     * @return array<string, mixed>
+     */
+    private function resolvePreviousSources(array $entry, SourceReader $reader): array
+    {
+        $entry['source'] = $this->sourceObject($entry['source'], $reader);
+        $entry['frames'] = $this->resolveFrameSources($entry['frames'], $reader);
+
+        return $entry;
+    }
+
+    /**
+     * @return array{start_line: int, lines: list<string>}|null
+     */
+    private function sourceObject(mixed $location, SourceReader $reader): ?array
+    {
+        if (! $location instanceof FrameLocation) {
+            return null;
+        }
+
+        return $reader->window($location->file, $location->line)?->sourceObject($location->line);
+    }
+
+    /**
+     * The location the first frame mapper answers for, or the location itself
+     * when none does. A mapper that throws, or answers with no file or a line
+     * before 1, is passed over.
+     */
+    private function mapped(FrameLocation $location): FrameLocation
+    {
+        foreach ($this->frameMappers as $mapper) {
+            try {
+                $mapped = $mapper->map($location);
+            } catch (Throwable $failure) {
+                if (! $this->frameMapperFailureLogged) {
+                    $this->frameMapperFailureLogged = true;
+                    $this->log->warning('Ranetrace frame mapper failed', [
+                        'mapper' => $mapper::class,
+                        'exception' => $failure->getMessage(),
+                    ]);
+                }
+
+                continue;
+            }
+
+            if ($mapped !== null && $mapped->file !== '' && $mapped->line >= 1) {
+                return $mapped;
+            }
+        }
+
+        return $location;
+    }
+
+    /**
+     * Whether an absolute path is under the project's vendor directory,
+     * `{project_root}/vendor`, with either separator on either side.
+     *
+     * The vendor directory is not configurable: Composer's own `vendor-dir`
+     * setting is rarely changed, and a host that changes it gets its vendor
+     * frames counted as its own, which costs extra source lines, never a
+     * report.
+     */
+    private function isVendor(string $file): bool
+    {
+        $root = $this->config->get('project_root');
+        $root = is_scalar($root) ? mb_rtrim(str_replace('\\', '/', (string) $root), '/') : '';
+
+        if ($root === '') {
+            return false;
+        }
+
+        return str_starts_with(str_replace('\\', '/', $file), $root.'/vendor/');
+    }
+
+    /**
+     * A class or function name as a frame carries it, with the absolute paths
+     * PHP embeds in some names made relative to the project root: a closure is
+     * named `{closure:/abs/app/file.php:12}` and an anonymous class
+     * `class@anonymous` + NUL + `/abs/app/file.php:12$0`. The NUL becomes a
+     * space, so the name still reads as the class and where it is declared.
+     */
+    private function codeName(mixed $name, int $maxLength): ?string
+    {
+        if (! is_string($name) || $name === '') {
+            return null;
+        }
+
+        $name = str_replace("\0", ' ', $name);
+
+        // Compared against the raw name, like boundFilePath(), and only at the
+        // start of a path: after the start of the name, a space, `:`, `{` or `(`.
+        $root = $this->config->get('project_root');
+        $root = is_scalar($root) ? mb_rtrim((string) $root, '/\\') : '';
+
+        if ($root !== '') {
+            $name = preg_replace('~(?<=^|[\s:{(])'.preg_quote($root, '~').'[/\\\\]~', '', $name) ?? $name;
+        }
+
+        return $this->truncate(Utf8::repair($name), $maxLength);
     }
 
     /**
@@ -310,96 +613,21 @@ final class PayloadBuilder
     }
 
     /**
-     * The failing line plus five lines either side, dedented, together with the
-     * 1-indexed position of the failing line within that window.
-     *
-     * Only read files that are readable and reasonably sized: a generated or
-     * concatenated multi-megabyte file would be read into memory in full for
-     * eleven lines of preview.
+     * The item's `context` and `highlight_line`: the failing line plus five
+     * lines either side as one string, and the 1-indexed position of the
+     * failing line within it. Both null when the file cannot be read.
      *
      * @return array{0: string|null, 1: int|null}
      */
-    private function sourceContext(string $file, int $line): array
+    private function sourceContext(SourceReader $reader, string $file, int $line): array
     {
-        if ($file === '' || ! is_readable($file) || filesize($file) >= self::MAX_SOURCE_FILE_BYTES) {
+        if ($file === '') {
             return [null, null];
         }
 
-        $lines = file($file);
+        $window = $reader->window($file, $line);
 
-        if (! is_array($lines)) {
-            return [null, null];
-        }
-
-        // Clamped at the start of the file, so an exception on line 3 shows
-        // lines 1 to 11 and highlights the third of them.
-        $startLine = max(0, $line - self::CONTEXT_LINES_BEFORE - 1);
-
-        $window = array_map(
-            fn (string $codeLine): string => $this->capContextLine($codeLine),
-            array_slice($lines, $startLine, self::CONTEXT_LINES, true)
-        );
-
-        return [$this->dedent(implode('', $window)), $line - $startLine];
-    }
-
-    /**
-     * Cap a single source line, preserving a trailing newline so the eleven-line
-     * structure survives. Guards against a minified or generated line bloating
-     * the item.
-     *
-     * The suffix is added OUTSIDE the cap here (unlike {@see truncate()}) on
-     * purpose: the context field has no field-level cap of its own, so the
-     * overshoot of fifteen characters per line is harmless, and this is what
-     * both SDKs have always sent.
-     */
-    private function capContextLine(string $line): string
-    {
-        $line = Utf8::repair($line);
-        $newline = str_ends_with($line, "\n") ? "\n" : '';
-        $content = mb_rtrim($line, "\n");
-
-        if (mb_strlen($content) > self::MAX_CONTEXT_LINE_LENGTH) {
-            $content = mb_substr($content, 0, self::MAX_CONTEXT_LINE_LENGTH).self::TRUNCATION_SUFFIX;
-        }
-
-        return $content.$newline;
-    }
-
-    /**
-     * Right-trim every line and strip the smallest indentation they share, so a
-     * snippet from deep inside a nested method does not arrive as a column of
-     * whitespace with code hiding off to the right.
-     */
-    private function dedent(string $code): string
-    {
-        $lines = array_map(mb_rtrim(...), explode("\n", $code));
-
-        $minimumIndent = null;
-
-        foreach ($lines as $line) {
-            if (mb_trim($line) === '') {
-                continue;
-            }
-
-            $indent = mb_strlen($line) - mb_strlen(mb_ltrim($line));
-
-            if ($minimumIndent === null || $indent < $minimumIndent) {
-                $minimumIndent = $indent;
-            }
-        }
-
-        if ($minimumIndent === null || $minimumIndent === 0) {
-            return implode("\n", $lines);
-        }
-
-        foreach ($lines as $index => $line) {
-            if (mb_trim($line) !== '') {
-                $lines[$index] = mb_substr($line, $minimumIndent);
-            }
-        }
-
-        return implode("\n", $lines);
+        return $window === null ? [null, null] : [$window->context, $window->highlightLine($line)];
     }
 
     /**

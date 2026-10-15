@@ -191,3 +191,39 @@ test('the emitted error context satisfies the field spec, bounds included', func
     expect($payload['exception_context'])->toBeArray()->not->toBeEmpty()
         ->and(DescriptorValidator::violations($spec['fields'], $payload, true))->toBe([]);
 });
+
+/**
+ * The structured frames are three nested shapes the backend allow-lists key by
+ * key, so a real report with a previous chain is checked against every rule
+ * the fixture states for them, cross-field rules included.
+ */
+test('the emitted error frames and previous chain satisfy the field spec', function (): void {
+    $config = testConfig(['environment' => 'testing', 'internal_logging' => ['enabled' => false]]);
+    $log = new InternalLogger($config);
+    $buffer = new ArrayBuffer;
+
+    // Built inside a closure, so the closure's call site in this file is the
+    // innermost frame: an app frame with source lines.
+    $chain = static function (): RuntimeException {
+        $exception = new RuntimeException('level 0');
+
+        for ($level = 1; $level <= 7; $level++) {
+            $exception = new RuntimeException('level '.$level, 0, $exception);
+        }
+
+        return $exception;
+    };
+
+    $exception = $chain();
+
+    $reporter = new ErrorReporter($config, $buffer, new SecretScrubber($config, $log), $log);
+    $reporter->setServerContext([], true);
+    $reporter->report($exception);
+
+    $payload = $buffer->payloads('errors')[0];
+
+    expect($payload['frames'])->not->toBeEmpty()
+        ->and($payload['previous'])->toHaveCount(5)
+        ->and(array_filter(array_column($payload['frames'], 'source')))->not->toBeEmpty()
+        ->and(DescriptorValidator::violations(WireContract::item('errors')['fields'], $payload, true))->toBe([]);
+});

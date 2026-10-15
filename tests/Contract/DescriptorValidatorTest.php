@@ -82,3 +82,55 @@ test('an encoded size bound counts the bytes of the JSON encoding', function ():
         ->and(DescriptorValidator::violations($fields, ['data' => ['a' => 'xxx']]))->toHaveCount(1)
         ->and(DescriptorValidator::violations($fields, ['data' => ['a' => 'é']]))->toHaveCount(1);
 });
+
+/**
+ * The frame rules are the lint's spelling of checks the backend makes across
+ * fields: `present`, `increasing`, `null_with` and `null_when_true`.
+ */
+test('a present field may be null but not missing', function (): void {
+    $fields = ['message' => ['present' => true, 'type' => 'string']];
+
+    expect(DescriptorValidator::violations($fields, ['message' => null]))->toBe([])
+        ->and(DescriptorValidator::violations($fields, ['message' => '']))->toBe([])
+        ->and(DescriptorValidator::violations($fields, []))->toBe(["'message' must be present"]);
+});
+
+test('an increasing list needs distinct integer keys that only go up', function (array $frames, int $violations): void {
+    $fields = ['frames' => ['type' => 'array', 'increasing' => 'index']];
+
+    expect(DescriptorValidator::violations($fields, ['frames' => $frames]))->toHaveCount($violations);
+})->with([
+    'with a gap' => [[['index' => 0], ['index' => 1], ['index' => 70]], 0],
+    'empty' => [[], 0],
+    'repeated' => [[['index' => 0], ['index' => 0]], 1],
+    'going down' => [[['index' => 3], ['index' => 2]], 1],
+    'not an integer' => [[['index' => '0']], 1],
+]);
+
+test('a null_with field is null exactly when its sibling is', function (array $item, int $violations): void {
+    $fields = [
+        'frames' => ['type' => 'array'],
+        'frames_omitted' => ['type' => 'integer', 'null_with' => 'frames'],
+    ];
+
+    expect(DescriptorValidator::violations($fields, $item))->toHaveCount($violations);
+})->with([
+    'both set' => [['frames' => [], 'frames_omitted' => 0], 0],
+    'both null' => [['frames' => null, 'frames_omitted' => null], 0],
+    'both missing' => [[], 0],
+    'count without frames' => [['frames' => null, 'frames_omitted' => 3], 1],
+    'frames without count' => [['frames' => [], 'frames_omitted' => null], 1],
+]);
+
+test('a null_when_true field must be null when its sibling is true, at any depth', function (array $frame, int $violations): void {
+    $fields = [
+        'previous.*.frames.*.is_vendor' => ['type' => 'boolean'],
+        'previous.*.frames.*.source' => ['type' => 'array', 'null_when_true' => 'is_vendor'],
+    ];
+
+    expect(DescriptorValidator::violations($fields, ['previous' => [['frames' => [$frame]]]]))->toHaveCount($violations);
+})->with([
+    'vendor without source' => [['is_vendor' => true, 'source' => null], 0],
+    'app with source' => [['is_vendor' => false, 'source' => ['start_line' => 1, 'lines' => ['x']]], 0],
+    'vendor with source' => [['is_vendor' => true, 'source' => ['start_line' => 1, 'lines' => ['x']]], 1],
+]);

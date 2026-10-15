@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Ranetrace\Php\Support;
 
+use Ranetrace\Php\Errors\ErrorItemShedder;
+
 /**
  * Holds one captured item to the per-item JSON byte budget, on its way to the
  * buffer.
@@ -56,6 +58,15 @@ final class ItemByteBudget
 
     private const string FIELD_TRUNCATION_REASON = 'Field exceeded the per-item budget and was removed';
 
+    /**
+     * The error item's structured frame fields. The backend refuses a
+     * `_truncated` marker inside them, so they are shed by
+     * {@see ErrorItemShedder} and never handed to the generic per-field cut.
+     *
+     * @var list<string>
+     */
+    private const array ERROR_FRAME_FIELDS = ['frames', 'previous'];
+
     public function __construct(private readonly InternalLogger $log) {}
 
     /**
@@ -63,6 +74,9 @@ final class ItemByteBudget
      * buffered at all.
      *
      * Within budget the item is returned untouched, byte for byte. Over budget,
+     * an error item first sheds frame sources, frames and previous exceptions
+     * through {@see ErrorItemShedder}, and is returned as soon as it fits;
+     * its `frames` and `previous` are then exempt from the cut below. Then
      * oversize strings are cut to the per-field budget and oversize sub-arrays
      * are replaced wholesale by {@see PayloadSizer::capBytes()} (truncating a
      * structure mid-way yields invalid JSON).
@@ -95,8 +109,27 @@ final class ItemByteBudget
         }
 
         $encodable = $bytes !== null;
+        $isError = $type === 'errors';
+
+        if ($isError) {
+            $payload = ErrorItemShedder::shed($payload, self::MAX_ITEM_BYTES);
+            $shedBytes = self::encodedBytes($payload);
+
+            if ($encodable && $shedBytes !== null && $shedBytes <= self::MAX_ITEM_BYTES) {
+                $this->log->warning('Captured item exceeded the per-item byte budget and was shrunk', [
+                    'type' => $type,
+                    'max_bytes' => self::MAX_ITEM_BYTES,
+                ]);
+
+                return $payload;
+            }
+        }
 
         foreach ($payload as $key => $value) {
+            if ($isError && in_array($key, self::ERROR_FRAME_FIELDS, true)) {
+                continue;
+            }
+
             if (is_string($value) && mb_strlen($value, '8bit') > self::MAX_ITEM_FIELD_BYTES) {
                 $payload[$key] = mb_strcut($value, 0, self::MAX_ITEM_FIELD_BYTES).self::TRUNCATION_SUFFIX;
 

@@ -210,6 +210,7 @@ final class Config
             'errors.enabled' => ['env' => 'RANETRACE_ERRORS_ENABLED', 'default' => true, 'type' => 'bool'],
             'errors.timeout' => ['env' => 'RANETRACE_ERRORS_TIMEOUT', 'default' => 10, 'type' => 'int'],
             'errors.capture_user_email' => ['env' => 'RANETRACE_ERRORS_CAPTURE_USER_EMAIL', 'default' => false, 'type' => 'bool'],
+            'errors.capture_source' => ['env' => 'RANETRACE_ERRORS_CAPTURE_SOURCE', 'default' => true, 'type' => 'bool'],
 
             'events.enabled' => ['env' => 'RANETRACE_EVENTS_ENABLED', 'default' => true, 'type' => 'bool'],
             'events.timeout' => ['env' => 'RANETRACE_EVENTS_TIMEOUT', 'default' => 10, 'type' => 'int'],

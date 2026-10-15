@@ -50,6 +50,6 @@ test('the errors fixture keeps the retired laravel_version key out entirely', fu
         ->and($spec)->not->toHaveKey('legacy_fields');
 });
 
-test('the errors fixture pins the twenty canonical keys', function (): void {
-    expect(DescriptorValidator::topLevelKeys(WireContract::item('errors')['fields']))->toHaveCount(20);
+test('the errors fixture pins the twenty-three canonical keys', function (): void {
+    expect(DescriptorValidator::topLevelKeys(WireContract::item('errors')['fields']))->toHaveCount(23);
 });

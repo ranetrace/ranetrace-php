@@ -31,12 +31,13 @@
         "max_item_field_bytes": 8192,
         "order": [
             "Measure the JSON-encoded size of the item. Within max_item_bytes, send it unchanged.",
+            "Over budget, an error item first sheds what its structured frames carry, stopping as soon as it fits: the `source` objects (the previous exceptions' frames first, then its own frames from the outermost inward, its first app frame and the previous exceptions' throw sites last), then frames from the middle of each list (growing `frames_omitted`), then previous exceptions from the far end. Its `frames` and `previous` are exempt from the step below, because the errors endpoint refuses a `_truncated` marker inside them.",
             "Over budget: cut every string field longer than max_item_field_bytes, and replace every array field larger than max_item_field_bytes wholesale (truncating a structure mid-way yields invalid JSON).",
             "Still over budget: drop the item and record the loss in the SDK's internal diagnostics log.",
             "An item, or an array field, that cannot be JSON-encoded at all is over every budget rather than zero bytes: the field gets the `_truncated` marker, and an item still unencodable after that is dropped."
         ],
         "never_send_marker_key": true,
-        "note": "The dropped item is never replaced with a placeholder or marker payload at the item's top level. The wire shape is fixed per type, so a marker key belongs to no type; on the errors endpoint its strict allow-list would refuse the item, so the marker would cost the item anyway while hiding why. Dropping it here keeps the loss in the SDK's own diagnostics log. A `_truncated` key nested inside a free-shape field (log `context`/`extra`, JS-error `context`, breadcrumb `data`) is a different thing and is allowed."
+        "note": "The dropped item is never replaced with a placeholder or marker payload at the item's top level. The wire shape is fixed per type, so a marker key belongs to no type; on the errors endpoint its strict allow-list would refuse the item, so the marker would cost the item anyway while hiding why. Dropping it here keeps the loss in the SDK's own diagnostics log. A `_truncated` key nested inside a free-shape field (log `context`/`extra`, JS-error `context`, breadcrumb `data`) is a different thing and is allowed. It is never allowed inside an error item's `frames` or `previous`, which are shed instead."
     },
     "notes": [
         "client_trim_bytes is the client's soft budget for one request body, deliberately below server_max_body_bytes so the JSON envelope's own overhead cannot push a batch into a 413.",

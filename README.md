@@ -38,10 +38,12 @@ Captured items are buffered locally and drained when the process shuts down. On 
 
 ## What it captures
 
-- **Errors**: uncaught exceptions, fatal errors and exceptions you report yourself, with a source preview, the stack trace, allowlisted request headers, console context and the current user.
+- **Errors**: uncaught exceptions, fatal errors and exceptions you report yourself, with a source preview, the stack trace and its structured frames, the chain of previous exceptions, allowlisted request headers, console context and the current user.
 - **Logs**: any Monolog record, from `notice` up by default, with context and extra secret-scrubbed and size-capped.
 - **Events**: custom business events, with a validated snake_case name and hashed visitor fingerprints. No raw IP, no cookies.
 - **JavaScript errors**: a browser capture script with breadcrumbs, sampling and deduplication, posting to a relay you mount at any URL of your choosing.
+
+Errors send source lines by default: a few lines around each frame in your own code and around each throw site, secret-scrubbed like everything else. Argument values never leave your host, and frames in `vendor/` carry no source. Set `RANETRACE_ERRORS_CAPTURE_SOURCE=false` (or `'errors' => ['capture_source' => false]`) to send no source line at all.
 
 Every feature has its own switch. Logging and JavaScript errors are off until you turn them on. Secrets are redacted before anything leaves your host, and capture failures are swallowed and written to the SDK's own diagnostics file, never raised into your application.
 
