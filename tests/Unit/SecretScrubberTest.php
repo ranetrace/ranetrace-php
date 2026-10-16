@@ -278,6 +278,89 @@ test('scrubString honours user-configured extra keys', function (): void {
         ->toBe('boot seed=[REDACTED] done');
 });
 
+test('scrubString redacts a quoted value up to its closing quote, whatever it holds', function (string $line, string $expected): void {
+    // A quoted value used to end at the first space, comma or semicolon and then
+    // needed its closing quote right there, so any value holding one of those
+    // was left whole. Source lines around a frame are full of exactly that.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'array element' => ["'api_key' => 'sk_live_abc',", "'api_key' => '[REDACTED]',"],
+    'assignment with a space' => ["\$password = 'two words';", "\$password = '[REDACTED]';"],
+    'arrow with a comma inside' => ["'token' => \"a,b\",", "'token' => \"[REDACTED]\","],
+    'json with a space' => ['{"password":"a b","user":"rutger"}', '{"password":"[REDACTED]","user":"rutger"}'],
+    'escaped double quotes' => ['"password":"a \"b\" c"', '"password":"[REDACTED]"'],
+    'escaped single quote' => ["'password' => 'it\\'s secret',", "'password' => '[REDACTED]',"],
+    'the other quote inside' => ["'secret' => \"it's mine\",", "'secret' => \"[REDACTED]\","],
+    'semicolon and paren inside' => ["\$secret = 'a;b)c}d&e';", "\$secret = '[REDACTED]';"],
+    'named argument' => ["connect(token: 'x y', retries: 3);", "connect(token: '[REDACTED]', retries: 3);"],
+    'comparison against a literal' => ["if (\$token === 'sk_live_x') {", "if (\$token === '[REDACTED]') {"],
+    'loose comparison' => ["if (\$token != 'sk_live_x') {", "if (\$token != '[REDACTED]') {"],
+]);
+
+test('scrubString redacts the quoted value that follows a quoted sensitive key and a comma', function (string $line, string $expected): void {
+    // define('NAME', 'value'), env('NAME', 'default') and a call or list whose
+    // arguments are a key and then its value carry no separator at all.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'define' => ["define('STRIPE_SECRET', 'sk_live_x');", "define('STRIPE_SECRET', '[REDACTED]');"],
+    'env default' => ["'key' => env('STRIPE_SECRET', \"sk test\"),", "'key' => env('STRIPE_SECRET', \"[REDACTED]\"),"],
+    'setter call' => ["\$config->set('services.api_key', 'abc def');", "\$config->set('services.api_key', '[REDACTED]');"],
+    'list element' => ["['token', 'abc'],", "['token', '[REDACTED]'],"],
+]);
+
+test('scrubString never splits => into a separator and a redacted value', function (): void {
+    // `=` used to match on its own when the value after `=>` failed, which ate
+    // the `>` as the "value" and left the real one in place.
+    expect(scrubber()->scrubString("'token' => \"a,b\","))->not->toContain('a,b')
+        ->and(scrubber()->scrubString("'token' => \"a,b\","))->toContain('=>')
+        ->and(scrubber()->scrubString("'password' => '',"))->toBe("'password' => '',")
+        ->and(scrubber()->scrubString("'token' => ;"))->toBe("'token' => ;");
+});
+
+test('scrubString leaves class constants and static calls on a sensitive name alone', function (string $line): void {
+    // `::` is not a key/value separator. Treating its first colon as one turned
+    // every `PersonalAccessToken::` in a source line into a redaction.
+    expect(scrubber()->scrubString($line))->toBe($line);
+})->with([
+    'class constant' => ['VerifyCsrfToken::class,'],
+    'static call' => ['$found = PersonalAccessToken::findToken($plain);'],
+    'quoted key alone' => ["throw new RuntimeException('Missing token in request');"],
+    'quoted key before a variable' => ["Hash::check('password', \$user->password);"],
+]);
+
+test('scrubString redacts an unterminated quoted value to the end of its line and no further', function (): void {
+    // A truncated message, or the first line of a multi-line string literal,
+    // has no closing quote. Stopping at the line end keeps the next line of a
+    // trace or message intact.
+    expect(scrubber()->scrubString("\$secret = 'first line of"))->toBe("\$secret = '[REDACTED]")
+        ->and(scrubber()->scrubString("password: 'abc\nnext line stays"))->toBe("password: '[REDACTED]\nnext line stays");
+});
+
+test('scrubString keeps the other pairs of a query string', function (): void {
+    expect(scrubber()->scrubString('token=abc&x=1'))->toBe('token=[REDACTED]&x=1')
+        ->and(scrubber()->scrubString('/cb?a=1&access_token=xyz&b=2'))->toBe('/cb?a=1&access_token=[REDACTED]&b=2');
+});
+
+test('scrubString redacts the credential of an authorization header, not its scheme', function (string $line, string $expected): void {
+    // The scheme used to be taken for the value, so the credential after it
+    // shipped as written.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'bearer' => ['Authorization: Bearer abc123', 'Authorization: Bearer [REDACTED]'],
+    'basic, lower case' => ['authorization: basic dXNlcjpwYXNz', 'authorization: basic [REDACTED]'],
+    'scheme alone' => ['Authorization: Bearer', 'Authorization: [REDACTED]'],
+]);
+
+test('scrubString keeps multibyte text whole and valid', function (): void {
+    $quoted = scrubber()->scrubString("\$password = 'wachtwoord met ü en 日本';");
+    $bare = scrubber()->scrubString('token=日本語 rest ünchanged');
+
+    expect($quoted)->toBe("\$password = '[REDACTED]';")
+        ->and($bare)->toBe('token=[REDACTED] rest ünchanged')
+        ->and(mb_check_encoding($bare, 'UTF-8'))->toBeTrue()
+        ->and(scrubber()->scrubString('Gebruiker « ü » heeft geen 日本 rechten'))->toBe('Gebruiker « ü » heeft geen 日本 rechten');
+});
+
 test('scrubDeep redacts a sensitive query param in a relative URL value', function (): void {
     // A signed download link recorded by the fetch/XHR breadcrumb hooks is
     // usually relative; only the absolute form used to be redacted.
@@ -350,6 +433,36 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'run with no secret at all',
         str_repeat('a', 50_000),
         str_repeat('a', 50_000),
+    ],
+    'unterminated quoted value' => [
+        'unterminated quoted value',
+        '"password":"'.str_repeat('a ', 25_000),
+        '"password":"[REDACTED]',
+    ],
+    'quoted value of escaped quotes' => [
+        'quoted value of escaped quotes',
+        "'token' => '".str_repeat("\\'", 25_000)."'",
+        "'token' => '[REDACTED]'",
+    ],
+    'quoted value of the other quote' => [
+        'quoted value of the other quote',
+        "'token' => '".str_repeat('"', 50_000)."'",
+        "'token' => '[REDACTED]'",
+    ],
+    'key, comma, value repeated' => [
+        'key, comma, value repeated',
+        str_repeat("'token', ", 10_000),
+        str_repeat("'token', '[REDACTED]', ", 5_000),
+    ],
+    'whitespace run after a key' => [
+        'whitespace run after a key',
+        'token'.str_repeat(' ', 50_000).'x',
+        'token'.str_repeat(' ', 50_000).'x',
+    ],
+    'many keys without a separator' => [
+        'many keys without a separator',
+        str_repeat("'token' ", 10_000),
+        str_repeat("'token' ", 10_000),
     ],
 ]);
 

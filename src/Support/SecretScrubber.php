@@ -366,6 +366,22 @@ final class SecretScrubber implements Scrubber
      *   `=`, `:`) are all outside `[\w.\-]`, so giving word characters back can
      *   never help it match: the backtracking it does is pure waste.
      *
+     * The rest of the pattern is about the shapes a source line around a frame
+     * takes, since those lines are scrubbed here too:
+     *
+     * - The separator is `=>`, `:`, `=`, or a comparison (`==`, `===`, `!=`,
+     *   `!==`), held atomically so a failed value after `=>` can never retry
+     *   `=` alone and take the `>` for the value. `::` is not a separator, so
+     *   `PersonalAccessToken::findToken()` stays readable.
+     * - A quoted key followed by `,` and a quoted value is a pair as well:
+     *   `define('STRIPE_SECRET', '...')`, `env('API_KEY', '...')`.
+     * - A quoted value runs to its matching closing quote, past spaces, commas
+     *   and the other quote, with backslash escapes skipped. Without a closing
+     *   quote it runs to the end of the line, never further. Its body is
+     *   possessive, so a long or unterminated value costs one pass.
+     * - An unquoted value ends at whitespace, a quote or `,;&)}`, after an
+     *   optional `Bearer`, `Basic` or `Digest` scheme that is kept.
+     *
      * Fails closed anyway. PCRE can still give up (a pathological input, a
      * lowered `pcre.backtrack_limit`, bad UTF-8), and returning the input then
      * would ship the very string we were asked to redact, so the whole value
@@ -384,11 +400,20 @@ final class SecretScrubber implements Scrubber
             $this->sensitiveFragments()
         ));
 
-        // key-token (containing a sensitive fragment) + separator (= : =>) + value.
-        $pattern = '/(?<![\w.\-])(["\']?[\w.\-]{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')[\w.\-]*+["\']?\s*(?:=>|[:=])\s*)(["\']?)([^"\'\s,;&)}]+)\2/i';
+        $key = '[\w.\-]{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')[\w.\-]*+';
+        $separator = '(?>=>|:(?!:)|!==?|===?|=)';
+        $quotedValue = '(["\'])(?:[^"\'\\\\\r\n]++|\\\\.|(?!\2)["\'])++(\2)?';
+        $bareValue = '[^"\'\s,;&)}]++';
+
+        // Branch reset: in both branches group 1 is everything kept before the
+        // value, group 2 its opening quote and group 3 its closing quote.
+        $pattern = '/(?<![\w.\-])(?|'
+            .'(["\']?'.$key.'["\']?\s*+'.$separator.'\s*+(?:(?:bearer|basic|digest)\s++)?)(?:'.$quotedValue.'|'.$bareValue.')'
+            .'|(["\']'.$key.'["\']\s*+,\s*+)'.$quotedValue
+            .')/i';
 
         $result = preg_replace_callback($pattern, static function (array $matches): string {
-            return $matches[1].$matches[2].self::REDACTION.$matches[2];
+            return $matches[1].($matches[2] ?? '').self::REDACTION.($matches[3] ?? '');
         }, $value);
 
         if ($result === null) {

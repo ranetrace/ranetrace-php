@@ -16,6 +16,9 @@ This file starts here, so releases before it are not recorded; the git history i
 - **An over-budget error item sheds its frames before anything else is cut.** `Support\ItemByteBudget::cap()` hands an `errors` item to `Errors\ErrorItemShedder` first, which drops source objects (the previous exceptions' frames first, then the error's own frames from the outermost, its first app frame and the throw sites last), then frames from the middle of each list, then previous exceptions from the far end, stopping as soon as the item fits. `frames` and `previous` are never replaced by the `_truncated` marker, which the backend refuses there. Other item types are cut exactly as before
 - **Not releasable until the backend accepts `frames`, `frames_omitted` and `previous`.** The errors endpoint allow-lists its field set, so until then every error item would be refused. See `contract/CHANGELOG.md`
 
+### Fixed
+- **Free-form scrubbing catches the secret shapes a source line holds.** `SecretScrubber::scrubString()`, which scrubs error and log messages, traces, console arguments, browser error messages and now source lines, ended a quoted value at its first space, comma or semicolon and then required the closing quote right there, so `$password = 'two words';` and `"password":"a b"` shipped whole, and `'token' => "a,b",` came out as `'token' =[REDACTED] "a,b",` with the value intact. A quoted value now runs to its matching closing quote, past escaped quotes, or to the end of its line when it has none. `=>` is never split, `==`, `===`, `!=` and `!==` count as separators, `::` does not, and a quoted sensitive key followed by `,` and a quoted value is redacted too, which covers `define('STRIPE_SECRET', '...')` and `env('API_KEY', '...')`. An `Authorization: Bearer ...` header keeps its scheme and loses its credential. Nothing to do on upgrade
+
 ## [1.0.10] - 2026-10-09
 
 ### Changed
