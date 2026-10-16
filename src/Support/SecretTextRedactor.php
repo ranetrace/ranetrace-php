@@ -214,9 +214,10 @@ final class SecretTextRedactor
      * be code, plus what only a run of lines can show:
      *
      * - A value on the next line. A line that ends in a sensitive key and
-     *   `=>`, `=`, `.=` or `??=` has the start of the next line read as that
-     *   value. Only one line ahead, and never after `:` or a comparison, so
-     *   `case 'token':` followed by `return $x;` stays readable.
+     *   `=>`, `=`, `.=`, `??=`, `??` or `?:` has the start of the next line
+     *   read as that value. Only one line ahead, and never after `:` or a
+     *   comparison, so `case 'token':` followed by `return $x;` stays
+     *   readable.
      * - An open bracket. While the parentheses of a sensitive call, or a
      *   bracket opened inside a code value after a sensitive key, are still
      *   open at the end of a line, the lines after it go on as that value,
@@ -445,7 +446,7 @@ final class SecretTextRedactor
         $separator = '(?>=>|:(?!:)|!==?|===?|\.=|\?\?=|\?\?|\?:|=)';
 
         return $this->anchorPatterns[$variant] = '/(?<![\w.\-])(?:'
-            .'["\']?'.$key.'["\']?'.$this->messageKeyGuard().'(?:\]|(?<=["\'])\)(?=\s*+\?[?:]))?\s*+'.$separator.'\s*+'
+            .'["\']?'.$key.$this->keyClose().'\s*+'.$separator.'\s*+'
             .'|(?<comma>["\']'.$key.'["\']'.$this->messageKeyGuard().'\s*+,\s*+)(?=["\'])'
             .')|(?<!\w)(?<call>'.$call.')/i';
     }
@@ -468,6 +469,17 @@ final class SecretTextRedactor
             '(?:\w{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')\w*+(?<!exception|error)'
                 .'|(?:'.implode('|', $this->credentialCalls()).')\s*+)\(',
         ];
+    }
+
+    /**
+     * What may follow a key in {@see anchorPattern()} and {@see carryPatterns()}
+     * before its separator: its closing quote, unless it names a validation
+     * message, then the `]` of a subscript or, before a fallback only, the `)`
+     * of a call it is the argument of.
+     */
+    private function keyClose(): string
+    {
+        return '["\']?'.$this->messageKeyGuard().'(?:\]|(?<=["\'])\)(?=\s*+\?[?:]))?';
     }
 
     /**
@@ -1011,8 +1023,9 @@ final class SecretTextRedactor
     }
 
     /**
-     * The value of a sensitive key that $line ends in after `=>`, `=`, `.=` or
-     * `??=`, left for the start of the next line, or null.
+     * The value of a sensitive key that $line ends in after `=>`, `=`, `.=`,
+     * `??=` or a fallback (`??`, `?:`), left for the start of the next line,
+     * or null.
      *
      * @return CarriedState|null
      *
@@ -1046,7 +1059,7 @@ final class SecretTextRedactor
         }
 
         [$key, $call] = $this->keyAndCallPatterns();
-        $assignment = '(?<![\w.\-])["\']?'.$key.'["\']?'.$this->messageKeyGuard().'\]?\s*+(?:=>|=|\.=|\?\?=)';
+        $assignment = '(?<![\w.\-])["\']?'.$key.$this->keyClose().'\s*+(?:=>|\?\?=|\?\?|\?:|\.=|=)';
 
         return $this->carryPatterns[$variant] = [
             'value' => '/'.$assignment.'\s*+$/i',

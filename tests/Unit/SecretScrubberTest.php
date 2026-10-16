@@ -927,6 +927,22 @@ test('scrubSource reads the start of the next line as the value of a key that en
     ],
 ]);
 
+test('scrubSource reads the line after a fallback that ends a line as its value', function (array $lines, array $expected): void {
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'a subscript' => [["\$p = \$config['password'] ??", "    'hunter2';"], ["\$p = \$config['password'] ??", "    '[REDACTED]';"]],
+    'a short ternary' => [['$s = $token ?:', "    'fallback';"], ['$s = $token ?:', "    '[REDACTED]';"]],
+    'a call read by a sensitive key' => [["\$p = \$request->input('password') ??", "    'default';"], ["\$p = \$request->input('password') ??", "    '[REDACTED]';"]],
+    'a heredoc' => [["\$p = \$config['password'] ?? <<<EOT", 'hunter2', 'EOT;'], ["\$p = \$config['password'] ?? <<<EOT", '[REDACTED]', 'EOT;']],
+]);
+
+test('scrubSource does not carry a full ternary or a call key before a comparison', function (array $lines): void {
+    expect(scrubber()->scrubSource($lines))->toBe($lines);
+})->with([
+    'a ternary' => [['$label = $token ?', "    'set' : 'missing';"]],
+    'a call key before a comparison' => [["if (strpos(\$x, 'token') ===", "    'abc') {"]],
+]);
+
 test('scrubSource carries an open bracket of a sensitive value onto the lines after it until it closes', function (array $lines, array $expected): void {
     // Only the line after the opening bracket used to be read as the value, so
     // a call or a code value spread over more lines shipped its later literals.
@@ -1287,6 +1303,11 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         'a block comment left open over the window',
         ['setToken(/*', ...array_fill(0, 10, str_repeat("it's * / ", 10_000))],
         ['setToken(/*', ...array_fill(0, 10, str_repeat("it's * / ", 10_000))],
+    ],
+    'a fallback and long blanks ending every line' => [
+        'a fallback and long blanks ending every line',
+        array_fill(0, 11, 'token ??'.str_repeat(' ', 50_000)),
+        ['token ??'.str_repeat(' ', 50_000), ...array_fill(0, 10, '[REDACTED] ??'.str_repeat(' ', 50_000))],
     ],
     'an open heredoc' => [
         'an open heredoc',
