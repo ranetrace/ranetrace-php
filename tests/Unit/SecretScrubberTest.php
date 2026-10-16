@@ -428,6 +428,24 @@ test('scrubSource keeps a code value after a sensitive key and redacts only its 
     'a heredoc opener' => ["\$secret = <<<'EOT'", "\$secret = <<<'EOT'"],
 ]);
 
+test('scrubSource reads a name spaced from its call as code and redacts the name', function (string $line, string $expected): void {
+    // The value used to be a bare token up to the space, so the literals after
+    // it shipped. A word spaced from a bracket is as likely prose in a comment
+    // (`password: hunter2 (old)`) as a call, so the word goes and the rest is
+    // read as code.
+    expect(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'a function' => ["'password' => bcrypt ('secret'),", "'password' => [REDACTED] ('[REDACTED]'),"],
+    'a tab' => ["'password' => bcrypt\t('secret'),", "'password' => [REDACTED]\t('[REDACTED]'),"],
+    'an env lookup keeps its name' => ["'password' => env ('DB_PASSWORD', 'default'),", "'password' => [REDACTED] ('DB_PASSWORD', '[REDACTED]'),"],
+    'a static call' => ["'password' => Hash ::make('x'),", "'password' => [REDACTED] ::make('[REDACTED]'),"],
+    'a method call' => ["'password' => app ->make('x'),", "'password' => [REDACTED] ->make('[REDACTED]'),"],
+    'a word before a remark in a comment' => ['// password: hunter2 (rotated in May)', '// password: [REDACTED] (rotated in May)'],
+    'a word before an arrow in a comment' => ['// token: abc -> def', '// token: [REDACTED] -> def'],
+    'a constant spaced from a comparison stays a bare token' => ["'password' => SECRET_VALUE , 'name' => 'Bob'", "'password' => [REDACTED] , 'name' => 'Bob'"],
+    'the next pair keeps its value' => ["'password' => f ('x'), 'name' => 'Bob'", "'password' => [REDACTED] ('[REDACTED]'), 'name' => 'Bob'"],
+]);
+
 test('scrubSource leaves a code value with no literal in it byte-for-byte', function (string $line): void {
     expect(scrubSourceLine($line))->toBe($line);
 })->with([
@@ -1101,6 +1119,16 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         'sensitive calls each opening a comment',
         [str_repeat('setToken( // ', 5_000), str_repeat('setToken(/* ', 5_000), "'x'"],
         [str_repeat('setToken( // ', 5_000), str_repeat('setToken(/* ', 5_000), "'[REDACTED]'"],
+    ],
+    'a name and a long run of blanks' => [
+        'a name and a long run of blanks',
+        array_fill(0, 11, "'password' => a.b".str_repeat(" \t", 25_000).'x'),
+        array_fill(0, 11, "'password' => [REDACTED]".str_repeat(" \t", 25_000).'x'),
+    ],
+    'a name spaced from its call' => [
+        'a name spaced from its call',
+        array_fill(0, 11, "'password' => f".str_repeat(' ', 50_000)."('x')"),
+        array_fill(0, 11, "'password' => [REDACTED]".str_repeat(' ', 50_000)."('[REDACTED]')"),
     ],
     'an open heredoc' => [
         'an open heredoc',

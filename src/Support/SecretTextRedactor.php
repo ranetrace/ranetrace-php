@@ -425,6 +425,14 @@ final class SecretTextRedactor
             return [$scheme.$code, $end, $open];
         }
 
+        $spacedName = $this->spacedCallName($text, $start);
+
+        if ($spacedName !== '') {
+            [$code, $end, $open] = $this->redactCodeValue($text, $start + mb_strlen($spacedName, '8bit'), false);
+
+            return [$scheme.SecretScrubber::REDACTION.$code, $end, $open];
+        }
+
         return $this->redactBareValue($text, $start, $scheme);
     }
 
@@ -536,6 +544,27 @@ final class SecretTextRedactor
             $text,
             $offset,
         ) !== '';
+    }
+
+    /**
+     * The name at $offset when spaces or tabs, and then what
+     * {@see startsCodeValue()} looks for after a name, follow it, or `''`. PHP
+     * allows `bcrypt ('x')`, but a word spaced from a bracket or an arrow is as
+     * likely the secret in a comment (`password: hunter2 (old)`). So the name
+     * is redacted as a bare token would be, and only what follows is read as
+     * code, which keeps its literals from shipping either way.
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function spacedCallName(string $text, int $offset): string
+    {
+        $name = '[A-Za-z_\x80-\xff][\w\x80-\xff]*+';
+
+        return $this->matchAt(
+            '/\G[@!]?+\\\\?'.$name.'(?:[\\\\.]'.$name.')*+(?=[ \t]++(?:\(|::|\??->))/',
+            $text,
+            $offset,
+        );
     }
 
     /**
