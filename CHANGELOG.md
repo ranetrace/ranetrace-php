@@ -6,6 +6,8 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-16
+
 ### Fixed
 - **Scrubbing works on PHP linked to a PCRE2 older than 10.43.** 1.1.0 built a pattern that only PCRE2 10.43 and later can compile, and PHP is often linked to an older system PCRE2 (Ubuntu 22.04 and 24.04, Debian 12). There, every free-form scrub failed to compile, so error reports, logs and JavaScript errors were not captured. The pattern now compiles on every PCRE2 and redacts exactly what it did before. Nothing to do on upgrade
 - **Scrubbing a line of many sensitive calls takes time in proportion to its length.** After each sensitive call, such as `$client->setToken('a')` or a PDO subclass's `parent::__construct('a')`, the check for a fallback behind its `)` made PCRE2's JIT search the rest of the text for a `?` first. So a line of many such calls took time quadratic in its length: ten source lines of 5,000 `parent::__construct('a');` took 1.2 seconds on PCRE2 10.42, and newer PCRE2 was slower to show it but not immune. The check now looks only where it stands, and what is redacted is unchanged. Nothing to do on upgrade
