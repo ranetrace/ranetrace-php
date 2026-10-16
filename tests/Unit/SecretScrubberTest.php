@@ -813,6 +813,58 @@ test('scrubSource carries an open bracket of a sensitive value onto the lines af
     ],
 ]);
 
+test('scrubSource carries an open bracket of a sensitive value past a comment', function (array $lines, array $expected): void {
+    // A comment used to end the value, so the arguments after it shipped.
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'a line comment on a line of its own' => [
+        ['$client->setCredentials(', '    // filler', "    'user',", "    'pass',", ');', "\$name = 'Bob';"],
+        ['$client->setCredentials(', '    // filler', "    '[REDACTED]',", "    '[REDACTED]',", ');', "\$name = 'Bob';"],
+    ],
+    'a hash comment' => [
+        ['$client->setCredentials(', "    # the user's", "    'user',", ');'],
+        ['$client->setCredentials(', "    # the user's", "    '[REDACTED]',", ');'],
+    ],
+    'a block comment on a line of its own' => [
+        ['$client->setCredentials(', '    /* filler */', "    'user',", ');'],
+        ['$client->setCredentials(', '    /* filler */', "    '[REDACTED]',", ');'],
+    ],
+    'a trailing comment after an argument' => [
+        ['$client->setCredentials(', "    'user', // it's the user", "    'pass'", ');'],
+        ['$client->setCredentials(', "    '[REDACTED]', // it's the user", "    '[REDACTED]'", ');'],
+    ],
+    'an open code bracket' => [
+        ["'password' => Hash::make(", '    // the plain text', "    'x'", '),', "'name' => 'Bob',"],
+        ["'password' => Hash::make(", '    // the plain text', "    '[REDACTED]'", '),', "'name' => 'Bob',"],
+    ],
+    'a comment that holds a key of its own' => [
+        ['$c->setCredentials(', '    // token: abc', "    'pass'", ');'],
+        ['$c->setCredentials(', '    // token: [REDACTED]', "    '[REDACTED]'", ');'],
+    ],
+    'a block comment that runs onto the next line' => [
+        ['$c->setToken(', '    /* first', "    second */ 'x'", ');', "\$name = 'Bob';"],
+        ['$c->setToken(', '    /* first', "    second */ '[REDACTED]'", ');', "\$name = 'Bob';"],
+    ],
+    'a closing php tag still ends it' => [
+        ['$c->setCredentials(', "    'u' ?>", "<p>'Bob'</p>"],
+        ['$c->setCredentials(', "    '[REDACTED]' ?>", "<p>'Bob'</p>"],
+    ],
+]);
+
+test('scrubSource reads past a block comment inside a sensitive call and scrubs the comment', function (string $line, string $expected): void {
+    expect(scrubSourceLine($line))->toBe($expected)
+        ->and(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'between arguments' => ["\$c->setCredentials('u' /* pw */, 'p');", "\$c->setCredentials('[REDACTED]' /* pw */, '[REDACTED]');"],
+    'a secret inside it' => ["\$c->setCredentials(/* password=hunter2 */ 'p');", "\$c->setCredentials(/* password=[REDACTED] */ '[REDACTED]');"],
+    'a quote inside it' => ["\$c->setToken(/* it's */ 'p');", "\$c->setToken(/* it's */ '[REDACTED]');"],
+]);
+
+test('a code value outside a call still ends at a trailing comment', function (): void {
+    expect(scrubber()->scrubSource(["'password' => \$x, // it's the input", "    'Bob',"]))->toBe(["'password' => \$x, // it's the input", "    'Bob',"])
+        ->and(scrubber()->scrubSource(["'password' => \$x // it's", "'Bob'"]))->toBe(["'password' => \$x // it's", "'Bob'"]);
+});
+
 test('scrubSource stops carrying once the bracket of a sensitive value closes', function (): void {
     $lines = ["'password' => Hash::make(\$a,", '    $b),', "'name' => 'Bob',", "    'Alice',"];
 
@@ -1040,6 +1092,16 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         ["'password' => f(".str_repeat("   'a'", 20_000)],
         ["'password' => f(".str_repeat("   '[REDACTED]'", 20_000)],
     ],
+    'block comments inside a sensitive call' => [
+        'block comments inside a sensitive call',
+        ['setToken(', ...array_fill(0, 10, str_repeat("/* a */ 'b', ", 5_000))],
+        ['setToken(', ...array_fill(0, 10, str_repeat("/* a */ '[REDACTED]', ", 5_000))],
+    ],
+    'sensitive calls each opening a comment' => [
+        'sensitive calls each opening a comment',
+        [str_repeat('setToken( // ', 5_000), str_repeat('setToken(/* ', 5_000), "'x'"],
+        [str_repeat('setToken( // ', 5_000), str_repeat('setToken(/* ', 5_000), "'[REDACTED]'"],
+    ],
     'an open heredoc' => [
         'an open heredoc',
         ['$secret = <<<EOT', ...array_fill(0, 10, str_repeat('E', 50_000))],
@@ -1199,6 +1261,11 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'a credential call left open',
         'new PDO('.str_repeat("'a', (", 25_000),
         'new PDO('.str_repeat("'[REDACTED]', (", 25_000),
+    ],
+    'comments in a sensitive call' => [
+        'comments in a sensitive call',
+        'setToken('.str_repeat('/* a */ # b ', 5_000)."\n".str_repeat('setToken(/* ', 5_000),
+        'setToken('.str_repeat('/* a */ # b ', 5_000)."\n".str_repeat('setToken(/* ', 5_000),
     ],
     'exception calls repeated' => [
         'exception calls repeated',

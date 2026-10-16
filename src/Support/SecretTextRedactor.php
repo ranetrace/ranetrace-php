@@ -140,6 +140,13 @@ final class SecretTextRedactor
     private ?array $carryPatterns = null;
 
     /**
+     * Whether {@see scrubComment()} is scrubbing a comment, inside which a
+     * comment ends a code value as it does outside a bracket. That keeps the
+     * nesting at one level, however many comments a line holds.
+     */
+    private bool $scrubbingComment = false;
+
+    /**
      * @param  list<string>  $fragments  The sensitive key fragments, lower case.
      */
     public function __construct(
@@ -540,12 +547,18 @@ final class SecretTextRedactor
      * The value ends at the end of its line, at a closing bracket that has no
      * opening one inside the value (for a call, the one that closes it), at a
      * `,` (not inside a call, where it only separates arguments) or `;` outside
-     * every bracket, or where a `//`, `/*` or `#` comment or a `?>` starts. A
-     * literal runs as a quoted value does, so a comma, bracket or comment
-     * marker inside one is never taken for the end. This is one pass over the
-     * value: each step jumps to the next character that can matter.
+     * every bracket, or where a `?>` starts. A `//`, `/*` or `#` comment ends
+     * it too, unless the value is inside a call or a bracket: there the comment
+     * is scrubbed as prose and passed over, so a block comment between two
+     * arguments costs nothing and a comment that runs to the end of the line
+     * leaves the value open for the next one. A literal runs as a quoted value
+     * does, so a comma, bracket or comment marker inside one is never taken for
+     * the end. This is one pass over the value: each step jumps to the next
+     * character that can matter.
      *
      * @return array{0: string, 1: int, 2: CarriedState|null}
+     *
+     * @throws UnexpectedValueException when PCRE gives up
      */
     private function redactCodeValue(string $text, int $offset, bool $insideCall, int $depth = 0): array
     {
@@ -600,10 +613,25 @@ final class SecretTextRedactor
                 $depth--;
             } elseif ($depth === 0 && ($character === ';' || ($character === ',' && ! $insideCall))) {
                 break;
-            } elseif (($character === '/' && ($next === '/' || $next === '*'))
-                || ($character === '#' && $next !== '[')
-                || ($character === '?' && $next === '>')) {
+            } elseif ($character === '?' && $next === '>') {
                 break;
+            } elseif (($character === '/' && ($next === '/' || $next === '*')) || ($character === '#' && $next !== '[')) {
+                if ($this->scrubbingComment || (! $insideCall && $depth === 0)) {
+                    break;
+                }
+
+                [$commentEnd, $closed] = $this->commentEnd($text, $position);
+                $redacted .= mb_substr($text, $kept, $position - $kept, '8bit')
+                    .$this->scrubComment(mb_substr($text, $position, $commentEnd - $position, '8bit'));
+                $kept = $position = $commentEnd;
+
+                if (! $closed) {
+                    $reachedLineEnd = true;
+
+                    break;
+                }
+
+                continue;
             }
 
             $position++;
@@ -614,6 +642,52 @@ final class SecretTextRedactor
             : null;
 
         return [$redacted.mb_substr($text, $kept, $position - $kept, '8bit'), $position, $open];
+    }
+
+    /**
+     * Where the comment that starts at $offset ends, and whether it closes
+     * before the end of its line: a block comment just past its closing
+     * marker, a line comment at the end of its line.
+     *
+     * @return array{0: int, 1: bool}
+     */
+    private function commentEnd(string $text, int $offset): array
+    {
+        if ($text[$offset] !== '/' || $text[$offset + 1] !== '*') {
+            return [$offset + strcspn($text, "\r\n", $offset), false];
+        }
+
+        $position = $offset + 2;
+
+        while (true) {
+            $position += strcspn($text, "*\r\n", $position);
+
+            if (($text[$position] ?? '') !== '*') {
+                return [$position, false];
+            }
+
+            if (($text[$position + 1] ?? '') === '/') {
+                return [$position + 2, true];
+            }
+
+            $position++;
+        }
+    }
+
+    /**
+     * A comment inside a code value, scrubbed as prose.
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function scrubComment(string $comment): string
+    {
+        $this->scrubbingComment = true;
+
+        try {
+            return $this->scrubText($comment, readsCode: false)[0];
+        } finally {
+            $this->scrubbingComment = false;
+        }
     }
 
     /**
