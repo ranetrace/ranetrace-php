@@ -1232,6 +1232,31 @@ test('scrubSource redacts the body of a heredoc or nowdoc assigned to a sensitiv
     ],
 ]);
 
+test('scrubSource redacts a heredoc that is the fallback of a sensitive read', function (array $lines, array $expected): void {
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'a call, same line' => [['$t = $user->getToken() ?? <<<EOT', 'abc', 'EOT;'], ['$t = $user->getToken() ?? <<<EOT', '[REDACTED]', 'EOT;']],
+    'a call, next line' => [['$t = $user->getToken()', '    ?? <<<EOT', 'abc', 'EOT;'], ['$t = $user->getToken()', '    ?? <<<EOT', '[REDACTED]', 'EOT;']],
+    'a subscript, same line' => [["\$p = \$config['password'] ?: <<<EOT", 'abc', 'EOT;'], ["\$p = \$config['password'] ?: <<<EOT", '[REDACTED]', 'EOT;']],
+    'a subscript, next line' => [["\$p = \$config['password']", '    ?: <<<EOT', 'abc', 'EOT;'], ["\$p = \$config['password']", '    ?: <<<EOT', '[REDACTED]', 'EOT;']],
+    'a call key, same line' => [["\$p = input('password') ?? <<<EOT", 'abc', 'EOT;'], ["\$p = input('password') ?? <<<EOT", '[REDACTED]', 'EOT;']],
+    'a call key, next line' => [["\$p = input('password')", '    ?? <<<EOT', 'abc', 'EOT;'], ["\$p = input('password')", '    ?? <<<EOT', '[REDACTED]', 'EOT;']],
+    'a variable, same line' => [['$p = $token ?? <<<EOT', 'abc', 'EOT;'], ['$p = $token ?? <<<EOT', '[REDACTED]', 'EOT;']],
+    'a variable, next line' => [['$p = $token', '    ?? <<<EOT', 'abc', 'EOT;'], ['$p = $token', '    ?? <<<EOT', '[REDACTED]', 'EOT;']],
+    'a nowdoc' => [["\$t = \$user->getSecret(\$id) ?? <<<'TXT'", '  abc def', '  TXT;', "\$name = 'Bob';"], ["\$t = \$user->getSecret(\$id) ?? <<<'TXT'", '  [REDACTED]', '  TXT;', "\$name = 'Bob';"]],
+    'a body that runs to the end of the window' => [['$t = $user->getToken()', '    ?? <<<EOT', 'abc', 'def'], ['$t = $user->getToken()', '    ?? <<<EOT', '[REDACTED]', '[REDACTED]']],
+]);
+
+test('scrubSource leaves a heredoc readable after a read that is not sensitive or not a fallback', function (array $lines): void {
+    expect(scrubber()->scrubSource($lines))->toBe($lines);
+})->with([
+    'a read that is not sensitive' => [['$body = $name ?? <<<EOT', 'Hello', 'EOT;']],
+    'on the next line' => [['$body = $user->getName()', '    ?? <<<EOT', 'Hello', 'EOT;']],
+    'a blank line between' => [['$t = $user->getToken()', '', '    ?? <<<EOT', 'Hello', 'EOT;']],
+    'a comparison' => [['if ($user->getToken() === <<<EOT', 'Hello', 'EOT) {']],
+    'a chained read' => [['$v = $user->getToken()->value ?? <<<EOT', 'Hello', 'EOT;']],
+]);
+
 test('scrubSource goes on redacting a sensitive string literal that runs onto the next lines', function (array $lines, array $expected): void {
     // The first line used to lose its literal to the end of the line and the
     // rest of the literal, on the lines after it, shipped as written.
@@ -1410,6 +1435,16 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         'sensitive calls ending every line before a fallback',
         array_fill(0, 11, "?? 'a' . getToken(".str_repeat('(', 10_000).str_repeat(')', 10_000).')'.str_repeat(' ', 20_000)),
         ["?? 'a' . getToken(".str_repeat('(', 10_000).str_repeat(')', 10_000).')'.str_repeat(' ', 20_000), ...array_fill(0, 10, "?? '[REDACTED]' . getToken(".str_repeat('(', 10_000).str_repeat(')', 10_000).')'.str_repeat(' ', 20_000))],
+    ],
+    'a heredoc after a long run of fallbacks' => [
+        'a heredoc after a long run of fallbacks',
+        [str_repeat('$a ?: ', 5_000).'getToken() ?? <<<EOT', ...array_fill(0, 10, str_repeat('?? <<<EOT ', 5_000))],
+        [str_repeat('$a ?: ', 5_000).'getToken() ?? <<<EOT', ...array_fill(0, 10, '[REDACTED]')],
+    ],
+    'heredoc openers after reads that are not sensitive' => [
+        'heredoc openers after reads that are not sensitive',
+        array_fill(0, 11, str_repeat('$name ?? ', 5_000).'?? <<<EOT'),
+        array_fill(0, 11, str_repeat('$name ?? ', 5_000).'?? <<<EOT'),
     ],
     'an open heredoc' => [
         'an open heredoc',

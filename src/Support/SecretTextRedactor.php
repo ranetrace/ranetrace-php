@@ -1133,7 +1133,9 @@ final class SecretTextRedactor
     /**
      * Replace the body lines of every heredoc or nowdoc that holds a sensitive
      * value, see {@see redactSource()}. A body runs to the line its closing
-     * marker starts, or to the end of the window.
+     * marker starts, or to the end of the window. Besides the openers of
+     * {@see carryPatterns()}, a heredoc after `??` or `?:` opens one when what
+     * it falls back from is a sensitive read, see {@see fallbackHeredocMarker()}.
      *
      * @param  list<string>  $lines
      * @return list<string>
@@ -1143,8 +1145,12 @@ final class SecretTextRedactor
     private function redactHeredocBodies(array $lines): array
     {
         $closing = null;
+        $previous = '';
 
         foreach ($lines as $index => $line) {
+            $lineBefore = $previous;
+            $previous = $line;
+
             if ($closing !== null) {
                 $indent = strspn($line, " \t");
                 $markerLength = mb_strlen($closing, '8bit');
@@ -1169,12 +1175,51 @@ final class SecretTextRedactor
                 throw new UnexpectedValueException(preg_last_error_msg());
             }
 
-            if ($found === 1) {
-                $closing = $matches['marker'];
-            }
+            $closing = $found === 1 ? $matches['marker'] : $this->fallbackHeredocMarker($line, $lineBefore);
         }
 
         return $lines;
+    }
+
+    /**
+     * The marker of a heredoc or nowdoc that $line opens after `??` or `?:`
+     * when what it falls back from is a sensitive read, or null. The read is
+     * whatever comes before the separator on $line, or $lineBefore when the
+     * separator starts $line. It is recognised as the line pass recognises
+     * the read before a fallback on the next line: a sensitive call that the
+     * text ends with ({@see redactCallValue()}) or a key the text ends in
+     * ({@see valueCarriedOver()}).
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function fallbackHeredocMarker(string $line, string $lineBefore): ?string
+    {
+        $found = preg_match(
+            '/(?:\?\?|\?:)[ \t]*+<<<[ \t]*+(["\']?)(?<marker>[A-Za-z_]\w*+)\1\s*+$/',
+            $line,
+            $matches,
+            PREG_OFFSET_CAPTURE,
+        );
+
+        if ($found === false) {
+            throw new UnexpectedValueException(preg_last_error_msg());
+        }
+
+        if ($found === 0) {
+            return null;
+        }
+
+        $read = mb_substr($line, 0, $matches[0][1], '8bit');
+        $read = mb_trim($read, " \t") === '' ? $lineBefore : $read;
+
+        if ($read === '') {
+            return null;
+        }
+
+        $endsInSensitiveRead = ($this->scrubText($read, readsCode: true)[1]['kind'] ?? null) === self::CARRIED_FALLBACK
+            || ($this->valueCarriedOver($read)['kind'] ?? null) === self::CARRIED_FALLBACK;
+
+        return $endsInSensitiveRead ? $matches['marker'][0] : null;
     }
 
     /**
