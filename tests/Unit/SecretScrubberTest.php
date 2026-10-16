@@ -496,6 +496,32 @@ test('scrubString treats a quoted key that closes a subscript as a key', functio
     'compared with a literal' => ["if (\$config['password'] === 'x') {", "if (\$config['password'] === '[REDACTED]') {"],
 ]);
 
+test('a fallback after a sensitive key is its value', function (string $line, string $expected): void {
+    // `??` and `?:` were not separators, so the literal a sensitive read falls
+    // back to shipped as written.
+    expect(scrubber()->scrubString($line))->toBe($expected)
+        ->and(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'a server header' => ["\$x = \$_SERVER['HTTP_AUTHORIZATION'] ?? 'Bearer abc';", "\$x = \$_SERVER['HTTP_AUTHORIZATION'] ?? '[REDACTED]';"],
+    'a config subscript' => ["\$p = \$config['password'] ?? 'hunter2';", "\$p = \$config['password'] ?? '[REDACTED]';"],
+    'a short ternary' => ["\$s = \$token ?: 'fallback';", "\$s = \$token ?: '[REDACTED]';"],
+    'a null-coalescing assignment still wins over ??' => ["\$token ??= 'x';", "\$token ??= '[REDACTED]';"],
+]);
+
+test('a ternary on a sensitive variable and a fallback to code stay readable', function (string $line): void {
+    expect(scrubber()->scrubString($line))->toBe($line)
+        ->and(scrubSourceLine($line))->toBe($line);
+})->with([
+    'a full ternary' => ["\$label = \$token ? 'set' : 'missing';"],
+    'a nullsafe chain' => ['$v = $token?->value;'],
+    'a fallback in parentheses closed before it' => ["\$p = input('password') ?? 'none';"],
+]);
+
+test('scrubSource keeps a fallback that is code', function (): void {
+    expect(scrubSourceLine("\$p = \$config['password'] ?? \$input;"))->toBe("\$p = \$config['password'] ?? \$input;")
+        ->and(scrubSourceLine('$s = $token ?: $this->issue();'))->toBe('$s = $token ?: $this->issue();');
+});
+
 test('scrubSource keeps a subscript key compared with code readable', function (): void {
     expect(scrubSourceLine("if (\$config['password'] === \$input) {"))->toBe("if (\$config['password'] === \$input) {")
         ->and(scrubSourceLine("\$value = \$config['password'];"))->toBe("\$value = \$config['password'];")
@@ -1294,6 +1320,11 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'comments in a sensitive call',
         'setToken('.str_repeat('/* a */ # b ', 5_000)."\n".str_repeat('setToken(/* ', 5_000),
         'setToken('.str_repeat('/* a */ # b ', 5_000)."\n".str_repeat('setToken(/* ', 5_000),
+    ],
+    'fallbacks repeated' => [
+        'fallbacks repeated',
+        str_repeat("'token' ?? ", 10_000).str_repeat('token ?', 10_000),
+        str_repeat("'token' ?? '[REDACTED]' ?? ", 5_000).str_repeat('token ?', 10_000),
     ],
     'exception calls repeated' => [
         'exception calls repeated',

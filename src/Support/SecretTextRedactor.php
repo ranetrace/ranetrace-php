@@ -302,10 +302,11 @@ final class SecretTextRedactor
      * - A key is a token of `[\w.\-]` holding a sensitive fragment, optionally
      *   quoted and optionally closing a subscript: `password=`, `"api_key":`,
      *   `'token' =>`, `$config['db']['password'] =`.
-     * - The separator is `=>`, `:`, `=`, `.=`, `??=` or a comparison (`==`,
-     *   `===`, `!=`, `!==`), held atomically so `=>` can never be taken as `=`
-     *   followed by a value of `>`. `::` is not a separator, so
-     *   `PersonalAccessToken::findToken()` stays readable.
+     * - The separator is `=>`, `:`, `=`, `.=`, `??=`, a comparison (`==`,
+     *   `===`, `!=`, `!==`) or a fallback (`??`, `?:`), held atomically so
+     *   `=>` can never be taken as `=` followed by a value of `>`, nor `??=` as
+     *   `??`. `::` is not a separator, so `PersonalAccessToken::findToken()`
+     *   stays readable, and neither is the `?` of a full ternary.
      * - A quoted key followed by `,` and a quote is an anchor too:
      *   `define('STRIPE_SECRET', '...')`, `env('API_KEY', '...')`. Its value is
      *   read as a quoted value only.
@@ -348,7 +349,7 @@ final class SecretTextRedactor
         }
 
         [$key, $call] = $this->keyAndCallPatterns();
-        $separator = '(?>=>|:(?!:)|!==?|===?|\.=|\?\?=|=)';
+        $separator = '(?>=>|:(?!:)|!==?|===?|\.=|\?\?=|\?\?|\?:|=)';
 
         return $this->anchorPattern = '/(?<![\w.\-])(?:'
             .'["\']?'.$key.'["\']?\]?\s*+'.$separator.'\s*+'
