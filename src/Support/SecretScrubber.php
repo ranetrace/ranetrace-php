@@ -423,7 +423,7 @@ final class SecretScrubber implements Scrubber
         }
 
         try {
-            return $this->scrubText($value);
+            return $this->scrubText($value)[0];
         } catch (UnexpectedValueException $failure) {
             $this->log->warning('Secret scrubbing of a free-form string failed, so the whole string was redacted.', [
                 'error' => $failure->getMessage(),
@@ -448,6 +448,9 @@ final class SecretScrubber implements Scrubber
      * - A heredoc or nowdoc assigned to a sensitive key, or passed to a
      *   sensitive call, loses every body line up to its closing marker. Its
      *   opener and closer stay, and so does each line's indentation.
+     * - A string literal redacted for a sensitive key that is still open at
+     *   the end of its line goes on being redacted on the lines after it, up
+     *   to its closing quote. The code after that quote is scrubbed as usual.
      * - A private key. See {@see redactPrivateKeyBodies()}.
      *
      * Lines come without their line breaks, and exactly one line comes back
@@ -466,9 +469,17 @@ final class SecretScrubber implements Scrubber
             $lines = $this->redactHeredocBodies($this->redactPrivateKeyBodies($lines));
             $scrubbed = [];
             $carried = null;
+            $openQuote = null;
 
             foreach ($lines as $line) {
-                $scrubbed[] = $line === '' ? $line : $this->scrubText($line, $carried);
+                if ($openQuote !== null) {
+                    [$scrubbed[], $openQuote] = $this->continueLiteral($line, $openQuote);
+                    $carried = null;
+
+                    continue;
+                }
+
+                [$scrubbed[], $openQuote] = $line === '' ? ['', null] : $this->scrubText($line, $carried);
                 $carried = $this->valueCarriedOver($line);
             }
 
@@ -486,19 +497,23 @@ final class SecretScrubber implements Scrubber
     /**
      * {@see scrubString()} without the fail-closed wrapper. $carried, one of
      * the `CARRIED_*` constants, says the start of $text is the value of a key
-     * that ended the line before it.
+     * that ended the line before it. Comes back with the quote of a redacted
+     * literal still open at the end of $text, or null.
      *
      * Offsets here are byte offsets, as PCRE reports them, hence `8bit` on
      * every length and substring. Every boundary the scrubber cuts at is an
      * ASCII character, so a multibyte character is never split.
      *
+     * @return array{0: string, 1: string|null}
+     *
      * @throws UnexpectedValueException when PCRE gives up
      */
-    private function scrubText(string $text, ?string $carried = null): string
+    private function scrubText(string $text, ?string $carried = null): array
     {
         $length = mb_strlen($text, '8bit');
         $scrubbed = '';
         $offset = 0;
+        $openQuote = null;
 
         if ($carried !== null) {
             $start = strspn($text, " \t");
@@ -508,7 +523,7 @@ final class SecretScrubber implements Scrubber
 
             if ($value !== null) {
                 $scrubbed = mb_substr($text, 0, $start, '8bit').$value[0];
-                $offset = $value[1];
+                [, $offset, $openQuote] = $value;
             }
         }
 
@@ -534,12 +549,36 @@ final class SecretScrubber implements Scrubber
             $offset = $anchorEnd;
 
             if ($value !== null) {
-                [$replacement, $offset] = $value;
+                [$replacement, $offset, $openQuote] = $value;
                 $scrubbed .= $replacement;
             }
         }
 
-        return $scrubbed.mb_substr($text, $offset, null, '8bit');
+        return [$scrubbed.mb_substr($text, $offset, null, '8bit'), $openQuote];
+    }
+
+    /**
+     * A line inside a string literal that a line before it opened, see
+     * {@see scrubSource()}: redacted up to the closing $quote, scrubbed as
+     * usual after it, and the quote of a literal still open at its end.
+     *
+     * @return array{0: string, 1: string|null}
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function continueLiteral(string $line, string $quote): array
+    {
+        $indent = strspn($line, " \t");
+        [$bodyEnd, $closed] = $this->literalBodyEnd($line, $indent, $quote);
+        $body = $bodyEnd > $indent ? self::REDACTION : '';
+
+        if (! $closed) {
+            return [mb_substr($line, 0, $indent, '8bit').$body.mb_substr($line, $bodyEnd, null, '8bit'), $quote];
+        }
+
+        [$rest, $openQuote] = $this->scrubText(mb_substr($line, $bodyEnd + 1, null, '8bit'));
+
+        return [mb_substr($line, 0, $indent, '8bit').$body.$quote.$rest, $openQuote];
     }
 
     /**
@@ -618,10 +657,11 @@ final class SecretScrubber implements Scrubber
     }
 
     /**
-     * The redacted form of the value that starts at $offset, and the offset
-     * just past it, or null when nothing there is a value.
+     * The redacted form of the value that starts at $offset, the offset just
+     * past it and the quote of a literal it leaves open, or null when nothing
+     * there is a value.
      *
-     * @return array{0: string, 1: int}|null
+     * @return array{0: string, 1: int, 2: string|null}|null
      *
      * @throws UnexpectedValueException when PCRE gives up
      */
@@ -638,19 +678,19 @@ final class SecretScrubber implements Scrubber
         if ($first === '"' || $first === "'") {
             $quoted = $this->redactQuotedValue($text, $start);
 
-            return $quoted === null ? null : [$scheme.$quoted[0], $quoted[1]];
+            return $quoted === null ? null : [$scheme.$quoted[0], $quoted[1], $quoted[2]];
         }
 
         $heredoc = $this->matchAt('/\G<<<[ \t]*+(["\']?)[A-Za-z_]\w*+\1/', $text, $start);
 
         if ($heredoc !== '') {
-            return [$scheme.$heredoc, $start + mb_strlen($heredoc, '8bit')];
+            return [$scheme.$heredoc, $start + mb_strlen($heredoc, '8bit'), null];
         }
 
         if ($this->startsCodeValue($text, $start)) {
-            [$code, $end] = $this->redactCodeValue($text, $start, false);
+            [$code, $end, $openQuote] = $this->redactCodeValue($text, $start, false);
 
-            return [$scheme.$code, $end];
+            return [$scheme.$code, $end, $openQuote];
         }
 
         $bareLength = strcspn($text, self::BARE_VALUE_STOPS, $start);
@@ -659,7 +699,7 @@ final class SecretScrubber implements Scrubber
             return null;
         }
 
-        return [$scheme.self::REDACTION, $start + $bareLength];
+        return [$scheme.self::REDACTION, $start + $bareLength, null];
     }
 
     /**
@@ -686,8 +726,8 @@ final class SecretScrubber implements Scrubber
     }
 
     /**
-     * A code value with the body of every string literal in it redacted, and
-     * the offset just past it.
+     * A code value with the body of every string literal in it redacted, the
+     * offset just past it, and the quote of a literal left open at its end.
      *
      * The value ends at the end of its line, at a closing bracket that has no
      * opening one inside the value (for a call, the one that closes it), at a
@@ -697,7 +737,7 @@ final class SecretScrubber implements Scrubber
      * marker inside one is never taken for the end. This is one pass over the
      * value: each step jumps to the next character that can matter.
      *
-     * @return array{0: string, 1: int}
+     * @return array{0: string, 1: int, 2: string|null}
      */
     private function redactCodeValue(string $text, int $offset, bool $insideCall): array
     {
@@ -706,6 +746,7 @@ final class SecretScrubber implements Scrubber
         $kept = $offset;
         $depth = 0;
         $position = $offset;
+        $openQuote = null;
 
         while (true) {
             $position += strcspn($text, "\"'()[]{},;/#?\r\n", $position);
@@ -726,6 +767,7 @@ final class SecretScrubber implements Scrubber
                 }
 
                 $position = $closed ? $bodyEnd + 1 : $bodyEnd;
+                $openQuote = $closed ? null : $character;
 
                 continue;
             }
@@ -753,7 +795,7 @@ final class SecretScrubber implements Scrubber
             $position++;
         }
 
-        return [$redacted.mb_substr($text, $kept, $position - $kept, '8bit'), $position];
+        return [$redacted.mb_substr($text, $kept, $position - $kept, '8bit'), $position, $openQuote];
     }
 
     /**
@@ -769,9 +811,15 @@ final class SecretScrubber implements Scrubber
 
     /**
      * A quoted value that starts at $offset, redacted whole with its quotes
-     * kept, and the offset just past it, or null when its body is empty.
+     * kept, the offset just past it and its quote when it is left open, or
+     * null when its body is empty.
      *
-     * @return array{0: string, 1: int}|null
+     * A literal concatenated onto it (`'abc' . 'def'`, `'abc' . $x . 'def'`)
+     * is part of the same secret, so from a `.` followed by a quote or a `$`
+     * on, the value is read on as a code value. A `.` followed by anything
+     * else is more likely a full stop in prose.
+     *
+     * @return array{0: string, 1: int, 2: string|null}|null
      */
     private function redactQuotedValue(string $text, int $offset): ?array
     {
@@ -783,23 +831,45 @@ final class SecretScrubber implements Scrubber
 
         $quote = $text[$offset];
 
-        return $closed
-            ? [$quote.self::REDACTION.$quote, $bodyEnd + 1]
-            : [$quote.self::REDACTION, $bodyEnd];
+        if (! $closed) {
+            return [$quote.self::REDACTION, $bodyEnd, $quote];
+        }
+
+        $after = $bodyEnd + 1;
+        $dot = $after + strspn($text, " \t", $after);
+        $next = $dot + 1 + strspn($text, " \t", $dot + 1);
+
+        if (($text[$dot] ?? '') === '.' && in_array($text[$next] ?? '', ['"', "'", '$'], true)) {
+            [$code, $end, $openQuote] = $this->redactCodeValue($text, $after, false);
+
+            return [$quote.self::REDACTION.$quote.$code, $end, $openQuote];
+        }
+
+        return [$quote.self::REDACTION.$quote, $after, null];
     }
 
     /**
      * Where the body of the string literal opened at $offset ends, and whether
-     * a closing quote ends it. A backslash escapes the character after it; the
-     * body ends unclosed at a line break or the end of the string.
+     * a closing quote ends it.
      *
      * @return array{0: int, 1: bool}
      */
     private function quotedBodyEnd(string $text, int $offset): array
     {
-        $quote = $text[$offset];
+        return $this->literalBodyEnd($text, $offset + 1, $text[$offset]);
+    }
+
+    /**
+     * Where the body of a $quote literal that is open at $from ends, and
+     * whether a closing quote ends it. A backslash escapes the character after
+     * it; the body ends unclosed at a line break or the end of the string.
+     *
+     * @return array{0: int, 1: bool}
+     */
+    private function literalBodyEnd(string $text, int $from, string $quote): array
+    {
         $length = mb_strlen($text, '8bit');
-        $position = $offset + 1;
+        $position = $from;
 
         while (true) {
             $position += strcspn($text, $quote."\\\r\n", $position);

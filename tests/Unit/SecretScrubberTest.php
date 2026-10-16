@@ -462,6 +462,26 @@ test('scrubString does not catch a credential passed to a call with no sensitive
         ->and(scrubber()->scrubString("mysqli_connect('db', 'root', 'hunter2');"))->toBe("mysqli_connect('db', 'root', 'hunter2');");
 });
 
+test('scrubString redacts a literal concatenated onto a quoted secret', function (string $line, string $expected): void {
+    // Only the first literal used to be redacted; the one joined onto it with
+    // `.` shipped as written.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'two literals' => ["'password' => 'abc' . 'def',", "'password' => '[REDACTED]' . '[REDACTED]',"],
+    'with code between' => ["\$token = 'abc'.\$x.'def'; \$name = 'Bob';", "\$token = '[REDACTED]'.\$x.'[REDACTED]'; \$name = 'Bob';"],
+    'after a quoted key and a comma' => ["define('API_SECRET', 'abc' . 'def');", "define('API_SECRET', '[REDACTED]' . '[REDACTED]');"],
+    'a variable after it is code' => ["\$token = 'abc' . \$suffix;", "\$token = '[REDACTED]' . \$suffix;"],
+    'a full stop in prose is not a concatenation' => ["token: 'abc'. Then 'x' happened", "token: '[REDACTED]'. Then 'x' happened"],
+]);
+
+test('scrubString redacts the value after a quoted label that holds a sensitive word', function (): void {
+    // A translation key such as 'Enter your password' cannot be told from a
+    // key, so its value is redacted. That costs a readable string, never a
+    // secret.
+    expect(scrubber()->scrubString("'Enter your password' => 'Voer je wachtwoord in',"))
+        ->toBe("'Enter your password' => '[REDACTED]',");
+});
+
 test('scrubString still redacts a bare token whole, whatever it spells', function (string $line, string $expected): void {
     // true, null, numbers and constants stay bare tokens: they are redacted as
     // before, which hides nothing a reader needs.
@@ -646,6 +666,35 @@ test('scrubSource redacts the body of a heredoc or nowdoc assigned to a sensitiv
     ],
 ]);
 
+test('scrubSource goes on redacting a sensitive string literal that runs onto the next lines', function (array $lines, array $expected): void {
+    // The first line used to lose its literal to the end of the line and the
+    // rest of the literal, on the lines after it, shipped as written.
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'quoted value' => [
+        ["\$secret = 'line one", 'line two', "  line three';  \$name = 'Bob';", "\$x = 'y';"],
+        ["\$secret = '[REDACTED]", '[REDACTED]', "  [REDACTED]';  \$name = 'Bob';", "\$x = 'y';"],
+    ],
+    'inside a code value' => [
+        ["'password' => Hash::make(\"abc", 'def"),', "'name' => 'Bob',"],
+        ["'password' => Hash::make(\"[REDACTED]", '[REDACTED]"),', "'name' => 'Bob',"],
+    ],
+    'an escaped quote on the next line' => [
+        ["\$token = 'a", "it\\'s', 'Bob'"],
+        ["\$token = '[REDACTED]", "[REDACTED]', 'Bob'"],
+    ],
+    'an empty line inside it' => [
+        ["\$token = 'a", '', "b';"],
+        ["\$token = '[REDACTED]", '', "[REDACTED]';"],
+    ],
+]);
+
+test('scrubSource leaves the lines after an open literal alone when no sensitive key holds it', function (): void {
+    $lines = ["\$name = 'line one", 'line two', "';"];
+
+    expect(scrubber()->scrubSource($lines))->toBe($lines);
+});
+
 test('scrubSource redacts the whole window when PCRE gives up, and says so in the internal log', function (): void {
     $directory = tempDirectory();
     $scrubber = scrubber(['buffer_path' => $directory]);
@@ -690,6 +739,16 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         'a key and a long run of spaces at the end of every line',
         array_fill(0, 11, "'token' =>".str_repeat(' ', 50_000).'x'),
         array_fill(0, 11, "'token' =>".str_repeat(' ', 50_000).'[REDACTED]'),
+    ],
+    'an open literal' => [
+        'an open literal',
+        ["\$secret = '".str_repeat('a ', 25_000), ...array_fill(0, 10, str_repeat('b ', 25_000))],
+        ["\$secret = '[REDACTED]", ...array_fill(0, 10, '[REDACTED]')],
+    ],
+    'keys that never end a line' => [
+        'keys that never end a line',
+        array_fill(0, 11, str_repeat("'token' => \$x ", 5_000)),
+        array_fill(0, 11, "'token' => ".str_repeat("\$x '[REDACTED]' => ", 4_999).'$x '),
     ],
     'an open heredoc' => [
         'an open heredoc',
