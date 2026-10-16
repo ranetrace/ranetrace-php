@@ -385,8 +385,9 @@ final class SecretScrubber implements Scrubber
      * Redact `key=value` / `key: value` / `key => value` pairs in a free-form
      * string when the key contains a sensitive fragment. Partial, best-effort
      * defense-in-depth for strings we cannot structure (e.g. exception stack
-     * traces): it catches query-string-like and key/value leakage, but not
-     * positional secret arguments that carry no key.
+     * traces): it catches query-string-like and key/value leakage and the
+     * arguments of a call whose name holds a sensitive fragment, but not a
+     * positional secret argument to any other call.
      *
      * A regex finds each key and its separator (the anchor), and the value
      * after it is read by hand, because a code value has to balance brackets
@@ -398,7 +399,8 @@ final class SecretScrubber implements Scrubber
      * - A quoted value is redacted whole. It runs to its matching closing
      *   quote, past spaces, commas and the other quote, with backslash escapes
      *   skipped. Without a closing quote it runs to the end of the line, never
-     *   further. An empty one (`''`) holds nothing and is left alone.
+     *   further. An empty one (`''`) holds nothing and is left alone. A
+     *   literal joined onto it with `.` is redacted with it.
      * - A code value keeps its code byte-for-byte and loses only the bodies of
      *   the string literals inside it, since in `'password' => Hash::make('x')`
      *   the literal is the secret and the rest is what makes the line worth
@@ -409,7 +411,7 @@ final class SecretScrubber implements Scrubber
      *   kept. `true`, `null`, a number or a constant is a bare token too: it is
      *   redacted, which costs nothing readable and needs no list of literals.
      *
-     * Fails closed anyway. PCRE can still give up (a pathological input, a
+     * It fails closed. PCRE can still give up (a pathological input, a
      * lowered `pcre.backtrack_limit`), and returning the input then would ship
      * the very string we were asked to redact, so the whole value becomes the
      * placeholder instead: losing the string beats leaking it. The give-up is
