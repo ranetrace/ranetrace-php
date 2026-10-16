@@ -975,6 +975,49 @@ test('scrubSource does not carry a sensitive read onto a next line that is not a
     'a call key before a full ternary' => [["\$p = input('password')", "    ? 'a' : 'b';"]],
 ]);
 
+test('a fallback after a call with a sensitive name is its value', function (string $line, string $expected): void {
+    expect(scrubber()->scrubString($line))->toBe($expected)
+        ->and(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'a getter' => ["\$t = \$user->getToken() ?? 'x';", "\$t = \$user->getToken() ?? '[REDACTED]';"],
+    'a getter with an argument and a short ternary' => ["\$t = \$vault->getSecret(\$id) ?: 'x';", "\$t = \$vault->getSecret(\$id) ?: '[REDACTED]';"],
+    'a method named for the fragment' => ["\$t = \$this->token() ?? 'x';", "\$t = \$this->token() ?? '[REDACTED]';"],
+    'nested parentheses in the arguments' => ["\$t = getToken(f(g(\$a))) ?? 'x';", "\$t = getToken(f(g(\$a))) ?? '[REDACTED]';"],
+    'a call with a literal loses its fallback too' => ["\$t = \$client->tokenFor('api') ?? 'x';", "\$t = \$client->tokenFor('[REDACTED]') ?? '[REDACTED]';"],
+    'an empty fallback' => ["\$t = csrf_token() ?? '';", "\$t = csrf_token() ?? '';"],
+]);
+
+test('a call with a sensitive name is not a key before anything but a fallback', function (string $line): void {
+    expect(scrubber()->scrubString($line))->toBe($line)
+        ->and(scrubSourceLine($line))->toBe($line);
+})->with([
+    'a comparison with null' => ['if ($user->getToken() === null) {'],
+    'a comparison with a variable' => ['if (getToken() !== $given) {'],
+    'a chained read' => ["\$v = \$user->getToken()->value ?? 'x';"],
+    'an error name' => ["\$m = \$this->tokenError() ?? 'Expired.';"],
+]);
+
+test('scrubSource keeps a fallback after a sensitive call that is code', function (): void {
+    expect(scrubSourceLine('$t = PersonalAccessToken::findToken($token) ?? abort(404);'))
+        ->toBe('$t = PersonalAccessToken::findToken($token) ?? abort(404);');
+});
+
+test('scrubSource carries a sensitive call that ends a line onto a fallback on the next', function (array $lines, array $expected): void {
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'a getter' => [['$t = $user->getToken()', "    ?? 'x';"], ['$t = $user->getToken()', "    ?? '[REDACTED]';"]],
+    'arguments over several lines' => [
+        ['$t = $user->getToken(', '    $id', ')', "    ?: 'x';"],
+        ['$t = $user->getToken(', '    $id', ')', "    ?: '[REDACTED]';"],
+    ],
+    'a closing paren with the fallback after it' => [
+        ['$t = $user->getToken(', "    \$id) ?? 'x';"],
+        ['$t = $user->getToken(', "    \$id) ?? '[REDACTED]';"],
+    ],
+    'a comparison is not carried' => [['$t = $user->getToken()', "    === 'x';"], ['$t = $user->getToken()', "    === 'x';"]],
+    'a chained read is not carried' => [['$t = $user->getToken()->value', "    ?? 'x';"], ['$t = $user->getToken()->value', "    ?? 'x';"]],
+]);
+
 test('scrubSource does not carry a full ternary or a call key before a comparison', function (array $lines): void {
     expect(scrubber()->scrubSource($lines))->toBe($lines);
 })->with([
@@ -1363,6 +1406,11 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         array_fill(0, 11, str_repeat("\$config['token'] + ", 5_000)."\$config['token']"),
         array_fill(0, 11, str_repeat("\$config['token'] + ", 5_000)."\$config['token']"),
     ],
+    'sensitive calls ending every line before a fallback' => [
+        'sensitive calls ending every line before a fallback',
+        array_fill(0, 11, "?? 'a' . getToken(".str_repeat('(', 10_000).str_repeat(')', 10_000).')'.str_repeat(' ', 20_000)),
+        ["?? 'a' . getToken(".str_repeat('(', 10_000).str_repeat(')', 10_000).')'.str_repeat(' ', 20_000), ...array_fill(0, 10, "?? '[REDACTED]' . getToken(".str_repeat('(', 10_000).str_repeat(')', 10_000).')'.str_repeat(' ', 20_000))],
+    ],
     'an open heredoc' => [
         'an open heredoc',
         ['$secret = <<<EOT', ...array_fill(0, 10, str_repeat('E', 50_000))],
@@ -1547,6 +1595,11 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'call keys with long blanks before the paren',
         str_repeat("f('token'      x ", 10_000)."f('token'".str_repeat(' ', 50_000).') ?? x',
         str_repeat("f('token'      x ", 10_000)."f('token'".str_repeat(' ', 50_000).') ?? [REDACTED]',
+    ],
+    'sensitive calls each with a fallback' => [
+        'sensitive calls each with a fallback',
+        str_repeat('getToken() ?? ', 10_000),
+        str_repeat('getToken() ?? [REDACTED] ?? ', 5_000),
     ],
     'exception calls repeated' => [
         'exception calls repeated',

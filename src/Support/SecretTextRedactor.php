@@ -355,7 +355,8 @@ final class SecretTextRedactor
             $value = match ($carried['kind']) {
                 self::CARRIED_VALUE => $this->redactValue($text, $offset, true),
                 self::CARRIED_FALLBACK => $fallback === '' ? null : $this->redactValue($text, $offset, true),
-                default => $this->redactCodeValue($text, $offset, $carried['kind'] === self::CARRIED_CALL, $carried['depth']),
+                self::CARRIED_CALL => $this->redactCallValue($text, $offset, $readsCode, $carried['depth']),
+                default => $this->redactCodeValue($text, $offset, false, $carried['depth']),
             };
 
             if ($value !== null) {
@@ -377,7 +378,7 @@ final class SecretTextRedactor
 
             $anchorEnd = $matches[0][1] + mb_strlen((string) $matches[0][0], '8bit');
             $value = match (true) {
-                ($matches['call'][1] ?? -1) >= 0 => $this->redactCodeValue($text, $anchorEnd, true),
+                ($matches['call'][1] ?? -1) >= 0 => $this->redactCallValue($text, $anchorEnd, $readsCode),
                 ($matches['comma'][1] ?? -1) >= 0 => $this->redactQuotedValue($text, $anchorEnd),
                 default => $this->redactValue($text, $anchorEnd, $readsCode),
             };
@@ -707,6 +708,46 @@ final class SecretTextRedactor
             $text,
             $offset,
         );
+    }
+
+    /**
+     * The arguments of a sensitive call that start at $offset, read as
+     * {@see redactCodeValue()} reads them, and then its fallback: a call whose
+     * name says it returns a secret, `$user->getToken() ?? 'x'`, falls back to
+     * one. So when `??` or `?:` follows the call's closing `)`, the value after
+     * it is read as the call's value, and when nothing but blanks follows it,
+     * a fallback that starts the next line is. Anything else after it, a
+     * comparison or a chained `->value`, leaves it a plain call.
+     *
+     * The call's own arguments are balanced by the one pass that reads them,
+     * so nothing here has to match an argument list.
+     *
+     * @return array{0: string, 1: int, 2: CarriedState|null}
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function redactCallValue(string $text, int $offset, bool $readsCode, int $depth = 0): array
+    {
+        [$code, $end, $open] = $this->redactCodeValue($text, $offset, true, $depth);
+
+        if ($open !== null || ($text[$end] ?? '') !== ')') {
+            return [$code, $end, $open];
+        }
+
+        $fallback = $this->matchAt('/\G\)[ \t]*+(?:\?\?(?!=)|\?:)[ \t]*+/', $text, $end);
+
+        if ($fallback !== '') {
+            $after = $end + mb_strlen($fallback, '8bit');
+            $value = $this->redactValue($text, $after, $readsCode);
+
+            return $value === null ? [$code.$fallback, $after, null] : [$code.$fallback.$value[0], $value[1], $value[2]];
+        }
+
+        $lineEnd = $this->matchAt('/\G\)[ \t]*+$/', $text, $end);
+
+        return $lineEnd === ''
+            ? [$code, $end, null]
+            : [$code.$lineEnd, $end + mb_strlen($lineEnd, '8bit'), ['kind' => self::CARRIED_FALLBACK, 'depth' => 0, 'quote' => null]];
     }
 
     /**
