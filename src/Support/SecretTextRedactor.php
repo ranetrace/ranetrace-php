@@ -68,8 +68,12 @@ final class SecretTextRedactor
      * What a line can leave open for the lines after it in
      * {@see redactSource()}: the value of a key that ended the line, the
      * arguments of a sensitive call, or a code value whose bracket is open.
+     * A fallback is the value of a sensitive read that ended the line, and
+     * only when the next line starts with `??`, `??=` or `?:`.
      */
     private const string CARRIED_VALUE = 'value';
+
+    private const string CARRIED_FALLBACK = 'fallback';
 
     private const string CARRIED_CALL = 'call';
 
@@ -171,7 +175,7 @@ final class SecretTextRedactor
      * {@see carryPatterns()}, built once per instance for each value of
      * {@see $readsCredentialSubclass}.
      *
-     * @var array<int, array{value: string, heredoc: string}>
+     * @var array<int, array{value: string, fallback: string, heredoc: string}>
      */
     private array $carryPatterns = [];
 
@@ -217,7 +221,9 @@ final class SecretTextRedactor
      *   `=>`, `=`, `.=`, `??=`, `??` or `?:` has the start of the next line
      *   read as that value. Only one line ahead, and never after `:` or a
      *   comparison, so `case 'token':` followed by `return $x;` stays
-     *   readable.
+     *   readable. A line that ends in a sensitive read (`$token`,
+     *   `$config['password']`, `input('password')`) whose next line starts
+     *   with `??`, `??=` or `?:` has the value after it read the same way.
      * - An open bracket. While the parentheses of a sensitive call, or a
      *   bracket opened inside a code value after a sensitive key, are still
      *   open at the end of a line, the lines after it go on as that value,
@@ -251,7 +257,7 @@ final class SecretTextRedactor
             foreach ($lines as $line) {
                 if ($line === '') {
                     $scrubbed[] = $line;
-                    $carried = ($carried['kind'] ?? null) === self::CARRIED_VALUE ? null : $carried;
+                    $carried = in_array($carried['kind'] ?? null, [self::CARRIED_VALUE, self::CARRIED_FALLBACK], true) ? null : $carried;
 
                     continue;
                 }
@@ -340,9 +346,17 @@ final class SecretTextRedactor
                 $offset = $bodyEnd + 1;
             }
 
-            $value = $carried['kind'] === self::CARRIED_VALUE
-                ? $this->redactValue($text, $offset, true)
-                : $this->redactCodeValue($text, $offset, $carried['kind'] === self::CARRIED_CALL, $carried['depth']);
+            $fallback = $carried['kind'] === self::CARRIED_FALLBACK
+                ? $this->matchAt('/\G(?:\?\?=?+|\?:)[ \t]*+/', $text, $offset)
+                : '';
+            $scrubbed .= $fallback;
+            $offset += mb_strlen($fallback, '8bit');
+
+            $value = match ($carried['kind']) {
+                self::CARRIED_VALUE => $this->redactValue($text, $offset, true),
+                self::CARRIED_FALLBACK => $fallback === '' ? null : $this->redactValue($text, $offset, true),
+                default => $this->redactCodeValue($text, $offset, $carried['kind'] === self::CARRIED_CALL, $carried['depth']),
+            };
 
             if ($value !== null) {
                 $scrubbed .= $value[0];
@@ -471,11 +485,14 @@ final class SecretTextRedactor
      * What may follow a key in {@see anchorPattern()} and {@see carryPatterns()}
      * before its separator: its closing quote, unless it names a validation
      * message, then the `]` of a subscript or, before a fallback only, the `)`
-     * of a call it is the argument of, after any spaces or tabs.
+     * of a call it is the argument of, after any spaces or tabs. Where the
+     * fallback is on the next line, $fallbackFollows is false and the `)` is
+     * taken without looking for it.
      */
-    private function keyClose(): string
+    private function keyClose(bool $fallbackFollows = true): string
     {
-        return '["\']?'.$this->messageKeyGuard().'(?:\]|(?<=["\'])[ \t]*+\)(?=\s*+\?[?:]))?';
+        return '["\']?'.$this->messageKeyGuard()
+            .'(?:\]|(?<=["\'])[ \t]*+\)'.($fallbackFollows ? '(?=\s*+\?[?:])' : '').')?';
     }
 
     /**
@@ -1021,7 +1038,8 @@ final class SecretTextRedactor
     /**
      * The value of a sensitive key that $line ends in after `=>`, `=`, `.=`,
      * `??=` or a fallback (`??`, `?:`), left for the start of the next line,
-     * or null.
+     * or else the fallback of a sensitive read $line ends in (a variable, a
+     * subscript or a call's quoted argument), or null.
      *
      * @return CarriedState|null
      *
@@ -1029,22 +1047,28 @@ final class SecretTextRedactor
      */
     private function valueCarriedOver(string $line): ?array
     {
-        $found = preg_match($this->carryPatterns()['value'], $line);
+        foreach ([self::CARRIED_VALUE, self::CARRIED_FALLBACK] as $kind) {
+            $found = preg_match($this->carryPatterns()[$kind], $line);
 
-        if ($found === false) {
-            throw new UnexpectedValueException(preg_last_error_msg());
+            if ($found === false) {
+                throw new UnexpectedValueException(preg_last_error_msg());
+            }
+
+            if ($found === 1) {
+                return ['kind' => $kind, 'depth' => 0, 'quote' => null];
+            }
         }
 
-        return $found === 1 ? ['kind' => self::CARRIED_VALUE, 'depth' => 0, 'quote' => null] : null;
+        return null;
     }
 
     /**
      * The patterns {@see valueCarriedOver()} and {@see redactHeredocBodies()}
      * look for at the end of a line: a sensitive key and an assignment
-     * followed by nothing, or that or a sensitive call's `(` followed by a
-     * heredoc opener.
+     * followed by nothing, a sensitive key read followed by nothing, or an
+     * assignment or a sensitive call's `(` followed by a heredoc opener.
      *
-     * @return array{value: string, heredoc: string}
+     * @return array{value: string, fallback: string, heredoc: string}
      */
     private function carryPatterns(): array
     {
@@ -1059,6 +1083,7 @@ final class SecretTextRedactor
 
         return $this->carryPatterns[$variant] = [
             'value' => '/'.$assignment.'\s*+$/i',
+            'fallback' => '/(?<![\w.\-])["\']?'.$key.$this->keyClose(fallbackFollows: false).'\s*+$/i',
             'heredoc' => '/(?:'.$assignment.'|(?<!\w)'.$call.')'
                 .'\s*+<<<[ \t]*+(?<quote>["\']?)(?<marker>[A-Za-z_]\w*+)\k<quote>\s*+$/i',
         ];

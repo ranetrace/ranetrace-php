@@ -948,6 +948,33 @@ test('scrubSource reads the line after a fallback that ends a line as its value'
     'a heredoc' => [["\$p = \$config['password'] ?? <<<EOT", 'hunter2', 'EOT;'], ["\$p = \$config['password'] ?? <<<EOT", '[REDACTED]', 'EOT;']],
 ]);
 
+test('scrubSource reads a fallback that starts the line after a sensitive read as its value', function (array $lines, array $expected): void {
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'a call key' => [["\$p = \$request->input('password')", "    ?? 'x';"], ["\$p = \$request->input('password')", "    ?? '[REDACTED]';"]],
+    'a subscript' => [["\$p = \$config['password']", "    ?: 'x';"], ["\$p = \$config['password']", "    ?: '[REDACTED]';"]],
+    'a variable' => [['$p = $token', "    ?? Hash::make('x');"], ['$p = $token', "    ?? Hash::make('[REDACTED]');"]],
+    'a call key with blanks before its paren' => [["\$p = input( 'password' )", "\t?? 'x';"], ["\$p = input( 'password' )", "\t?? '[REDACTED]';"]],
+    'a null-coalescing assignment' => [["\$config['password']", "    ??= 'x';"], ["\$config['password']", "    ??= '[REDACTED]';"]],
+    'a fallback whose bracket stays open' => [
+        ['$p = $token', '    ?? Hash::make(', "        'x'", '    );', "\$name = 'Bob';"],
+        ['$p = $token', '    ?? Hash::make(', "        '[REDACTED]'", '    );', "\$name = 'Bob';"],
+    ],
+    'only the fallback' => [["\$p = \$config['password']", "    ?? 'x'; \$name = 'Bob';"], ["\$p = \$config['password']", "    ?? '[REDACTED]'; \$name = 'Bob';"]],
+]);
+
+test('scrubSource does not carry a sensitive read onto a next line that is not a fallback', function (array $lines): void {
+    expect(scrubber()->scrubSource($lines))->toBe($lines);
+})->with([
+    'a fallback that is code' => [["\$p = \$config['password']", '    ?? $default;']],
+    'a method call' => [["\$p = \$request->input('password')", "    ->trim('x');"]],
+    'a semicolon' => [['$p = $token', "    ; \$name = 'Bob';"]],
+    'a comparison' => [['if ($token', "    === 'x') {"]],
+    'a blank line between' => [["\$p = \$config['password']", '', "    ?? 'x';"]],
+    'a key that is not sensitive' => [["\$p = \$config['name']", "    ?? 'x';"]],
+    'a call key before a full ternary' => [["\$p = input('password')", "    ? 'a' : 'b';"]],
+]);
+
 test('scrubSource does not carry a full ternary or a call key before a comparison', function (array $lines): void {
     expect(scrubber()->scrubSource($lines))->toBe($lines);
 })->with([
@@ -1325,6 +1352,16 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         'a fallback and long blanks ending every line',
         array_fill(0, 11, 'token ??'.str_repeat(' ', 50_000)),
         ['token ??'.str_repeat(' ', 50_000), ...array_fill(0, 10, '[REDACTED] ??'.str_repeat(' ', 50_000))],
+    ],
+    'sensitive reads ending every line' => [
+        'sensitive reads ending every line',
+        array_fill(0, 11, '?? $token'.str_repeat(' ', 50_000)),
+        array_fill(0, 11, '?? $token'.str_repeat(' ', 50_000)),
+    ],
+    'many keys on a line that ends in one' => [
+        'many keys on a line that ends in one',
+        array_fill(0, 11, str_repeat("\$config['token'] + ", 5_000)."\$config['token']"),
+        array_fill(0, 11, str_repeat("\$config['token'] + ", 5_000)."\$config['token']"),
     ],
     'an open heredoc' => [
         'an open heredoc',
