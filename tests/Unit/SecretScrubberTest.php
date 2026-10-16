@@ -522,6 +522,7 @@ test('a fallback after a call read by a sensitive quoted key is its value', func
 })->with([
     'a request input' => ["\$p = \$request->input('password') ?? 'default';", "\$p = \$request->input('password') ?? '[REDACTED]';"],
     'a short ternary' => ["\$t = \$request->header(\"X-Api-Key\") ?: 'dev-key';", "\$t = \$request->header(\"X-Api-Key\") ?: '[REDACTED]';"],
+    'blanks before the paren' => ["\$p = \$request->input( 'password' \t) ?? 'x';", "\$p = \$request->input( 'password' \t) ?? '[REDACTED]';"],
     'an env lookup keeps its name' => ["\$t = env('API_TOKEN') ?? 'x';", "\$t = env('API_TOKEN') ?? '[REDACTED]';"],
 ]);
 
@@ -535,6 +536,7 @@ test('a call read by a sensitive quoted key is not a key before anything but a f
     'a comparison' => ["if (strpos(\$header, 'token') !== false) {"],
     'an assignment after it' => ["\$p = input('password');"],
     'an unquoted argument' => ['$p = input(password) ?? $x;'],
+    'blanks before the paren and a comparison' => ["if (strpos(\$x, 'token' ) !== false) {"],
 ]);
 
 test('scrubSource keeps a fallback that is code', function (): void {
@@ -932,6 +934,7 @@ test('scrubSource reads the line after a fallback that ends a line as its value'
 })->with([
     'a subscript' => [["\$p = \$config['password'] ??", "    'hunter2';"], ["\$p = \$config['password'] ??", "    '[REDACTED]';"]],
     'a short ternary' => [['$s = $token ?:', "    'fallback';"], ['$s = $token ?:', "    '[REDACTED]';"]],
+    'a call key with blanks before the paren' => [["\$p = input( 'password' ) ??", "    'default';"], ["\$p = input( 'password' ) ??", "    '[REDACTED]';"]],
     'a call read by a sensitive key' => [["\$p = \$request->input('password') ??", "    'default';"], ["\$p = \$request->input('password') ??", "    '[REDACTED]';"]],
     'a heredoc' => [["\$p = \$config['password'] ?? <<<EOT", 'hunter2', 'EOT;'], ["\$p = \$config['password'] ?? <<<EOT", '[REDACTED]', 'EOT;']],
 ]);
@@ -1488,6 +1491,11 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'call keys before long blanks',
         str_repeat("f('token')     ", 10_000)."f('token')".str_repeat(' ', 50_000).'?? x',
         str_repeat("f('token')     ", 10_000)."f('token')".str_repeat(' ', 50_000).'?? [REDACTED]',
+    ],
+    'call keys with long blanks before the paren' => [
+        'call keys with long blanks before the paren',
+        str_repeat("f('token'      x ", 10_000)."f('token'".str_repeat(' ', 50_000).') ?? x',
+        str_repeat("f('token'      x ", 10_000)."f('token'".str_repeat(' ', 50_000).') ?? [REDACTED]',
     ],
     'exception calls repeated' => [
         'exception calls repeated',

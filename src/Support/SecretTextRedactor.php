@@ -475,11 +475,11 @@ final class SecretTextRedactor
      * What may follow a key in {@see anchorPattern()} and {@see carryPatterns()}
      * before its separator: its closing quote, unless it names a validation
      * message, then the `]` of a subscript or, before a fallback only, the `)`
-     * of a call it is the argument of.
+     * of a call it is the argument of, after any spaces or tabs.
      */
     private function keyClose(): string
     {
-        return '["\']?'.$this->messageKeyGuard().'(?:\]|(?<=["\'])\)(?=\s*+\?[?:]))?';
+        return '["\']?'.$this->messageKeyGuard().'(?:\]|(?<=["\'])[ \t]*+\)(?=\s*+\?[?:]))?';
     }
 
     /**
