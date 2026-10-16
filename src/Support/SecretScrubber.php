@@ -31,11 +31,35 @@ final class SecretScrubber implements Scrubber
     /**
      * Built-in sensitive key fragments (case-insensitive substring match).
      *
+     * A fragment matches inside any longer name, so one joins only when the
+     * names that hold it are nearly all secret. Measured against every PHP
+     * file under both SDKs' `vendor/` (Laravel, Symfony, PHPUnit, Psy and the
+     * rest), leaving out `password` and `passwd`:
+     *
+     * - `pwd` is in: 3 distinct names hold it, `pwd` and cURL's `USERPWD` and
+     *   `PROXYUSERPWD`, which hold a `user:password` pair. Monolog's own
+     *   redacting formatter lists it too. Its one false positive is the `PWD`
+     *   environment variable, the working directory, which the SDK never
+     *   collects by itself.
+     * - `pass` is out: 293 distinct names hold it, nearly all of them not
+     *   secret (`passed`, `passes`, `passthru`, `bypass`, `compass`,
+     *   `passport`, Symfony's `CompilerPass`). As a call name it would also
+     *   make `$validator->passes(...)` and `passthru(...)` sensitive calls.
+     * - `dsn` is out: 47 distinct names hold it, several across a word
+     *   boundary (`recordsNotFound`, `methodsNode`, `assertStringEndsNotWith`),
+     *   and a PDO DSN (`mysql:host=db;dbname=app`) usually holds no secret.
+     *   The two ways one does are caught without it: `password=` inside it is
+     *   a pair, and a password in a URL-shaped DSN is caught by its value, see
+     *   {@see SecretTextRedactor}.
+     *
+     * `scrubbing.extra_keys` adds a fragment a host knows it needs.
+     *
      * @var array<int, string>
      */
     private const array DEFAULT_KEYS = [
         'password',
         'passwd',
+        'pwd',
         'secret',
         'token',
         'api_key',

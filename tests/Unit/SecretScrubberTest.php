@@ -1834,3 +1834,125 @@ test('scrubDeep leaves free-form values that merely contain a question mark unto
     'windows path' => ['C:\Users\token'],
     'bare word' => ['token'],
 ]);
+
+test('scrubString redacts the password of a url and keeps its user name and host', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected);
+})->with([
+    'in a message' => ['connect failed to pgsql://app:Pw0rd@db/app', 'connect failed to pgsql://app:[REDACTED]@db/app'],
+    'no user name' => ['redis://:pw@cache:6379', 'redis://:[REDACTED]@cache:6379'],
+    'an unencoded @ in the password' => ['mysql://root:p@ss@db:3306/app', 'mysql://root:[REDACTED]@db:3306/app'],
+    'a colon in the password' => ['amqp://guest:a:b@mq', 'amqp://guest:[REDACTED]@mq'],
+    'json with escaped slashes' => ['{"url":"pgsql:\/\/app:pw@db\/app"}', '{"url":"pgsql:\/\/app:[REDACTED]@db\/app"}'],
+    'quoted in a trace' => ["#0 /app/Db.php(9): connect('pgsql://app:pw@db')", "#0 /app/Db.php(9): connect('pgsql://app:[REDACTED]@db')"],
+    'two urls' => ['a://u:x@h b://v:y@i', 'a://u:[REDACTED]@h b://v:[REDACTED]@i'],
+]);
+
+test('scrubSource redacts the password of a url and keeps its user name and host', function (string $line, string $expected): void {
+    expect(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'an unknown variable' => ["\$dsn = 'pgsql://app:Pw0rd@db/app';", "\$dsn = 'pgsql://app:[REDACTED]@db/app';"],
+    'an array element' => ["'url' => 'redis://:pw@cache:6379',", "'url' => 'redis://:[REDACTED]@cache:6379',"],
+    'a double-quoted literal' => ['$client = new Client("https://deploy:hunter2@git.example.com/repo.git");', '$client = new Client("https://deploy:[REDACTED]@git.example.com/repo.git");'],
+]);
+
+test('it leaves a url without a password readable', function (string $value): void {
+    expect(scrubber()->scrubString($value))->toBe($value)
+        ->and(scrubSourceLine($value))->toBe($value);
+})->with([
+    'a user name only' => ['https://user@example.com/x'],
+    'a port and an @ in the path' => ['https://example.com:8443/users/@rutger'],
+    'an @ in the query' => ['https://example.com:8443?email=a@b.test'],
+    'an ipv6 host' => ['http://[::1]:8080/health'],
+    'an empty password' => ['pgsql://app:@db/app'],
+    'a pdo dsn' => ['mysql:host=db;dbname=app'],
+    'an email address' => ['mail rutger@example.com: sent'],
+]);
+
+test('scrubString redacts a token whose prefix says what it is', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected);
+})->with([
+    'stripe secret key' => ['charge failed with sk_live_abc123', 'charge failed with [REDACTED]'],
+    'stripe restricted key' => ['key rk_live_51HabcDEF0123456789', 'key [REDACTED]'],
+    'aws access key id' => ['using AKIAIOSFODNN7EXAMPLE for s3', 'using [REDACTED] for s3'],
+    'aws temporary access key id' => ['ASIAY34FZKBOKMUTVV7A expired', '[REDACTED] expired'],
+    'github classic token' => ['git push with ghp_1234567890abcdefABCDEF1234567890abcd', 'git push with [REDACTED]'],
+    'github oauth token' => ['gho_1234567890abcdefABCDEF1234567890abcd', '[REDACTED]'],
+    'github fine-grained token' => ['github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUV', '[REDACTED]'],
+    'slack bot token' => ['slack said no to xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx.', 'slack said no to [REDACTED].'],
+    'slack user token' => ['xoxp-123456789012-abcdef', '[REDACTED]'],
+    'gitlab token' => ['glpat-AbCdEf0123456789_-xyz rejected', '[REDACTED] rejected'],
+    'jwt' => [
+        'Unauthenticated: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
+        'Unauthenticated: Bearer [REDACTED]',
+    ],
+    'unsigned jwt' => ['token eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0. was refused', 'token [REDACTED] was refused'],
+    'quoted in json' => ['{"key":"sk_live_abc123","ok":false}', '{"key":"[REDACTED]","ok":false}'],
+]);
+
+test('scrubSource redacts a token whose prefix says what it is', function (string $line, string $expected): void {
+    expect(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'an unknown variable' => ["\$stripe = 'sk_live_abc123';", "\$stripe = '[REDACTED]';"],
+    'a positional argument' => ["\$s3 = new S3Client('AKIAIOSFODNN7EXAMPLE', \$region);", "\$s3 = new S3Client('[REDACTED]', \$region);"],
+    'an array element' => ["'slack' => 'xoxb-123456789012-1234567890123-AbCdEfGh',", "'slack' => '[REDACTED]',"],
+]);
+
+test('it leaves a look-alike of a prefixed token readable', function (string $value): void {
+    expect(scrubber()->scrubString($value))->toBe($value)
+        ->and(scrubSourceLine($value))->toBe($value);
+})->with([
+    'a variable named like a key' => ['$sk_live_mode = true;'],
+    'an identifier that goes on with an underscore' => ['const sk_live_key_id = 1;'],
+    'a stripe publishable key' => ['pk_live_abc123'],
+    'a stripe test key' => ['sk_test_abc123'],
+    'an aws key id one character too long' => ['AKIAIOSFODNN7EXAMPLEX'],
+    'a lower-case aws prefix' => ['akiaiosfodnn7example'],
+    'a short github prefix' => ['ghp_short'],
+    'a word ending in a prefix' => ['myghp_1234567890abcdefABCDEF1234567890abcd'],
+    'a slack prefix alone' => ['xoxb-'],
+    'base64 json without a second part' => ['eyJhbGciOiJIUzI1NiJ9'],
+]);
+
+test('scrubSource redacts a value under a pwd key, but pass and dsn are not sensitive fragments', function (string $line, string $expected): void {
+    expect(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'pwd variable' => ["\$pwd = 'hunter2';", "\$pwd = '[REDACTED]';"],
+    'curl option array' => ["CURLOPT_USERPWD => 'user:hunter2',", "CURLOPT_USERPWD => '[REDACTED]',"],
+    'pass in another word' => ["\$compass = 'north';", "\$compass = 'north';"],
+    'bypass flag' => ["\$bypass = 'cache';", "\$bypass = 'cache';"],
+    'a validator call' => ["if (\$validator->passes('strict')) {", "if (\$validator->passes('strict')) {"],
+    'a pdo dsn' => ["\$dsn = 'mysql:host=db;dbname=app';", "\$dsn = 'mysql:host=db;dbname=app';"],
+]);
+
+test('scrub redacts a value under a pwd key and keeps keys that only hold pass or dsn', function (): void {
+    $result = scrubber()->scrub([
+        'db_pwd' => 'hunter2',
+        'bypass_cache' => true,
+        'compass_heading' => 'N',
+        'dsn' => 'mysql:host=db;dbname=app',
+    ]);
+
+    expect($result)->toBe([
+        'db_pwd' => '[REDACTED]',
+        'bypass_cache' => true,
+        'compass_heading' => 'N',
+        'dsn' => 'mysql:host=db;dbname=app',
+    ]);
+});
+
+test('the value shapes stay linear on long runs', function (string $label, string $value, string $expected): void {
+    $started = microtime(true);
+
+    expect(scrubber()->scrubString($value))->toBe($expected)
+        ->and(scrubber()->scrubSource([$value]))->toBe([$expected])
+        ->and(microtime(true) - $started)->toBeLessThan(1.0, $label);
+})->with([
+    'a password run with no @' => ['a password run with no @', 'a://u:'.str_repeat('x:', 25_000), 'a://u:'.str_repeat('x:', 25_000)],
+    'a password run of @' => ['a password run of @', 'a://u:'.str_repeat('@', 50_000), 'a://u:[REDACTED]@'],
+    'schemes back to back' => ['schemes back to back', str_repeat('a://', 12_500), str_repeat('a://', 12_500)],
+    'a scheme run' => ['a scheme run', str_repeat('a.', 25_000).'://u', str_repeat('a.', 25_000).'://u'],
+    'jwt heads joined by dashes' => ['jwt heads joined by dashes', str_repeat('eyJa-', 10_000), str_repeat('eyJa-', 10_000)],
+    'jwt heads joined by dots' => ['jwt heads joined by dots', 'eyJ'.str_repeat('a', 50_000).'.eyJ'.str_repeat('a', 50_000), 'eyJ'.str_repeat('a', 50_000).'.eyJ'.str_repeat('a', 50_000)],
+    'slack prefixes back to back' => ['slack prefixes back to back', str_repeat('xoxb-', 10_000), '[REDACTED]'],
+    'a long stripe key' => ['a long stripe key', 'sk_live_'.str_repeat('a', 50_000), '[REDACTED]'],
+]);

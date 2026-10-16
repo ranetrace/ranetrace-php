@@ -21,6 +21,12 @@ use UnexpectedValueException;
  * cheaply. See {@see anchorPattern()} for what an anchor is and why the
  * pattern stays linear.
  *
+ * A few secrets are caught by their value alone, wherever they stand: the
+ * password of a URL (`pgsql://app:[REDACTED]@db`, user name and host kept)
+ * and a token on a short list of prefixes that say what it is, such as
+ * `sk_live_` or `AKIA`, see {@see redactSecretValues()}. Any other secret
+ * under a name the fragment list does not hold is not.
+ *
  * The value after an anchor takes one of these shapes:
  *
  * - A quoted value is redacted whole. It runs to its matching closing quote,
@@ -170,6 +176,57 @@ final class SecretTextRedactor
     private const string PARENT_CONSTRUCTOR_CALL = 'parent\s*+::\s*+__construct';
 
     /**
+     * The password in the userinfo of a URL, `pgsql://app:secret@db`, with
+     * the scheme, `//` (or the `\/\/` of a JSON-encoded URL) and user name in
+     * group 1, kept, and the password in group 2. See
+     * {@see redactSecretValues()}.
+     *
+     * The password runs to the LAST `@` of the authority, so the unencoded
+     * `@` in `mysql://root:p@ss@db` stays inside it rather than leaving `ss`
+     * behind. Finding that `@` is the one place this pattern backtracks, and
+     * it is bounded: the authority it walks back over stops at the first `/`,
+     * and every later match attempt needs a `//` of its own, so no character
+     * is walked over by more than one attempt. The scheme can start only where
+     * a scheme token can, and every other repeat is possessive, for the
+     * reasons {@see anchorPattern()} gives.
+     */
+    private const string URL_PASSWORD = '~(?<![A-Za-z0-9+.\-])([A-Za-z][A-Za-z0-9+.\-]*+:(?://|\\\\/\\\\/)'
+        .'[^\s:@/\\\\?#\'"`<>\[\]]*+:)([^\s/\\\\?#\'"`<>\[\]]+)@~';
+
+    /**
+     * Tokens whose own prefix says they are a credential, wherever they stand.
+     * The list is curated, short and high-signal: a provider's live secret
+     * key, never its publishable or test key, and only prefixes that do not
+     * start an ordinary word or identifier. Each body has a minimum length and
+     * must end where a token does, so `$sk_live_mode`, `sk_live_key_id` and
+     * `ghp_short` stay readable.
+     *
+     * - Stripe secret and restricted live keys: `sk_live_`, `rk_live_`.
+     * - AWS access key ids: `AKIA` (long-term) and `ASIA` (temporary), then
+     *   exactly 16 upper-case letters and digits.
+     * - GitHub classic and OAuth tokens (`ghp_`, `gho_`) and fine-grained
+     *   tokens (`github_pat_`).
+     * - Slack tokens: `xoxa-`, `xoxb-`, `xoxp-`, `xoxr-`.
+     * - GitLab personal access tokens: `glpat-`.
+     * - A JWT: two base64url segments that each start with `eyJ`, the encoded
+     *   `{"`, and the signature after the second `.`, empty when unsigned.
+     *
+     * Matching is case-sensitive, as the prefixes are. A token can start only
+     * where no word character, `$`, `.` or `-` precedes it, and every repeat
+     * is possessive, so each run is entered once and the scan stays linear:
+     * without `-` there, `eyJa-eyJa-...` was entered at every `eyJ`.
+     */
+    private const string PREFIXED_TOKEN = '~(?<![\w$.\-])(?:'
+        .'[sr]k_live_[A-Za-z0-9]{6,}+'
+        .'|A[KS]IA[A-Z0-9]{16}'
+        .'|gh[po]_[A-Za-z0-9]{20,}+'
+        .'|github_pat_\w{20,}+'
+        .'|xox[abpr]-[A-Za-z0-9\-]{10,}+'
+        .'|glpat-[\w\-]{20,}+'
+        .'|eyJ[\w\-]++\.eyJ[\w\-]++\.[\w\-]*+'
+        .')(?![\w$])~';
+
+    /**
      * {@see anchorPattern()}, built once per instance for each value of
      * {@see $readsCredentialSubclass}.
      *
@@ -214,7 +271,7 @@ final class SecretTextRedactor
      */
     public function redactString(string $text): string
     {
-        return $this->scrubText($text, readsCode: false)[0];
+        return $this->redactSecretValues($this->scrubText($text, readsCode: false)[0]);
     }
 
     /**
@@ -272,7 +329,7 @@ final class SecretTextRedactor
                 $carried = $open ?? $this->valueCarriedOver($line);
             }
 
-            return $scrubbed;
+            return array_map($this->redactSecretValues(...), $scrubbed);
         } finally {
             $this->readsCredentialSubclass = false;
         }
@@ -1370,6 +1427,32 @@ final class SecretTextRedactor
             mb_substr($segment, $start, $end - $start, '8bit'),
             mb_substr($segment, $end, null, '8bit'),
         ];
+    }
+
+    /**
+     * $text with every secret that its value alone gives away redacted: the
+     * password of a URL ({@see URL_PASSWORD}) and a token with a known prefix
+     * ({@see PREFIXED_TOKEN}). It runs after the key pass, on its output, so
+     * it reaches what that pass keeps: a literal under a name nobody listed
+     * (`$dsn = 'pgsql://app:secret@db'`), a positional argument and prose.
+     * A shape inside a placeholder the key pass left cannot match, since
+     * `[REDACTED]` holds none.
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function redactSecretValues(string $text): string
+    {
+        $redacted = preg_replace(
+            [self::URL_PASSWORD, self::PREFIXED_TOKEN],
+            ['${1}'.SecretScrubber::REDACTION.'@', SecretScrubber::REDACTION],
+            $text,
+        );
+
+        if ($redacted === null) {
+            throw new UnexpectedValueException(preg_last_error_msg());
+        }
+
+        return $redacted;
     }
 
     /**
