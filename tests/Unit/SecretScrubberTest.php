@@ -509,13 +509,80 @@ test('scrubString leaves a sensitive call with no literal byte-for-byte', functi
     'a helper' => ['<input type="hidden" value="{{ csrf_token() }}">'],
 ]);
 
-test('scrubString does not catch a credential passed to a call with no sensitive name', function (): void {
-    // Not covered on purpose: positional arguments carry no marker, and every
-    // call with a literal argument would have to be redacted to catch them.
-    // RANETRACE_ERRORS_CAPTURE_SOURCE=false is the way to send no source.
-    expect(scrubber()->scrubString("\$pdo = new PDO(\$dsn, 'root', 'hunter2');"))->toBe("\$pdo = new PDO(\$dsn, 'root', 'hunter2');")
-        ->and(scrubber()->scrubString("mysqli_connect('db', 'root', 'hunter2');"))->toBe("mysqli_connect('db', 'root', 'hunter2');");
-});
+test('scrubString redacts the literals passed to a known credential-taking call', function (string $line, string $expected): void {
+    // Positional arguments carry no marker, so a call whose name says nothing
+    // about a credential is caught only when it is on the curated list.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'new PDO' => ["\$pdo = new PDO(\$dsn, 'root', 'hunter2');", "\$pdo = new PDO(\$dsn, '[REDACTED]', '[REDACTED]');"],
+    'new \PDO' => ["\$pdo = new \\PDO('mysql:host=db', 'root', 'hunter2');", "\$pdo = new \\PDO('[REDACTED]', '[REDACTED]', '[REDACTED]');"],
+    'new\PDO with no space' => ["\$pdo = new\\PDO(\$dsn, 'root', 'pw');", "\$pdo = new\\PDO(\$dsn, '[REDACTED]', '[REDACTED]');"],
+    'new mysqli' => ["\$db = new mysqli('db', 'root', 'hunter2', 'app');", "\$db = new mysqli('[REDACTED]', '[REDACTED]', '[REDACTED]', '[REDACTED]');"],
+    'pdo constructor in a text trace' => [
+        "#0 /app/Db.php(12): PDO->__construct('mysql:host=db', 'root', Object(SensitiveParameterValue))",
+        "#0 /app/Db.php(12): PDO->__construct('[REDACTED]', '[REDACTED]', Object(SensitiveParameterValue))",
+    ],
+    'mysqli constructor in a text trace' => [
+        "#0 /app/Db.php(12): mysqli->__construct('db', 'root', Object(SensitiveParameterValue))",
+        "#0 /app/Db.php(12): mysqli->__construct('[REDACTED]', '[REDACTED]', Object(SensitiveParameterValue))",
+    ],
+    'mysqli_connect' => ["mysqli_connect('db', 'root', 'hunter2');", "mysqli_connect('[REDACTED]', '[REDACTED]', '[REDACTED]');"],
+    'mysqli_real_connect' => ["mysqli_real_connect(\$db, 'h', 'root', 'pw');", "mysqli_real_connect(\$db, '[REDACTED]', '[REDACTED]', '[REDACTED]');"],
+    'real_connect' => ["\$db->real_connect('h', 'root', 'pw');", "\$db->real_connect('[REDACTED]', '[REDACTED]', '[REDACTED]');"],
+    'ldap_bind' => ["ldap_bind(\$ldap, 'cn=admin', 'pw');", "ldap_bind(\$ldap, '[REDACTED]', '[REDACTED]');"],
+    'ldap_sasl_bind' => ["ldap_sasl_bind(\$ldap, null, 'pw');", "ldap_sasl_bind(\$ldap, null, '[REDACTED]');"],
+    'ftp_login' => ["ftp_login(\$ftp, 'user', 'pw');", "ftp_login(\$ftp, '[REDACTED]', '[REDACTED]');"],
+    'ssh2_auth_password' => ["ssh2_auth_password(\$ssh, 'user', 'pw');", "ssh2_auth_password(\$ssh, '[REDACTED]', '[REDACTED]');"],
+    'imap_open' => ["imap_open('{imap.test:993}', 'user', 'pw');", "imap_open('[REDACTED]', '[REDACTED]', '[REDACTED]');"],
+    'withBasicAuth' => ["Http::withBasicAuth('user', 'pass')->get(\$url);", "Http::withBasicAuth('[REDACTED]', '[REDACTED]')->get(\$url);"],
+    'withDigestAuth' => ["Http::withDigestAuth('user', 'pass');", "Http::withDigestAuth('[REDACTED]', '[REDACTED]');"],
+    'upper case and a space before the paren' => ["MYSQLI_CONNECT ('db', 'root', 'pw');", "MYSQLI_CONNECT ('[REDACTED]', '[REDACTED]', '[REDACTED]');"],
+    'nested parentheses' => [
+        "new PDO(sprintf('mysql:host=%s', \$h), 'root', 'pw');",
+        "new PDO(sprintf('[REDACTED]', \$h), '[REDACTED]', '[REDACTED]');",
+    ],
+    'the rest of the line is untouched' => ["new PDO(\$dsn, 'root', 'pw'); \$name = 'Bob';", "new PDO(\$dsn, '[REDACTED]', '[REDACTED]'); \$name = 'Bob';"],
+]);
+
+test('scrubString leaves calls that only look like a credential-taking call readable', function (string $line): void {
+    // The curated names match as whole words only, and `auth` is not one of
+    // them: Laravel's `auth('api')` helper is everywhere.
+    expect(scrubber()->scrubString($line))->toBe($line);
+})->with([
+    'a longer name around a listed one' => ["my_mysqli_connect_wrapper('db', 'root');"],
+    'a listed name as a prefix' => ["mysqli_connect_errno('x');"],
+    'a class whose name starts with a listed one' => ["throw new PDOException('Connection refused');"],
+    'new glued to the class name' => ["newPDO('x');"],
+    'the auth helper' => ["\$user = auth('api')->user();"],
+    'a key that starts with auth' => ["'author' => 'Jane',"],
+    'a credential call with no literal' => ['$pdo = new PDO($dsn, $user, $password);'],
+    'a constructor of a subclass' => ["new MyPDO('dsn', 'root');"],
+    'a method of the class that is not the constructor' => ["PDO->prepare('SELECT 1')"],
+    'withBasicAuth with no literal' => ['Http::withBasicAuth($user, $pass);'],
+]);
+
+test('scrubSource redacts the literals passed to a known credential-taking call', function (array $lines, array $expected): void {
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'new PDO on one line' => [["\$pdo = new PDO(\$dsn, 'root', 'hunter2');"], ["\$pdo = new PDO(\$dsn, '[REDACTED]', '[REDACTED]');"]],
+    'new PDO over several lines' => [
+        ['$pdo = new PDO(', "    'mysql:host=db;dbname=app',", "    'root',", "    'hunter2',", ');', "\$name = 'Bob';"],
+        ['$pdo = new PDO(', "    '[REDACTED]',", "    '[REDACTED]',", "    '[REDACTED]',", ');', "\$name = 'Bob';"],
+    ],
+    'mysqli_connect' => [["\$db = mysqli_connect('db', 'root', 'hunter2');"], ["\$db = mysqli_connect('[REDACTED]', '[REDACTED]', '[REDACTED]');"]],
+    'withBasicAuth' => [
+        ["\$response = Http::withBasicAuth('user', 'pass')->get(\$url);"],
+        ["\$response = Http::withBasicAuth('[REDACTED]', '[REDACTED]')->get(\$url);"],
+    ],
+    'a heredoc passed to one' => [
+        ["ftp_login(<<<'EOT'", 'hunter2', 'EOT);'],
+        ["ftp_login(<<<'EOT'", '[REDACTED]', 'EOT);'],
+    ],
+    'a credential call with no literal' => [
+        ['$pdo = new PDO(', '    $dsn,', '    $user,', ');'],
+        ['$pdo = new PDO(', '    $dsn,', '    $user,', ');'],
+    ],
+]);
 
 test('scrubString redacts a literal concatenated onto a quoted secret', function (string $line, string $expected): void {
     // Only the first literal used to be redacted; the one joined onto it with
@@ -857,6 +924,11 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         ['setToken(', ...array_fill(0, 10, str_repeat("('a', ", 10_000))],
         ['setToken(', ...array_fill(0, 10, str_repeat("('[REDACTED]', ", 10_000))],
     ],
+    'a credential call left open over the window' => [
+        'a credential call left open over the window',
+        ['$pdo = new PDO(', ...array_fill(0, 10, str_repeat("('a', ", 10_000))],
+        ['$pdo = new PDO(', ...array_fill(0, 10, str_repeat("('[REDACTED]', ", 10_000))],
+    ],
     'an open heredoc' => [
         'an open heredoc',
         ['$secret = <<<EOT', ...array_fill(0, 10, str_repeat('E', 50_000))],
@@ -1001,6 +1073,21 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'a long name before a paren',
         str_repeat('a', 50_000).'token(',
         str_repeat('a', 50_000).'token(',
+    ],
+    'new and a long run of spaces' => [
+        'new and a long run of spaces',
+        'new'.str_repeat(' ', 50_000).'PDOX(',
+        'new'.str_repeat(' ', 50_000).'PDOX(',
+    ],
+    'credential call names with no paren' => [
+        'credential call names with no paren',
+        str_repeat('mysqli_connect ', 5_000).'x',
+        str_repeat('mysqli_connect ', 5_000).'x',
+    ],
+    'a credential call left open' => [
+        'a credential call left open',
+        'new PDO('.str_repeat("'a', (", 25_000),
+        'new PDO('.str_repeat("'[REDACTED]', (", 25_000),
     ],
     'many code values in a row' => [
         'many code values in a row',

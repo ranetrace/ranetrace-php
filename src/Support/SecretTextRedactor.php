@@ -14,8 +14,8 @@ use UnexpectedValueException;
  *
  * It catches `key=value`, `key: value` and `key => value` pairs whose key
  * holds a sensitive fragment, query-string-like leakage and the arguments of a
- * call whose name holds one, but not a positional secret argument to any other
- * call. A regex finds each key and its separator (the anchor), and the value
+ * call whose name holds one or that is on {@see CREDENTIAL_CALLS}, but not a
+ * positional secret argument to any other call. A regex finds each key and its separator (the anchor), and the value
  * after it is read by hand, because a code value has to balance brackets and
  * one pattern cannot do that cheaply. See {@see anchorPattern()} for what an
  * anchor is and why the pattern stays linear.
@@ -84,6 +84,35 @@ final class SecretTextRedactor
      * 64, and the last one of a block is often shorter.
      */
     private const int MIN_KEY_BODY_LINE = 40;
+
+    /**
+     * Calls known to take a credential by position, as patterns for their name
+     * up to the space before the `(`, read like a sensitive call (see
+     * {@see anchorPattern()}). A positional argument carries no key, so nothing
+     * but its call can say it is a credential, and a name such as `PDO` or
+     * `ftp_login` holds no sensitive fragment. The list is curated and never
+     * complete: a call joins it when it is common and takes a credential this
+     * way, and only by its whole name. It stays apart from the fragment list
+     * because a word like `auth` there would turn every key that starts with it
+     * (`author`) and Laravel's `auth('api')` helper into secrets.
+     *
+     * A constructor appears as `new PDO(` in source and as `PDO->__construct(`
+     * in a text trace, where PHP masks only the password parameter.
+     */
+    private const array CREDENTIAL_CALLS = [
+        'new(?:\s++\\\\?+|\\\\)(?:pdo|mysqli)',
+        '(?:pdo|mysqli)->__construct',
+        'mysqli_connect',
+        'mysqli_real_connect',
+        'real_connect',
+        'ldap_bind',
+        'ldap_sasl_bind',
+        'ftp_login',
+        'ssh2_auth_password',
+        'imap_open',
+        'withbasicauth',
+        'withdigestauth',
+    ];
 
     /**
      * {@see anchorPattern()}, built once per instance.
@@ -264,9 +293,10 @@ final class SecretTextRedactor
      *   is an anchor as well, up to its `(`: `Stripe::setApiKey(`,
      *   `$client->setToken(`, `Http::withToken(`. What follows is read as a code
      *   value inside the call's parentheses, so its literals are redacted, every
-     *   argument of it, and a call with no literal stays as written. A
-     *   credential passed to a call whose name says nothing about it, such as
-     *   `new PDO($dsn, 'root', 'hunter2')`, is not recognised.
+     *   argument of it, and a call with no literal stays as written. So is a
+     *   call on {@see CREDENTIAL_CALLS}, matched by its whole name and allowed
+     *   whitespace before its `(`: `new PDO(`, `mysqli_connect (`. A credential
+     *   passed by position to any other call is not recognised.
      *
      * Three details are load-bearing, all of them about cost. It runs on stack
      * traces and log messages, which are the longest, least structured strings
@@ -317,7 +347,8 @@ final class SecretTextRedactor
 
         return [
             '[\w.\-]{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')[\w.\-]*+',
-            '\w{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')\w*+\(',
+            '(?:\w{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')\w*+'
+                .'|(?:'.implode('|', self::CREDENTIAL_CALLS).')\s*+)\(',
         ];
     }
 
