@@ -31,7 +31,9 @@ use UnexpectedValueException;
  *   only the bodies of its string literals, since in
  *   `'password' => Hash::make('x')` the literal is the secret and the rest is
  *   what makes the line worth reading. {@see startsCodeValue()} says what
- *   starts one, and {@see redactCodeValue()} where it ends.
+ *   starts one, and {@see redactCodeValue()} where it ends. A literal that
+ *   names a lookup, as in `env('DB_PASSWORD', 'x')`, is kept, see
+ *   {@see namesLookup()}.
  * - Outside source, an unquoted value is redacted whole, and a bracket in it
  *   is followed to its matching close: `token=(abc)`,
  *   `{"token":{"value":"abc"}}` and `'password' => Hash::make('x')` lose the
@@ -84,6 +86,17 @@ final class SecretTextRedactor
      * 64, and the last one of a block is often shorter.
      */
     private const int MIN_KEY_BODY_LINE = 40;
+
+    /**
+     * The global functions whose first argument, and the superglobals whose
+     * subscript, name where a value lives rather than hold it, see
+     * {@see namesLookup()}. Function names are matched case-insensitively, as
+     * PHP calls them; superglobals are case-sensitive variables. `getenv`
+     * comes before `env`, which it ends in.
+     */
+    private const array LOOKUP_FUNCTIONS = ['getenv', 'env', 'config'];
+
+    private const array LOOKUP_SUPERGLOBALS = ['$_ENV', '$_SERVER'];
 
     /**
      * Calls known to take a credential by position, as patterns for their name
@@ -296,7 +309,11 @@ final class SecretTextRedactor
      *   argument of it, and a call with no literal stays as written. So is a
      *   call on {@see CREDENTIAL_CALLS}, matched by its whole name and allowed
      *   whitespace before its `(`: `new PDO(`, `mysqli_connect (`. A credential
-     *   passed by position to any other call is not recognised.
+     *   passed by position to any other call is not recognised. A name that
+     *   ends in `Exception` or `Error` is not a sensitive call: its argument
+     *   is a message, which the error carries as its message anyway, so
+     *   `throw new TokenMismatchException('CSRF token mismatch.')` stays
+     *   readable.
      *
      * Three details are load-bearing, all of them about cost. It runs on stack
      * traces and log messages, which are the longest, least structured strings
@@ -347,7 +364,7 @@ final class SecretTextRedactor
 
         return [
             '[\w.\-]{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')[\w.\-]*+',
-            '(?:\w{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')\w*+'
+            '(?:\w{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')\w*+(?<!exception|error)'
                 .'|(?:'.implode('|', self::CREDENTIAL_CALLS).')\s*+)\(',
         ];
     }
@@ -426,11 +443,14 @@ final class SecretTextRedactor
      * bare value's stop, except that a bracket it reaches is followed to its
      * matching close first. So `Hash::make('x')`, `foo(bar, 'baz')` and
      * `(abc)` are redacted whole, and no literal inside one is left behind
-     * the placeholder.
+     * the placeholder. A `new` before a constructor call is part of the value,
+     * so `new Foo('x')` loses `'x'` too.
+     *
+     * @throws UnexpectedValueException when PCRE gives up
      */
     private function proseValueEnd(string $text, int $offset): int
     {
-        $position = $offset;
+        $position = $offset + mb_strlen($this->matchAt('/\Gnew\s++(?=\\\\?+[A-Za-z_][\w\\\\]*+\()/i', $text, $offset), '8bit');
 
         while (true) {
             $position += strcspn($text, self::BARE_VALUE_STOPS.'([{', $position);
@@ -551,7 +571,9 @@ final class SecretTextRedactor
             if ($character === '"' || $character === "'") {
                 [$bodyEnd, $closed] = $this->quotedBodyEnd($text, $position);
 
-                if ($bodyEnd > $position + 1 && ! $this->opensHeredoc($text, $position)) {
+                if ($bodyEnd > $position + 1
+                    && ! $this->opensHeredoc($text, $position)
+                    && ! ($closed && $this->namesLookup($text, $position, $bodyEnd))) {
                     $redacted .= mb_substr($text, $kept, $position + 1 - $kept, '8bit').SecretScrubber::REDACTION;
                     $kept = $bodyEnd;
                 }
@@ -592,6 +614,72 @@ final class SecretTextRedactor
             : null;
 
         return [$redacted.mb_substr($text, $kept, $position - $kept, '8bit'), $position, $open];
+    }
+
+    /**
+     * Whether the closed string literal from the quote at $open to the one at
+     * $close is a name looked up rather than a value: the first argument of a
+     * global `env()`, `getenv()` or `config()` call, or the subscript of
+     * `$_ENV` or `$_SERVER`, alone in its slot. `env('DB_PASSWORD', 'x')` names
+     * the secret and holds it only in its default. A method or a namespaced
+     * function of the same name is not the lookup, and a literal joined onto
+     * something else is not a plain name, so both stay redacted.
+     */
+    private function namesLookup(string $text, int $open, int $close): bool
+    {
+        $bracketEnd = $this->blanksBefore($text, $open);
+        $bracket = $bracketEnd > 0 ? $text[$bracketEnd - 1] : '';
+        $after = $close + 1 + strspn($text, " \t", $close + 1);
+        $closer = $text[$after] ?? '';
+        $nameEnd = $this->blanksBefore($text, $bracketEnd - 1);
+
+        if ($bracket === '[') {
+            return $closer === ']' && array_any(
+                self::LOOKUP_SUPERGLOBALS,
+                fn (string $variable): bool => $this->endsWithAt($text, $nameEnd, $variable, caseInsensitive: false),
+            );
+        }
+
+        if ($bracket !== '(' || ($closer !== ',' && $closer !== ')')) {
+            return false;
+        }
+
+        foreach (self::LOOKUP_FUNCTIONS as $function) {
+            if (! $this->endsWithAt($text, $nameEnd, $function, caseInsensitive: true)) {
+                continue;
+            }
+
+            $start = $nameEnd - mb_strlen($function, '8bit');
+            if ($start > 0 && $text[$start - 1] === '\\') {
+                $start--;
+            }
+
+            return $start === 0 || strpbrk($text[$start - 1], self::NAME_CHARACTERS.'$\\>:') === false;
+        }
+
+        return false;
+    }
+
+    /**
+     * The offset where the run of spaces and tabs that ends at $offset starts.
+     */
+    private function blanksBefore(string $text, int $offset): int
+    {
+        while ($offset > 0 && ($text[$offset - 1] === ' ' || $text[$offset - 1] === "\t")) {
+            $offset--;
+        }
+
+        return $offset;
+    }
+
+    /**
+     * Whether $text holds $needle ending just before $end.
+     */
+    private function endsWithAt(string $text, int $end, string $needle, bool $caseInsensitive): bool
+    {
+        $length = mb_strlen($needle, '8bit');
+
+        return $end >= $length && substr_compare($text, $needle, $end - $length, $length, $caseInsensitive) === 0;
     }
 
     /**

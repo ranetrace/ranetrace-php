@@ -509,6 +509,102 @@ test('scrubString leaves a sensitive call with no literal byte-for-byte', functi
     'a helper' => ['<input type="hidden" value="{{ csrf_token() }}">'],
 ]);
 
+test('a call whose name ends in Exception or Error is not a sensitive call', function (string $line): void {
+    // Its argument is a message, which already travels in the error's message
+    // field, and a throw line is the line a source window highlights.
+    expect(scrubber()->scrubString($line))->toBe($line)
+        ->and(scrubSourceLine($line))->toBe($line);
+})->with([
+    'an exception' => ["throw new TokenMismatchException('CSRF token mismatch.');"],
+    'an error' => ["throw new InvalidTokenError('The token has expired.');"],
+    'lower case' => ["throw new tokenexception('expired');"],
+    'a static constructor on it' => ["throw TokenException::expired('x');"],
+    'a setter named for an error' => ["\$this->setTokenError('Expired, please retry.');"],
+]);
+
+test('a call that only contains Exception or Error in its name is still a sensitive call', function (string $line, string $expected): void {
+    expect(scrubber()->scrubString($line))->toBe($expected)
+        ->and(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'a setter' => ["Stripe::setApiKey('x');", "Stripe::setApiKey('[REDACTED]');"],
+    'a credentials setter' => ["\$c->setCredentials('u', 'p');", "\$c->setCredentials('[REDACTED]', '[REDACTED]');"],
+    'a plural suffix' => ["\$c->setTokenErrors('x');", "\$c->setTokenErrors('[REDACTED]');"],
+    'exception in the middle' => ["new TokenExceptionFactory('x');", "new TokenExceptionFactory('[REDACTED]');"],
+]);
+
+test('a sensitive key still governs a value that constructs an exception', function (): void {
+    expect(scrubSourceLine("'token' => new TokenException('x'),"))->toBe("'token' => new TokenException('[REDACTED]'),")
+        ->and(scrubber()->scrubString("'token' => new TokenException('x'),"))->toBe("'token' => [REDACTED],")
+        ->and(scrubSourceLine("throw new TokenException('password=hunter2');"))->toBe("throw new TokenException('password=[REDACTED]');");
+});
+
+test('scrubSource keeps an exception spread over several lines and its heredoc readable', function (array $lines): void {
+    expect(scrubber()->scrubSource($lines))->toBe($lines);
+})->with([
+    'arguments on lines of their own' => [['throw new TokenMismatchException(', "    'CSRF token mismatch.',", ');']],
+    'a heredoc message' => [['throw new TokenException(<<<EOT', 'The token expired.', 'EOT);']],
+]);
+
+test('scrubSource keeps the name read by env, getenv, config or a superglobal and redacts the rest', function (string $line, string $expected): void {
+    // The first argument of such a lookup names where a secret lives; the
+    // secret is the default after it, if there is one.
+    expect(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'env with a default' => ["'password' => env('DB_PASSWORD', 'x'),", "'password' => env('DB_PASSWORD', '[REDACTED]'),"],
+    'env alone' => ["'password' => env('DB_PASSWORD'),", "'password' => env('DB_PASSWORD'),"],
+    'env in double quotes and spaced' => ["'password' => env( \"DB_PASSWORD\" , 'x' ),", "'password' => env( \"DB_PASSWORD\" , '[REDACTED]' ),"],
+    'env in upper case' => ["'password' => ENV('DB_PASSWORD'),", "'password' => ENV('DB_PASSWORD'),"],
+    'a global env' => ["'password' => \\env('DB_PASSWORD', 'x'),", "'password' => \\env('DB_PASSWORD', '[REDACTED]'),"],
+    'getenv with a fallback' => ["\$secret = getenv('APP_SECRET') ?: 'x';", "\$secret = getenv('APP_SECRET') ?: '[REDACTED]';"],
+    'config' => ["\$token = config('services.api.token');", "\$token = config('services.api.token');"],
+    'config with a default' => ["\$token = config('services.api.token', 'x');", "\$token = config('services.api.token', '[REDACTED]');"],
+    'the env subscript' => ["'password' => \$_ENV['DB_PASSWORD'] ?? 'x',", "'password' => \$_ENV['DB_PASSWORD'] ?? '[REDACTED]',"],
+    'the server subscript' => ["'password' => \$_SERVER['DB_PASSWORD'],", "'password' => \$_SERVER['DB_PASSWORD'],"],
+    'a sensitive call on env' => ["\$client->setToken(env('API_TOKEN'));", "\$client->setToken(env('API_TOKEN'));"],
+    'a credential call on env' => ["new PDO(env('DB_DSN'), env('DB_USER'), 'x');", "new PDO(env('DB_DSN'), env('DB_USER'), '[REDACTED]');"],
+    'a default that is itself an env' => ["'password' => env('A', env('B', 'x')),", "'password' => env('A', env('B', '[REDACTED]')),"],
+    'a default that is a call with a literal' => ["'password' => env('A', trim('x')),", "'password' => env('A', trim('[REDACTED]')),"],
+]);
+
+test('scrubSource keeps only a plain literal that is the first argument of a global lookup', function (string $line, string $expected): void {
+    expect(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'config given an array' => ["'password' => config(['a.secret' => 'sk_live_x']),", "'password' => config(['[REDACTED]' => '[REDACTED]']),"],
+    'config given an array on its own line' => ["config(['services.stripe.secret' => 'sk_live_x']);", "config(['services.stripe.secret' => '[REDACTED]']);"],
+    'a name built by concatenation' => ["'password' => env('DB_' . 'PASSWORD'),", "'password' => env('[REDACTED]' . '[REDACTED]'),"],
+    'a variable name' => ["'password' => env(\$name, 'x'),", "'password' => env(\$name, '[REDACTED]'),"],
+    'a method named config' => ["'password' => \$this->config('x'),", "'password' => \$this->config('[REDACTED]'),"],
+    'a static method named env' => ["'password' => Settings::env('x'),", "'password' => Settings::env('[REDACTED]'),"],
+    'a namespaced function' => ["'password' => App\\env('x'),", "'password' => App\\env('[REDACTED]'),"],
+    'a longer name' => ["'password' => myenv('x'),", "'password' => myenv('[REDACTED]'),"],
+    'a variable call' => ["'password' => \$env('x'),", "'password' => \$env('[REDACTED]'),"],
+    'a lower case superglobal is another variable' => ["'password' => \$_env['x'],", "'password' => \$_env['[REDACTED]'],"],
+    'another array' => ["'password' => \$secrets['x'],", "'password' => \$secrets['[REDACTED]'],"],
+    'putenv is not a lookup' => ["'password' => putenv('DB_PASSWORD=hunter2'),", "'password' => putenv('[REDACTED]'),"],
+    'a name that is not alone in its slot' => ["'password' => env('A' ?: 'b'),", "'password' => env('[REDACTED]' ?: '[REDACTED]'),"],
+    'a superglobal subscript built by concatenation' => ["'password' => \$_ENV['A' . 'B'],", "'password' => \$_ENV['[REDACTED]' . '[REDACTED]'],"],
+]);
+
+test('scrubSource redacts an env name on the line after its call', function (): void {
+    expect(scrubber()->scrubSource(["'password' => env(", "    'DB_PASSWORD',", "    'x'", '),']))
+        ->toBe(["'password' => env(", "    '[REDACTED]',", "    '[REDACTED]'", '),']);
+});
+
+test('scrubString redacts a constructor call under a sensitive key whole', function (string $line, string $expected): void {
+    // An exception-named call is not an anchor of its own, so the prose value
+    // has to take the call along with `new`.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'an exception' => ["'token' => new TokenException('x'), 'name' => 'Bob'", "'token' => [REDACTED], 'name' => 'Bob'"],
+    'a namespaced class' => ["token=new \\App\\Secret('x') rest", 'token=[REDACTED] rest'],
+    'new as a word' => ['password=new value', 'password=[REDACTED] value'],
+]);
+
+test('scrubString keeps an env name inside a sensitive call and redacts an env lookup under a key whole', function (): void {
+    expect(scrubber()->scrubString("\$client->setToken(env('API_TOKEN', 'x'));"))->toBe("\$client->setToken(env('API_TOKEN', '[REDACTED]'));")
+        ->and(scrubber()->scrubString("'password' => env('DB_PASSWORD'),"))->toBe("'password' => [REDACTED],");
+});
+
 test('scrubString redacts the literals passed to a known credential-taking call', function (string $line, string $expected): void {
     // Positional arguments carry no marker, so a call whose name says nothing
     // about a credential is caught only when it is on the curated list.
@@ -929,6 +1025,21 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         ['$pdo = new PDO(', ...array_fill(0, 10, str_repeat("('a', ", 10_000))],
         ['$pdo = new PDO(', ...array_fill(0, 10, str_repeat("('[REDACTED]', ", 10_000))],
     ],
+    'lookups repeated inside a sensitive call' => [
+        'lookups repeated inside a sensitive call',
+        ['setToken(', ...array_fill(0, 10, str_repeat("env( 'A', 'b'), ", 5_000))],
+        ['setToken(', ...array_fill(0, 10, str_repeat("env( 'A', '[REDACTED]'), ", 5_000))],
+    ],
+    'long blanks around a lookup' => [
+        'long blanks around a lookup',
+        ["'password' => env".str_repeat(' ', 50_000).'('.str_repeat(' ', 50_000)."'A'".str_repeat(' ', 50_000).')'],
+        ["'password' => [REDACTED]".str_repeat(' ', 50_000).'('.str_repeat(' ', 50_000)."'A'".str_repeat(' ', 50_000).')'],
+    ],
+    'many literals after blanks' => [
+        'many literals after blanks',
+        ["'password' => f(".str_repeat("   'a'", 20_000)],
+        ["'password' => f(".str_repeat("   '[REDACTED]'", 20_000)],
+    ],
     'an open heredoc' => [
         'an open heredoc',
         ['$secret = <<<EOT', ...array_fill(0, 10, str_repeat('E', 50_000))],
@@ -1088,6 +1199,21 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'a credential call left open',
         'new PDO('.str_repeat("'a', (", 25_000),
         'new PDO('.str_repeat("'[REDACTED]', (", 25_000),
+    ],
+    'exception calls repeated' => [
+        'exception calls repeated',
+        str_repeat("new TokenException('x') ", 5_000),
+        str_repeat("new TokenException('x') ", 5_000),
+    ],
+    'a long name ending in an exception' => [
+        'a long name ending in an exception',
+        'setToken'.str_repeat('a', 50_000)."Exception('x')",
+        'setToken'.str_repeat('a', 50_000)."Exception('x')",
+    ],
+    'new before a long run under a key' => [
+        'new before a long run under a key',
+        'token=new '.str_repeat('a', 50_000),
+        'token=[REDACTED] '.str_repeat('a', 50_000),
     ],
     'many code values in a row' => [
         'many code values in a row',
