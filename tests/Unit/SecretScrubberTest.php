@@ -777,6 +777,46 @@ test('scrubString redacts a literal concatenated onto a quoted secret', function
     'a full stop in prose is not a concatenation' => ["token: 'abc'. Then 'x' happened", "token: '[REDACTED]'. Then 'x' happened"],
 ]);
 
+test('a validation message key keeps its message', function (string $line): void {
+    // A dotted key whose last segment is a validation rule names a message,
+    // and a message is what a reader needs from a FormRequest.
+    expect(scrubber()->scrubString($line))->toBe($line)
+        ->and(scrubSourceLine($line))->toBe($line);
+})->with([
+    'required' => ["'password.required' => 'Vul je wachtwoord in',"],
+    'min' => ["'password.min' => 'At least :min characters.',"],
+    'upper case' => ["'PASSWORD.CONFIRMED' => 'The passwords differ.',"],
+    'a nested field' => ["'user.api_token.required_with' => 'Required with the account.',"],
+    'a wildcard' => ["'tokens.*.required' => 'Every token needs a value.',"],
+    'current_password' => ["'password.current_password' => 'That is not your password.',"],
+    'in double quotes' => ['"password.uncompromised" => "That password has leaked.",'],
+    'in json' => ['{"password.required":"Vul je wachtwoord in"}'],
+]);
+
+test('a dotted key is a message key only when its last segment is a rule', function (string $line, string $expected): void {
+    expect(scrubber()->scrubString($line))->toBe($expected)
+        ->and(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'a config key' => ["'stripe.secret' => 'x',", "'stripe.secret' => '[REDACTED]',"],
+    'no dot' => ["'password' => 'x',", "'password' => '[REDACTED]',"],
+    'a nested config key' => ["'services.stripe.secret' => 'x',", "'services.stripe.secret' => '[REDACTED]',"],
+    'a segment that is not a rule' => ["'password.live' => 'x',", "'password.live' => '[REDACTED]',"],
+    'the rule first' => ["'required.password' => 'x',", "'required.password' => '[REDACTED]',"],
+    'a rule name inside a longer segment' => ["'password.not_required' => 'x',", "'password.not_required' => '[REDACTED]',"],
+    'a subscript holding a message key' => ["\$config['password.min'] = 8;", "\$config['password.min'] = 8;"],
+    'a rule joined by a dash' => ["'password-required' => 'x',", "'password-required' => '[REDACTED]',"],
+    'an unquoted key' => ['token.min=abc', 'token.min=[REDACTED]'],
+    'an unquoted key before an arrow' => ["password.required => 'x'", "password.required => '[REDACTED]'"],
+]);
+
+test('a validation message key at the end of a line does not carry onto the next', function (): void {
+    expect(scrubber()->scrubSource(["'password.required' =>", "    'Vul je wachtwoord in',"]))
+        ->toBe(["'password.required' =>", "    'Vul je wachtwoord in',"])
+        ->and(scrubber()->scrubSource(["'password.required' => <<<EOT", 'Vul je wachtwoord in', 'EOT,']))
+        ->toBe(["'password.required' => <<<EOT", 'Vul je wachtwoord in', 'EOT,'])
+        ->and(scrubSourceLine("'password' => Password::min(8)->letters(),"))->toBe("'password' => Password::min(8)->letters(),");
+});
+
 test('scrubString redacts the value after a quoted label that holds a sensitive word', function (): void {
     // A translation key such as 'Enter your password' cannot be told from a
     // key, so its value is redacted. That costs a readable string, never a
@@ -1376,6 +1416,11 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'fallbacks repeated',
         str_repeat("'token' ?? ", 10_000).str_repeat('token ?', 10_000),
         str_repeat("'token' ?? '[REDACTED]' ?? ", 5_000).str_repeat('token ?', 10_000),
+    ],
+    'message keys repeated' => [
+        'message keys repeated',
+        str_repeat("'password.required' => 'a', 'password.requiredx' => 'b', ", 5_000),
+        str_repeat("'password.required' => 'a', 'password.requiredx' => '[REDACTED]', ", 5_000),
     ],
     'exception calls repeated' => [
         'exception calls repeated',

@@ -129,6 +129,23 @@ final class SecretTextRedactor
     ];
 
     /**
+     * The Laravel validation rules whose name, as the last segment of a quoted
+     * dotted key, makes the key name a validation message rather than a value:
+     * `'password.required' => 'Vul je wachtwoord in'`. Curated and never
+     * complete; a rule missing here costs a readable message, never a secret.
+     * The key must be quoted, as a FormRequest's `messages()` writes it, so
+     * `token.min=abc` in a query string is still a pair.
+     */
+    private const array VALIDATION_RULES = [
+        'required', 'required_if', 'required_with', 'required_without', 'confirmed',
+        'min', 'max', 'size', 'between', 'string', 'regex', 'not_regex', 'same',
+        'different', 'current_password', 'alpha', 'alpha_num', 'alpha_dash', 'email',
+        'in', 'not_in', 'numeric', 'integer', 'uncompromised', 'mixed_case', 'letters',
+        'numbers', 'symbols', 'nullable', 'sometimes', 'filled', 'present', 'prohibited',
+        'unique', 'exists', 'lowercase', 'uppercase', 'ascii',
+    ];
+
+    /**
      * The constructor call a subclass of `PDO` or `mysqli` passes its
      * credentials on with, read as a {@see CREDENTIAL_CALLS} entry only while
      * {@see redactSource()} reads lines that declare such a subclass. Anywhere
@@ -407,8 +424,8 @@ final class SecretTextRedactor
         $separator = '(?>=>|:(?!:)|!==?|===?|\.=|\?\?=|\?\?|\?:|=)';
 
         return $this->anchorPatterns[$variant] = '/(?<![\w.\-])(?:'
-            .'["\']?'.$key.'["\']?\]?\s*+'.$separator.'\s*+'
-            .'|(?<comma>["\']'.$key.'["\']\s*+,\s*+)(?=["\'])'
+            .'["\']?'.$key.'["\']?'.$this->messageKeyGuard().'\]?\s*+'.$separator.'\s*+'
+            .'|(?<comma>["\']'.$key.'["\']'.$this->messageKeyGuard().'\s*+,\s*+)(?=["\'])'
             .')|(?<!\w)(?<call>'.$call.')/i';
     }
 
@@ -430,6 +447,16 @@ final class SecretTextRedactor
             '(?:\w{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')\w*+(?<!exception|error)'
                 .'|(?:'.implode('|', $this->credentialCalls()).')\s*+)\(',
         ];
+    }
+
+    /**
+     * A lookbehind, placed just past a key's closing quote, that refuses a
+     * quoted key whose last dot segment is a {@see VALIDATION_RULES} entry.
+     * Its alternatives are fixed-length words, so it costs a constant per key.
+     */
+    private function messageKeyGuard(): string
+    {
+        return '(?<!\.(?:'.implode('|', self::VALIDATION_RULES).')["\'])';
     }
 
     /**
@@ -986,7 +1013,7 @@ final class SecretTextRedactor
         }
 
         [$key, $call] = $this->keyAndCallPatterns();
-        $assignment = '(?<![\w.\-])["\']?'.$key.'["\']?\]?\s*+(?:=>|=|\.=|\?\?=)';
+        $assignment = '(?<![\w.\-])["\']?'.$key.'["\']?'.$this->messageKeyGuard().'\]?\s*+(?:=>|=|\.=|\?\?=)';
 
         return $this->carryPatterns[$variant] = [
             'value' => '/'.$assignment.'\s*+$/i',
