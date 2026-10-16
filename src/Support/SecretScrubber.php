@@ -6,6 +6,7 @@ namespace Ranetrace\Php\Support;
 
 use Ranetrace\Php\Config;
 use Throwable;
+use UnexpectedValueException;
 
 /**
  * Redacts values stored under sensitive keys before telemetry leaves the host.
@@ -89,12 +90,24 @@ final class SecretScrubber implements Scrubber
     private const int MAX_KEY_PREFIX = 64;
 
     /**
+     * What ends a bare token: the whitespace `\s` means, a quote, and the
+     * characters that end a pair in a query string, an argument list or an
+     * array.
+     */
+    private const string BARE_VALUE_STOPS = "\"' \t\n\v\f\r,;&)]}";
+
+    /**
      * Built-in fragments merged with the user-configured extensions, resolved
      * once per instance.
      *
      * @var array<int, string>|null
      */
     private ?array $fragments = null;
+
+    /**
+     * {@see anchorPattern()}, built once per instance.
+     */
+    private ?string $anchorPattern = null;
 
     public function __construct(
         private readonly Config $config,
@@ -347,9 +360,112 @@ final class SecretScrubber implements Scrubber
      * traces): it catches query-string-like and key/value leakage, but not
      * positional secret arguments that carry no key.
      *
-     * Three details of the pattern are load-bearing, all of them about cost. It
-     * runs on stack traces and log messages, which are the longest, least
-     * structured strings the SDK ever touches, and the naive spelling
+     * A regex finds each key and its separator (the anchor), and the value
+     * after it is read by hand, because a code value has to balance brackets
+     * and one pattern cannot do that cheaply. See {@see anchorPattern()} for
+     * what an anchor is and why the pattern stays linear.
+     *
+     * The value after an anchor takes one of three shapes:
+     *
+     * - A quoted value is redacted whole. It runs to its matching closing
+     *   quote, past spaces, commas and the other quote, with backslash escapes
+     *   skipped. Without a closing quote it runs to the end of the line, never
+     *   further. An empty one (`''`) holds nothing and is left alone.
+     * - A code value keeps its code byte-for-byte and loses only the bodies of
+     *   the string literals inside it, since in `'password' => Hash::make('x')`
+     *   the literal is the secret and the rest is what makes the line worth
+     *   reading. {@see startsCodeValue()} says what starts one, and
+     *   {@see redactCodeValue()} where it ends.
+     * - Anything else is a bare token, redacted up to whitespace, a quote or
+     *   `,;&)]}`, after an optional `Bearer`, `Basic` or `Digest` scheme that is
+     *   kept. `true`, `null`, a number or a constant is a bare token too: it is
+     *   redacted, which costs nothing readable and needs no list of literals.
+     *
+     * Fails closed anyway. PCRE can still give up (a pathological input, a
+     * lowered `pcre.backtrack_limit`), and returning the input then would ship
+     * the very string we were asked to redact, so the whole value becomes the
+     * placeholder instead: losing the string beats leaking it. The give-up is
+     * written to the internal log so a scrubber that has started swallowing
+     * strings is visible rather than silent.
+     */
+    public function scrubString(string $value): string
+    {
+        if ($value === '') {
+            return $value;
+        }
+
+        try {
+            return $this->scrubText($value);
+        } catch (UnexpectedValueException $failure) {
+            $this->log->warning('Secret scrubbing of a free-form string failed, so the whole string was redacted.', [
+                'error' => $failure->getMessage(),
+                'length' => mb_strlen($value),
+            ]);
+
+            return self::REDACTION;
+        }
+    }
+
+    /**
+     * {@see scrubString()} without the fail-closed wrapper.
+     *
+     * Offsets here are byte offsets, as PCRE reports them, hence `8bit` on
+     * every length and substring. Every boundary the scrubber cuts at is an
+     * ASCII character, so a multibyte character is never split.
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function scrubText(string $text): string
+    {
+        $length = mb_strlen($text, '8bit');
+        $scrubbed = '';
+        $offset = 0;
+
+        while ($offset < $length) {
+            $found = preg_match($this->anchorPattern(), $text, $matches, PREG_OFFSET_CAPTURE | PREG_UNMATCHED_AS_NULL, $offset);
+
+            if ($found === false) {
+                throw new UnexpectedValueException(preg_last_error_msg());
+            }
+
+            if ($found === 0) {
+                break;
+            }
+
+            $anchorEnd = $matches[0][1] + mb_strlen((string) $matches[0][0], '8bit');
+            $value = ($matches['comma'][1] ?? -1) >= 0
+                ? $this->redactQuotedValue($text, $anchorEnd)
+                : $this->redactValue($text, $anchorEnd);
+
+            $scrubbed .= mb_substr($text, $offset, $anchorEnd - $offset, '8bit');
+            $offset = $anchorEnd;
+
+            if ($value !== null) {
+                [$replacement, $offset] = $value;
+                $scrubbed .= $replacement;
+            }
+        }
+
+        return $scrubbed.mb_substr($text, $offset, null, '8bit');
+    }
+
+    /**
+     * The pattern that finds where a secret value starts: a sensitive key and
+     * the separator after it.
+     *
+     * - A key is a token of `[\w.\-]` holding a sensitive fragment, optionally
+     *   quoted: `password=`, `"api_key":`, `'token' =>`.
+     * - The separator is `=>`, `:`, `=`, `.=`, `??=` or a comparison (`==`,
+     *   `===`, `!=`, `!==`), held atomically so `=>` can never be taken as `=`
+     *   followed by a value of `>`. `::` is not a separator, so
+     *   `PersonalAccessToken::findToken()` stays readable.
+     * - A quoted key followed by `,` and a quote is an anchor too:
+     *   `define('STRIPE_SECRET', '...')`, `env('API_KEY', '...')`. Its value is
+     *   read as a quoted value only.
+     *
+     * Three details are load-bearing, all of them about cost. It runs on stack
+     * traces and log messages, which are the longest, least structured strings
+     * the SDK ever touches, and the naive spelling
      * `[\w.\-]*(?:fragment)[\w.\-]*` is quadratic on a long word-character run:
      * every start position re-tries every prefix length. On a 50k run that is
      * billions of steps, which PCRE ends by hitting its backtrack limit.
@@ -358,41 +474,18 @@ final class SecretScrubber implements Scrubber
      *   long word run is entered once instead of once per character. This is
      *   what turns the scan linear.
      * - The prefix is bounded to {@see MAX_KEY_PREFIX} characters. It exists to
-     *   keep the full key name in group 1, and no real key name (`stripe_`,
+     *   keep the full key name in the anchor, and no real key name (`stripe_`,
      *   `user_api_`) comes close. A sensitive fragment buried further than that
      *   into one unbroken token is not recognised, which is the one case this
      *   spelling gives up on deliberately.
-     * - The suffix is possessive. The separator characters (`"`, `'`, space,
-     *   `=`, `:`) are all outside `[\w.\-]`, so giving word characters back can
-     *   never help it match: the backtracking it does is pure waste.
-     *
-     * The rest of the pattern is about the shapes a source line around a frame
-     * takes, since those lines are scrubbed here too:
-     *
-     * - The separator is `=>`, `:`, `=`, or a comparison (`==`, `===`, `!=`,
-     *   `!==`), held atomically so a failed value after `=>` can never retry
-     *   `=` alone and take the `>` for the value. `::` is not a separator, so
-     *   `PersonalAccessToken::findToken()` stays readable.
-     * - A quoted key followed by `,` and a quoted value is a pair as well:
-     *   `define('STRIPE_SECRET', '...')`, `env('API_KEY', '...')`.
-     * - A quoted value runs to its matching closing quote, past spaces, commas
-     *   and the other quote, with backslash escapes skipped. Without a closing
-     *   quote it runs to the end of the line, never further. Its body is
-     *   possessive, so a long or unterminated value costs one pass.
-     * - An unquoted value ends at whitespace, a quote or `,;&)}`, after an
-     *   optional `Bearer`, `Basic` or `Digest` scheme that is kept.
-     *
-     * Fails closed anyway. PCRE can still give up (a pathological input, a
-     * lowered `pcre.backtrack_limit`, bad UTF-8), and returning the input then
-     * would ship the very string we were asked to redact, so the whole value
-     * becomes the placeholder instead: losing the string beats leaking it. The
-     * give-up is written to the internal log so a scrubber that has started
-     * swallowing strings is visible rather than silent.
+     * - Every other repeat is possessive. The characters that can follow a key
+     *   are all outside `[\w.\-]`, so giving characters back can never help it
+     *   match: the backtracking it would do is pure waste.
      */
-    public function scrubString(string $value): string
+    private function anchorPattern(): string
     {
-        if ($value === '') {
-            return $value;
+        if ($this->anchorPattern !== null) {
+            return $this->anchorPattern;
         }
 
         $alternation = implode('|', array_map(
@@ -401,31 +494,223 @@ final class SecretScrubber implements Scrubber
         ));
 
         $key = '[\w.\-]{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')[\w.\-]*+';
-        $separator = '(?>=>|:(?!:)|!==?|===?|=)';
-        $quotedValue = '(["\'])(?:[^"\'\\\\\r\n]++|\\\\.|(?!\2)["\'])++(\2)?';
-        $bareValue = '[^"\'\s,;&)}]++';
+        $separator = '(?>=>|:(?!:)|!==?|===?|\.=|\?\?=|=)';
 
-        // Branch reset: in both branches group 1 is everything kept before the
-        // value, group 2 its opening quote and group 3 its closing quote.
-        $pattern = '/(?<![\w.\-])(?|'
-            .'(["\']?'.$key.'["\']?\s*+'.$separator.'\s*+(?:(?:bearer|basic|digest)\s++)?)(?:'.$quotedValue.'|'.$bareValue.')'
-            .'|(["\']'.$key.'["\']\s*+,\s*+)'.$quotedValue
+        return $this->anchorPattern = '/(?<![\w.\-])(?:'
+            .'["\']?'.$key.'["\']?\s*+'.$separator.'\s*+'
+            .'|(?<comma>["\']'.$key.'["\']\s*+,\s*+)(?=["\'])'
             .')/i';
+    }
 
-        $result = preg_replace_callback($pattern, static function (array $matches): string {
-            return $matches[1].($matches[2] ?? '').self::REDACTION.($matches[3] ?? '');
-        }, $value);
+    /**
+     * The redacted form of the value that starts at $offset, and the offset
+     * just past it, or null when nothing there is a value.
+     *
+     * @return array{0: string, 1: int}|null
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function redactValue(string $text, int $offset): ?array
+    {
+        $scheme = $this->matchAt('/\G(?:bearer|basic|digest)\s++(?![,;&)\]}]|$)/i', $text, $offset);
+        $start = $offset + mb_strlen($scheme, '8bit');
+        $first = $text[$start] ?? '';
 
-        if ($result === null) {
-            $this->log->warning('Secret scrubbing of a free-form string failed, so the whole string was redacted.', [
-                'error' => preg_last_error_msg(),
-                'length' => mb_strlen($value),
-            ]);
-
-            return self::REDACTION;
+        if ($first === '') {
+            return null;
         }
 
-        return $result;
+        if ($first === '"' || $first === "'") {
+            $quoted = $this->redactQuotedValue($text, $start);
+
+            return $quoted === null ? null : [$scheme.$quoted[0], $quoted[1]];
+        }
+
+        $heredoc = $this->matchAt('/\G<<<[ \t]*+(["\']?)[A-Za-z_]\w*+\1/', $text, $start);
+
+        if ($heredoc !== '') {
+            return [$scheme.$heredoc, $start + mb_strlen($heredoc, '8bit')];
+        }
+
+        if ($this->startsCodeValue($text, $start)) {
+            [$code, $end] = $this->redactCodeValue($text, $start, false);
+
+            return [$scheme.$code, $end];
+        }
+
+        $bareLength = strcspn($text, self::BARE_VALUE_STOPS, $start);
+
+        if ($bareLength === 0) {
+            return null;
+        }
+
+        return [$scheme.self::REDACTION, $start + $bareLength];
+    }
+
+    /**
+     * Whether a code value starts at $offset: a variable, an opening bracket,
+     * an attribute, `new`, `clone`, `fn`, `function`, `static` or `match`, or a name
+     * (namespaced with `\` or chained with `.`) directly followed by `(`, `::`,
+     * `->` or `?->`, optionally behind one `@` or `!`.
+     *
+     * A `$` counts only before a character a variable name can start with, so
+     * a bcrypt hash such as `$2y$10$...` stays a bare token and is redacted.
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function startsCodeValue(string $text, int $offset): bool
+    {
+        $name = '[A-Za-z_\x80-\xff][\w\x80-\xff]*+';
+
+        return $this->matchAt(
+            '/\G[@!]?+(?:\$[A-Za-z_\x80-\xff{$]|[\[({]|#\[|(?:new|clone|fn|function|static|match)(?=[\s(])'
+            .'|\\\\?'.$name.'(?:[\\\\.]'.$name.')*+(?:\(|::|\??->))/i',
+            $text,
+            $offset,
+        ) !== '';
+    }
+
+    /**
+     * A code value with the body of every string literal in it redacted, and
+     * the offset just past it.
+     *
+     * The value ends at the end of its line, at a closing bracket that has no
+     * opening one inside the value, at a `,` (unless $insideCall) or `;` outside
+     * every bracket, or where a `//`, `/*` or `#` comment or a `?>` starts. A
+     * literal runs as a quoted value does, so a comma, bracket or comment
+     * marker inside one is never taken for the end. This is one pass over the
+     * value: each step jumps to the next character that can matter.
+     *
+     * @return array{0: string, 1: int}
+     */
+    private function redactCodeValue(string $text, int $offset, bool $insideCall): array
+    {
+        $length = mb_strlen($text, '8bit');
+        $redacted = '';
+        $kept = $offset;
+        $depth = 0;
+        $position = $offset;
+
+        while (true) {
+            $position += strcspn($text, "\"'()[]{},;/#?\r\n", $position);
+
+            if ($position >= $length) {
+                break;
+            }
+
+            $character = $text[$position];
+            $next = $text[$position + 1] ?? '';
+
+            if ($character === '"' || $character === "'") {
+                [$bodyEnd, $closed] = $this->quotedBodyEnd($text, $position);
+
+                if ($bodyEnd > $position + 1) {
+                    $redacted .= mb_substr($text, $kept, $position + 1 - $kept, '8bit').self::REDACTION;
+                    $kept = $bodyEnd;
+                }
+
+                $position = $closed ? $bodyEnd + 1 : $bodyEnd;
+
+                continue;
+            }
+
+            if ($character === "\r" || $character === "\n") {
+                break;
+            }
+
+            if ($character === '(' || $character === '[' || $character === '{') {
+                $depth++;
+            } elseif ($character === ')' || $character === ']' || $character === '}') {
+                if ($depth === 0) {
+                    break;
+                }
+
+                $depth--;
+            } elseif ($depth === 0 && ($character === ';' || ($character === ',' && ! $insideCall))) {
+                break;
+            } elseif (($character === '/' && ($next === '/' || $next === '*'))
+                || ($character === '#' && $next !== '[')
+                || ($character === '?' && $next === '>')) {
+                break;
+            }
+
+            $position++;
+        }
+
+        return [$redacted.mb_substr($text, $kept, $position - $kept, '8bit'), $position];
+    }
+
+    /**
+     * A quoted value that starts at $offset, redacted whole with its quotes
+     * kept, and the offset just past it, or null when its body is empty.
+     *
+     * @return array{0: string, 1: int}|null
+     */
+    private function redactQuotedValue(string $text, int $offset): ?array
+    {
+        [$bodyEnd, $closed] = $this->quotedBodyEnd($text, $offset);
+
+        if ($bodyEnd === $offset + 1) {
+            return null;
+        }
+
+        $quote = $text[$offset];
+
+        return $closed
+            ? [$quote.self::REDACTION.$quote, $bodyEnd + 1]
+            : [$quote.self::REDACTION, $bodyEnd];
+    }
+
+    /**
+     * Where the body of the string literal opened at $offset ends, and whether
+     * a closing quote ends it. A backslash escapes the character after it; the
+     * body ends unclosed at a line break or the end of the string.
+     *
+     * @return array{0: int, 1: bool}
+     */
+    private function quotedBodyEnd(string $text, int $offset): array
+    {
+        $quote = $text[$offset];
+        $length = mb_strlen($text, '8bit');
+        $position = $offset + 1;
+
+        while (true) {
+            $position += strcspn($text, $quote."\\\r\n", $position);
+
+            if ($position >= $length) {
+                return [$length, false];
+            }
+
+            $character = $text[$position];
+
+            if ($character === $quote) {
+                return [$position, true];
+            }
+
+            $escaped = $text[$position + 1] ?? '';
+
+            if ($character !== '\\' || $escaped === '' || $escaped === "\r" || $escaped === "\n") {
+                return [$position, false];
+            }
+
+            $position += 2;
+        }
+    }
+
+    /**
+     * What $pattern, anchored with `\G`, matches at $offset, or `''`.
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function matchAt(string $pattern, string $text, int $offset): string
+    {
+        $found = preg_match($pattern, $text, $matches, 0, $offset);
+
+        if ($found === false) {
+            throw new UnexpectedValueException(preg_last_error_msg());
+        }
+
+        return $found === 1 ? $matches[0] : '';
     }
 
     /**

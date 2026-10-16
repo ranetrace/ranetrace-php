@@ -351,6 +351,81 @@ test('scrubString redacts the credential of an authorization header, not its sch
     'scheme alone' => ['Authorization: Bearer', 'Authorization: [REDACTED]'],
 ]);
 
+test('scrubString keeps a code value after a sensitive key and redacts only its literals', function (string $line, string $expected): void {
+    // An unquoted value used to run to the first quote or bracket, which cut
+    // into the code, garbled it and left the literal after the cut, the real
+    // secret, as written.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'hashing a literal' => ["'password' => Hash::make('x'),", "'password' => Hash::make('[REDACTED]'),"],
+    'a function on a literal' => ["'password' => bcrypt('x'),", "'password' => bcrypt('[REDACTED]'),"],
+    'a method chain on a literal' => ["\$secret = \$this->secrets->get('a b');", "\$secret = \$this->secrets->get('[REDACTED]');"],
+    'validation rules' => ["'password' => ['required', 'confirmed'],", "'password' => ['[REDACTED]', '[REDACTED]'],"],
+    'a namespaced call' => ["\$token = \\App\\Tokens::issue('t');", "\$token = \\App\\Tokens::issue('[REDACTED]');"],
+    'new' => ["\$secret = new Secret('s', \$x);", "\$secret = new Secret('[REDACTED]', \$x);"],
+    'a cast' => ["\$token = (string) 'abc';", "\$token = (string) '[REDACTED]';"],
+    'a json object' => ['{"token": {"value": "abc"}, "user": "rutger"}', '{"token": {"[REDACTED]": "[REDACTED]"}, "user": "rutger"}'],
+    'a silenced call' => ["\$secret = @file_get_contents('/run/secret');", "\$secret = @file_get_contents('[REDACTED]');"],
+    'a concatenation' => ["\$token = \$prefix.'abc';", "\$token = \$prefix.'[REDACTED]';"],
+    'a null-coalescing default' => ["'password' => \$input ?? 'fallback',", "'password' => \$input ?? '[REDACTED]',"],
+    'an escaped quote inside a literal' => ["'password' => Hash::make('it\\'s, really'),", "'password' => Hash::make('[REDACTED]'),"],
+    'an empty literal' => ["'password' => Hash::make(''),", "'password' => Hash::make(''),"],
+    'a heredoc opener' => ["\$secret = <<<'EOT'", "\$secret = <<<'EOT'"],
+]);
+
+test('scrubString leaves a code value with no literal in it byte-for-byte', function (string $line): void {
+    expect(scrubber()->scrubString($line))->toBe($line);
+})->with([
+    'a method call' => ["'remember_token' => \$user->getRememberToken(),"],
+    'a static call on a number' => ['$token = Str::random(60);'],
+    'a variable' => ["'token' => \$token,"],
+    'a closure' => ["'token' => fn () => \$this->token,"],
+    'a nullsafe chain' => ['$secret = $user?->secret;'],
+    'a class constant' => ["'token' => self::DEFAULT_TOKEN,"],
+]);
+
+test('a code value ends at a comma or semicolon outside its brackets, so the next pair keeps its value', function (): void {
+    expect(scrubber()->scrubString("'token' => \$x, 'name' => 'Bob'"))->toBe("'token' => \$x, 'name' => 'Bob'")
+        ->and(scrubber()->scrubString("['token' => \$x], 'Bob'"))->toBe("['token' => \$x], 'Bob'")
+        ->and(scrubber()->scrubString("\$token = \$x; \$name = 'Bob';"))->toBe("\$token = \$x; \$name = 'Bob';")
+        ->and(scrubber()->scrubString("connect(token: \$t, name: 'Bob')"))->toBe("connect(token: \$t, name: 'Bob')")
+        ->and(scrubber()->scrubString("'password' => Hash::make('x', ['rounds' => 12]), 'name' => 'Bob'"))
+        ->toBe("'password' => Hash::make('[REDACTED]', ['[REDACTED]' => 12]), 'name' => 'Bob'");
+});
+
+test('a code value ends where a comment or a closing php tag starts', function (string $line, string $expected): void {
+    // A quote inside a trailing comment is prose, not a literal of the value.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'a line comment' => ["'token' => \$x // the user's token", "'token' => \$x // the user's token"],
+    'a hash comment' => ["'token' => \$x # the user's token", "'token' => \$x # the user's token"],
+    'a block comment' => ["'token' => \$x /* it's */", "'token' => \$x /* it's */"],
+    'a closing tag' => ["<?php \$token = \$x ?><p>'Bob'</p>", "<?php \$token = \$x ?><p>'Bob'</p>"],
+    'an attribute is not a comment' => ["'token' => #[Sensitive] fn () => 'x',", "'token' => #[Sensitive] fn () => '[REDACTED]',"],
+    'a url inside a literal' => ["'token' => \$base.'https://x.test/a',", "'token' => \$base.'[REDACTED]',"],
+]);
+
+test('a code value stops at the end of its line, so the next line of a trace is untouched', function (): void {
+    expect(scrubber()->scrubString("token: \$x->get(\n#1 /app/Foo.php(12): bar('baz')"))
+        ->toBe("token: \$x->get(\n#1 /app/Foo.php(12): bar('baz')")
+        ->and(scrubber()->scrubString("'password' => Hash::make('abc\nnext 'line'"))
+        ->toBe("'password' => Hash::make('[REDACTED]\nnext 'line'");
+});
+
+test('scrubString still redacts a bare token whole, whatever it spells', function (string $line, string $expected): void {
+    // true, null, numbers and constants stay bare tokens: they are redacted as
+    // before, which hides nothing a reader needs.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'a word' => ['password=hunter2', 'password=[REDACTED]'],
+    'null' => ["'token' => null,", "'token' => [REDACTED],"],
+    'a number' => ['$token = 42;', '$token = [REDACTED];'],
+    'a constant' => ["'secret' => SECRET_VALUE,", "'secret' => [REDACTED],"],
+    'a bcrypt hash' => ['password=$2y$10$abcdefghijklmnopqrstuv', 'password=[REDACTED]'],
+    'punctuation first' => ['password=!hunter2 next', 'password=[REDACTED] next'],
+    'inside brackets' => ['[token=abc]', '[token=[REDACTED]]'],
+]);
+
 test('scrubString keeps multibyte text whole and valid', function (): void {
     $quoted = scrubber()->scrubString("\$password = 'wachtwoord met ü en 日本';");
     $bare = scrubber()->scrubString('token=日本語 rest ünchanged');
@@ -359,6 +434,42 @@ test('scrubString keeps multibyte text whole and valid', function (): void {
         ->and($bare)->toBe('token=[REDACTED] rest ünchanged')
         ->and(mb_check_encoding($bare, 'UTF-8'))->toBeTrue()
         ->and(scrubber()->scrubString('Gebruiker « ü » heeft geen 日本 rechten'))->toBe('Gebruiker « ü » heeft geen 日本 rechten');
+});
+
+test('scrubString keeps multibyte keys and values whole under a UTF-8 locale', function (): void {
+    // The pattern has no `u` flag, and outside the C locale PHP builds PCRE's
+    // character tables from the locale, where `\s` and `\w` can match single
+    // bytes of a multibyte character (0xA0 is a space in en_US.UTF-8, and the
+    // second byte of `à`). A value cut on such a byte ends up invalid UTF-8.
+    $previous = setlocale(LC_CTYPE, '0');
+
+    if (setlocale(LC_CTYPE, 'en_US.UTF-8', 'C.UTF-8') === false) {
+        $this->markTestSkipped('no UTF-8 locale available');
+    }
+
+    try {
+        $results = [
+            scrubber()->scrubString("'pässwörd_token' => 'geheimnis ü'"),
+            scrubber()->scrubString("\$token = 'ü€𝄞';"),
+            scrubber()->scrubString('token=àà rest'),
+            scrubber()->scrubString('password: 𝄞à'),
+            scrubber()->scrubString("'password' => Hash::make('à'), 'naam' => 'Zoë à'"),
+        ];
+    } finally {
+        setlocale(LC_CTYPE, $previous === false ? 'C' : $previous);
+    }
+
+    expect($results)->toBe([
+        "'pässwörd_token' => '[REDACTED]'",
+        "\$token = '[REDACTED]';",
+        'token=[REDACTED] rest',
+        'password: [REDACTED]',
+        "'password' => Hash::make('[REDACTED]'), 'naam' => 'Zoë à'",
+    ]);
+
+    foreach ($results as $result) {
+        expect(mb_check_encoding($result, 'UTF-8'))->toBeTrue();
+    }
 });
 
 test('scrubDeep redacts a sensitive query param in a relative URL value', function (): void {
@@ -463,6 +574,31 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'many keys without a separator',
         str_repeat("'token' ", 10_000),
         str_repeat("'token' ", 10_000),
+    ],
+    'deeply nested code value' => [
+        'deeply nested code value',
+        "'password' => ".str_repeat('[', 25_000).str_repeat(']', 25_000).',',
+        "'password' => ".str_repeat('[', 25_000).str_repeat(']', 25_000).',',
+    ],
+    'a code value of many literals' => [
+        'a code value of many literals',
+        "'password' => f(".str_repeat("('a', ", 50_000),
+        "'password' => f(".str_repeat("('[REDACTED]', ", 50_000),
+    ],
+    'an unterminated quote inside a code value' => [
+        'an unterminated quote inside a code value',
+        "'password' => Hash::make('".str_repeat('a, ', 20_000),
+        "'password' => Hash::make('[REDACTED]",
+    ],
+    'a long chain of names with no call' => [
+        'a long chain of names with no call',
+        'token='.str_repeat('a.', 25_000),
+        'token=[REDACTED]',
+    ],
+    'many code values in a row' => [
+        'many code values in a row',
+        str_repeat("'token' => \$x, ", 5_000),
+        str_repeat("'token' => \$x, ", 5_000),
     ],
 ]);
 
