@@ -15,10 +15,11 @@ use UnexpectedValueException;
  * It catches `key=value`, `key: value` and `key => value` pairs whose key
  * holds a sensitive fragment, query-string-like leakage and the arguments of a
  * call whose name holds one or that is on {@see CREDENTIAL_CALLS}, but not a
- * positional secret argument to any other call. A regex finds each key and its separator (the anchor), and the value
- * after it is read by hand, because a code value has to balance brackets and
- * one pattern cannot do that cheaply. See {@see anchorPattern()} for what an
- * anchor is and why the pattern stays linear.
+ * positional secret argument to any other call. A regex finds each key and
+ * its separator (the anchor), and the value after it is read by hand, because
+ * a code value has to balance brackets and one pattern cannot do that
+ * cheaply. See {@see anchorPattern()} for what an anchor is and why the
+ * pattern stays linear.
  *
  * The value after an anchor takes one of these shapes:
  *
