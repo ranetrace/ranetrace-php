@@ -31,8 +31,9 @@ use UnexpectedValueException;
  * costs that one window too.
  *
  * Every line is repaired to valid UTF-8, then the window is scrubbed for
- * secrets as a whole, so one that spans lines is caught, and only then is each
- * line capped, so a secret cannot survive by straddling the cap.
+ * secrets as a whole together with the lines above it (see
+ * {@see LOOKBEHIND_LINES}), so one that spans lines is caught, and only then
+ * is each line capped, so a secret cannot survive by straddling the cap.
  *
  * @internal
  */
@@ -54,6 +55,16 @@ final class SourceReader
     public const int WINDOW_LINES = 11;
 
     private const int LINES_BEFORE = 5;
+
+    /**
+     * The lines above a window that are scrubbed with it and then dropped, so
+     * a key, heredoc opener or call bracket that opens above the window's first
+     * line still has its value redacted inside the window. A construct opened
+     * further up is not caught, except a private key body, which the scrubber
+     * recognises line by line. It is bounded because every window of every
+     * error pays for it, and no realistic secret spans further.
+     */
+    private const int LOOKBEHIND_LINES = 50;
 
     private const string TRUNCATION_SUFFIX = '... (truncated)';
 
@@ -169,7 +180,10 @@ final class SourceReader
         // Clamped at the start of the file, so line 3 shows lines 1 to 11.
         $start = max(0, $line - self::LINES_BEFORE - 1);
 
-        $window = $this->scrubbedLines(array_values(array_slice($lines, $start, self::WINDOW_LINES)));
+        $lookbehindStart = max(0, $start - self::LOOKBEHIND_LINES);
+        $lookbehind = $start - $lookbehindStart;
+
+        $window = $this->scrubbedLines(array_values(array_slice($lines, $lookbehindStart, $lookbehind + self::WINDOW_LINES)), $lookbehind);
 
         $context = $this->dedent(implode('', $window));
 
@@ -186,16 +200,17 @@ final class SourceReader
     }
 
     /**
-     * Repair the lines of a window, scrub them together and cap each one,
+     * Repair the lines of a window and the $lookbehind lines given above it,
+     * scrub them together, then drop the lookbehind and cap each window line,
      * preserving every trailing newline so the line structure survives. The
      * cap guards against a minified or generated line bloating the item.
      *
      * @param  list<string>  $lines
      * @return list<string>
      */
-    private function scrubbedLines(array $lines): array
+    private function scrubbedLines(array $lines, int $lookbehind): array
     {
-        if ($lines === []) {
+        if (count($lines) <= $lookbehind) {
             return [];
         }
 
@@ -214,15 +229,17 @@ final class SourceReader
             throw new UnexpectedValueException('The scrubber returned '.count($scrubbed).' lines for a window of '.count($contents));
         }
 
-        foreach ($scrubbed as $index => $content) {
+        $window = [];
+
+        foreach (array_slice($scrubbed, $lookbehind, preserve_keys: true) as $index => $content) {
             if (mb_strlen($content) > self::MAX_LINE_LENGTH) {
                 $content = mb_substr($content, 0, self::MAX_LINE_LENGTH).self::TRUNCATION_SUFFIX;
             }
 
-            $scrubbed[$index] = $content.$newlines[$index];
+            $window[] = $content.$newlines[$index];
         }
 
-        return $scrubbed;
+        return $window;
     }
 
     /**
