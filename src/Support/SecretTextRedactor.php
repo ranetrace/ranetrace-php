@@ -156,6 +156,12 @@ final class SecretTextRedactor
     ];
 
     /**
+     * The longest comment {@see declaresCredentialSubclass()} skips between
+     * `extends` and a class name.
+     */
+    private const int MAX_SKIPPED_COMMENT = 200;
+
+    /**
      * The constructor call a subclass of `PDO` or `mysqli` passes its
      * credentials on with, read as a {@see CREDENTIAL_CALLS} entry only while
      * {@see redactSource()} reads lines that declare such a subclass. Anywhere
@@ -276,7 +282,11 @@ final class SecretTextRedactor
      * Whether the lines declare a class that extends `PDO` or `mysqli`, the
      * global class itself and not one whose name merely starts the same. The
      * lines are read as one text, so the class name can sit on a line after
-     * `extends`, with blank lines between; a comment between is not skipped.
+     * `extends`, with blank lines and `//`, `#` or `/* *\/` comments between.
+     * A name inside a comment is not the class. Each comment is bounded to
+     * {@see MAX_SKIPPED_COMMENT} characters, so a comment that never closes
+     * costs a bounded scan per `extends` rather than one to the end of the
+     * text.
      *
      * @param  list<string>  $lines
      *
@@ -284,7 +294,9 @@ final class SecretTextRedactor
      */
     private function declaresCredentialSubclass(array $lines): bool
     {
-        $found = preg_match('/(?<![\w$])extends\s++\\\\?+(?:pdo|mysqli)(?![\w\\\\])/i', implode("\n", $lines));
+        $limit = self::MAX_SKIPPED_COMMENT;
+        $between = '(?:\s++|(?://|#)[^\n]{0,'.$limit.'}+(?=\n|$)|/\*(?:[^*]|\*(?!/)){0,'.$limit.'}+\*/)++';
+        $found = preg_match('~(?<![\w$])extends'.$between.'\\\\?+(?:pdo|mysqli)(?![\w\\\\])~i', implode("\n", $lines));
 
         if ($found === false) {
             throw new UnexpectedValueException(preg_last_error_msg());

@@ -748,6 +748,18 @@ test('scrubSource reads parent::__construct as a credential call in a PDO or mys
         ['class Db extends', '', 'mysqli {', "parent::__construct('db', 'root', 'pw');"],
         ['class Db extends', '', 'mysqli {', "parent::__construct('[REDACTED]', '[REDACTED]', '[REDACTED]');"],
     ],
+    'a line comment after extends' => [
+        ['class Db extends // the connection', '    \\PDO', "parent::__construct('root', 'pw');"],
+        ['class Db extends // the connection', '    \\PDO', "parent::__construct('[REDACTED]', '[REDACTED]');"],
+    ],
+    'a block comment after extends' => [
+        ['class Db extends /* base */ PDO', "parent::__construct('root', 'pw');"],
+        ['class Db extends /* base */ PDO', "parent::__construct('[REDACTED]', '[REDACTED]');"],
+    ],
+    'a hash comment after extends' => [
+        ['class Db extends # note', 'mysqli', "parent::__construct('db', 'root');"],
+        ['class Db extends # note', 'mysqli', "parent::__construct('[REDACTED]', '[REDACTED]');"],
+    ],
     'the extends line far above the call' => [
         ['class Db extends PDO', ...array_fill(0, 40, '    // filler'), "parent::__construct(\$dsn, 'root', 'pw');"],
         ['class Db extends PDO', ...array_fill(0, 40, '    // filler'), "parent::__construct(\$dsn, '[REDACTED]', '[REDACTED]');"],
@@ -761,6 +773,8 @@ test('scrubSource leaves parent::__construct readable outside a PDO or mysqli su
     'a PDO exception subclass' => [['class DbFailed extends PDOException', "parent::__construct('Connection refused.');"]],
     'a class whose name starts with PDO' => [['class Db extends PDOWrapper', "parent::__construct('root', 'pw');"]],
     'a namespaced PDO' => [['class Db extends App\\PDO', "parent::__construct('root', 'pw');"]],
+    'PDO inside a block comment' => [['class Db extends /* PDO */ Model', "parent::__construct('root', 'pw');"]],
+    'PDO inside a line comment' => [['class Db extends // PDO', '    Model', "parent::__construct('root', 'pw');"]],
     'a PDO exception on the line after extends' => [['class Failed extends', '    PDOException', "parent::__construct('Connection refused.');"]],
     'no extends line at all' => [["parent::__construct(\$dsn, 'root', 'pw');"]],
 ]);
@@ -1405,6 +1419,16 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         'every line ending in extends',
         [...array_fill(0, 10, str_repeat('x extends ', 5_000).'extends'), str_repeat(' ', 50_000).'PDOX'],
         [...array_fill(0, 10, str_repeat('x extends ', 5_000).'extends'), str_repeat(' ', 50_000).'PDOX'],
+    ],
+    'extends before comments that never close' => [
+        'extends before comments that never close',
+        [str_repeat('extends /* ', 20_000), str_repeat('extends // ', 20_000), str_repeat('extends # ', 20_000), "parent::__construct('a');"],
+        [str_repeat('extends /* ', 20_000), str_repeat('extends // ', 20_000), str_repeat('extends # ', 20_000), "parent::__construct('a');"],
+    ],
+    'extends before a long run of comment lines' => [
+        'extends before a long run of comment lines',
+        ['class Db extends', ...array_fill(0, 10, str_repeat('/* a */ ', 5_000).'// b'), "PDOX parent::__construct('a');"],
+        ['class Db extends', ...array_fill(0, 10, str_repeat('/* a */ ', 5_000).'// b'), "PDOX parent::__construct('a');"],
     ],
     'extends and long blank runs on every line' => [
         'extends and long blank runs on every line',
