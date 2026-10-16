@@ -837,7 +837,7 @@ final class SecretTextRedactor
             return [$code, $end, $open];
         }
 
-        $fallback = $this->matchAt('/\G\)[ \t]*+(?:\?\?(?!=)|\?:)[ \t]*+/', $text, $end);
+        $fallback = $this->matchAt('/(*NO_START_OPT)\G\)[ \t]*+(?:\?\?(?!=)|\?:)[ \t]*+/', $text, $end);
 
         if ($fallback !== '') {
             $after = $end + mb_strlen($fallback, '8bit');
@@ -1465,6 +1465,10 @@ final class SecretTextRedactor
 
     /**
      * What $pattern, anchored with `\G`, matches at $offset, or `''`.
+     *
+     * A pattern with a literal that every match needs after its first one
+     * starts with `(*NO_START_OPT)`. Otherwise PCRE2's JIT first looks for
+     * that literal from $offset to the end of $text, on every call.
      *
      * @throws UnexpectedValueException when PCRE gives up
      */
