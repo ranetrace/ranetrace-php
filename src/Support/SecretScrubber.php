@@ -401,15 +401,16 @@ final class SecretScrubber implements Scrubber
      *   skipped. Without a closing quote it runs to the end of the line, never
      *   further. An empty one (`''`) holds nothing and is left alone. A
      *   literal joined onto it with `.` is redacted with it.
-     * - A code value keeps its code byte-for-byte and loses only the bodies of
-     *   the string literals inside it, since in `'password' => Hash::make('x')`
-     *   the literal is the secret and the rest is what makes the line worth
-     *   reading. {@see startsCodeValue()} says what starts one, and
-     *   {@see redactCodeValue()} where it ends.
+     * - A bracketed value (`(`, `[`, `{`) is redacted whole up to its matching
+     *   closing bracket: `token=(abc)` and `{"token":{"value":"abc"}}` lose
+     *   the bracket and all it holds.
      * - Anything else is a bare token, redacted up to whitespace, a quote or
      *   `,;&)]}`, after an optional `Bearer`, `Basic` or `Digest` scheme that is
      *   kept. `true`, `null`, a number or a constant is a bare token too: it is
      *   redacted, which costs nothing readable and needs no list of literals.
+     *
+     * An unquoted value is never read as code here, see {@see redactValue()};
+     * source lines go through {@see scrubSource()}, which does.
      *
      * It fails closed. PCRE can still give up (a pathological input, a
      * lowered `pcre.backtrack_limit`), and returning the input then would ship
@@ -425,7 +426,7 @@ final class SecretScrubber implements Scrubber
         }
 
         try {
-            return $this->scrubText($value)[0];
+            return $this->scrubText($value, readsCode: false)[0];
         } catch (UnexpectedValueException $failure) {
             $this->log->warning('Secret scrubbing of a free-form string failed, so the whole string was redacted.', [
                 'error' => $failure->getMessage(),
@@ -439,8 +440,13 @@ final class SecretScrubber implements Scrubber
     /**
      * Redact the secrets in a window of consecutive source lines, read as a
      * whole so that a secret spanning lines is caught. Each line goes through
-     * {@see scrubString()}'s rules, and three things are added that only a run
-     * of lines can show:
+     * {@see scrubString()}'s rules with one difference: an unquoted value can
+     * be code, which keeps its code byte-for-byte and loses only the bodies of
+     * its string literals, since in `'password' => Hash::make('x')` the literal
+     * is the secret and the rest is what makes the line worth reading.
+     * {@see startsCodeValue()} says what starts one, and
+     * {@see redactCodeValue()} where it ends. Further additions only a run of
+     * lines can show:
      *
      * - A value on the next line. A line that ends in a sensitive key and
      *   `=>`, `=`, `.=` or `??=`, or in the `(` of a sensitive call, has the
@@ -481,7 +487,7 @@ final class SecretScrubber implements Scrubber
                     continue;
                 }
 
-                [$scrubbed[], $openQuote] = $line === '' ? ['', null] : $this->scrubText($line, $carried);
+                [$scrubbed[], $openQuote] = $line === '' ? ['', null] : $this->scrubText($line, readsCode: true, carried: $carried);
                 $carried = $this->valueCarriedOver($line);
             }
 
@@ -497,7 +503,9 @@ final class SecretScrubber implements Scrubber
     }
 
     /**
-     * {@see scrubString()} without the fail-closed wrapper. $carried, one of
+     * {@see scrubString()} and {@see scrubSource()} without the fail-closed
+     * wrapper. $readsCode says $text is source, where an unquoted value can be
+     * code; see {@see redactValue()}. $carried, one of
      * the `CARRIED_*` constants, says the start of $text is the value of a key
      * that ended the line before it. Comes back with the quote of a redacted
      * literal still open at the end of $text, or null.
@@ -510,7 +518,7 @@ final class SecretScrubber implements Scrubber
      *
      * @throws UnexpectedValueException when PCRE gives up
      */
-    private function scrubText(string $text, ?string $carried = null): array
+    private function scrubText(string $text, bool $readsCode, ?string $carried = null): array
     {
         $length = mb_strlen($text, '8bit');
         $scrubbed = '';
@@ -521,7 +529,7 @@ final class SecretScrubber implements Scrubber
             $start = strspn($text, " \t");
             $value = $carried === self::CARRIED_CALL
                 ? $this->redactCodeValue($text, $start, true)
-                : $this->redactValue($text, $start);
+                : $this->redactValue($text, $start, true);
 
             if ($value !== null) {
                 $scrubbed = mb_substr($text, 0, $start, '8bit').$value[0];
@@ -544,7 +552,7 @@ final class SecretScrubber implements Scrubber
             $value = match (true) {
                 ($matches['call'][1] ?? -1) >= 0 => $this->redactCodeValue($text, $anchorEnd, true),
                 ($matches['comma'][1] ?? -1) >= 0 => $this->redactQuotedValue($text, $anchorEnd),
-                default => $this->redactValue($text, $anchorEnd),
+                default => $this->redactValue($text, $anchorEnd, $readsCode),
             };
 
             $scrubbed .= mb_substr($text, $offset, $anchorEnd - $offset, '8bit');
@@ -578,7 +586,7 @@ final class SecretScrubber implements Scrubber
             return [mb_substr($line, 0, $indent, '8bit').$body.mb_substr($line, $bodyEnd, null, '8bit'), $quote];
         }
 
-        [$rest, $openQuote] = $this->scrubText(mb_substr($line, $bodyEnd + 1, null, '8bit'));
+        [$rest, $openQuote] = $this->scrubText(mb_substr($line, $bodyEnd + 1, null, '8bit'), readsCode: true);
 
         return [mb_substr($line, 0, $indent, '8bit').$body.$quote.$rest, $openQuote];
     }
@@ -663,11 +671,18 @@ final class SecretScrubber implements Scrubber
      * past it and the quote of a literal it leaves open, or null when nothing
      * there is a value.
      *
+     * Only in source ($readsCode) is an unquoted value read as code, keeping
+     * its code and losing its literals. In a message, a trace or a command
+     * line, `password=$Up3r`, `Bearer $TOKEN` and `token=(abc)` are not code:
+     * the shell or the developer already put the secret there. So outside
+     * source an unquoted value is redacted whole, a bracketed one up to its
+     * matching closing bracket and any other up to a bare value's end.
+     *
      * @return array{0: string, 1: int, 2: string|null}|null
      *
      * @throws UnexpectedValueException when PCRE gives up
      */
-    private function redactValue(string $text, int $offset): ?array
+    private function redactValue(string $text, int $offset, bool $readsCode): ?array
     {
         $scheme = $this->matchAt('/\G(?:bearer|basic|digest)\s++(?![,;&)\]}]|$)/i', $text, $offset);
         $start = $offset + mb_strlen($scheme, '8bit');
@@ -683,6 +698,12 @@ final class SecretScrubber implements Scrubber
             return $quoted === null ? null : [$scheme.$quoted[0], $quoted[1], $quoted[2]];
         }
 
+        if (! $readsCode) {
+            return in_array($first, ['(', '[', '{'], true)
+                ? [$scheme.self::REDACTION, $this->bracketedValueEnd($text, $start), null]
+                : $this->redactBareValue($text, $start, $scheme);
+        }
+
         $heredoc = $this->matchAt('/\G<<<[ \t]*+(["\']?)[A-Za-z_]\w*+\1/', $text, $start);
 
         if ($heredoc !== '') {
@@ -695,13 +716,69 @@ final class SecretScrubber implements Scrubber
             return [$scheme.$code, $end, $openQuote];
         }
 
-        $bareLength = strcspn($text, self::BARE_VALUE_STOPS, $start);
+        return $this->redactBareValue($text, $start, $scheme);
+    }
+
+    /**
+     * A bare token at $offset redacted whole behind $scheme, or null when
+     * there is none.
+     *
+     * @return array{0: string, 1: int, 2: null}|null
+     */
+    private function redactBareValue(string $text, int $offset, string $scheme): ?array
+    {
+        $bareLength = strcspn($text, self::BARE_VALUE_STOPS, $offset);
 
         if ($bareLength === 0) {
             return null;
         }
 
-        return [$scheme.self::REDACTION, $start + $bareLength, null];
+        return [$scheme.self::REDACTION, $offset + $bareLength, null];
+    }
+
+    /**
+     * The offset just past the bracket that closes the one opened at $offset,
+     * counting `()[]{}` alike and skipping string literals, or the end of the
+     * line when nothing closes it.
+     */
+    private function bracketedValueEnd(string $text, int $offset): int
+    {
+        $length = mb_strlen($text, '8bit');
+        $depth = 0;
+        $position = $offset;
+
+        while (true) {
+            $position += strcspn($text, "\"'()[]{}\r\n", $position);
+
+            if ($position >= $length) {
+                return $length;
+            }
+
+            $character = $text[$position];
+
+            if ($character === "\r" || $character === "\n") {
+                return $position;
+            }
+
+            if ($character === '"' || $character === "'") {
+                [$bodyEnd, $closed] = $this->quotedBodyEnd($text, $position);
+
+                if (! $closed) {
+                    return $bodyEnd;
+                }
+
+                $position = $bodyEnd + 1;
+
+                continue;
+            }
+
+            $depth += str_contains('([{', $character) ? 1 : -1;
+            $position++;
+
+            if ($depth === 0) {
+                return $position;
+            }
+        }
     }
 
     /**
