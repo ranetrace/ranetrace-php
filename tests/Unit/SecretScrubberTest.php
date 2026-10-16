@@ -514,7 +514,27 @@ test('a ternary on a sensitive variable and a fallback to code stay readable', f
 })->with([
     'a full ternary' => ["\$label = \$token ? 'set' : 'missing';"],
     'a nullsafe chain' => ['$v = $token?->value;'],
-    'a fallback in parentheses closed before it' => ["\$p = input('password') ?? 'none';"],
+]);
+
+test('a fallback after a call read by a sensitive quoted key is its value', function (string $line, string $expected): void {
+    expect(scrubber()->scrubString($line))->toBe($expected)
+        ->and(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'a request input' => ["\$p = \$request->input('password') ?? 'default';", "\$p = \$request->input('password') ?? '[REDACTED]';"],
+    'a short ternary' => ["\$t = \$request->header(\"X-Api-Key\") ?: 'dev-key';", "\$t = \$request->header(\"X-Api-Key\") ?: '[REDACTED]';"],
+    'an env lookup keeps its name' => ["\$t = env('API_TOKEN') ?? 'x';", "\$t = env('API_TOKEN') ?? '[REDACTED]';"],
+]);
+
+test('a call read by a sensitive quoted key is not a key before anything but a fallback', function (string $line): void {
+    // `strpos($x, 'token') !== false` is everywhere, and its `false` is not a
+    // secret, so a comparison after the call does not make it a pair.
+    expect(scrubber()->scrubString($line))->toBe($line)
+        ->and(scrubSourceLine($line))->toBe($line);
+})->with([
+    'alone' => ["\$p = \$request->input('password');"],
+    'a comparison' => ["if (strpos(\$header, 'token') !== false) {"],
+    'an assignment after it' => ["\$p = input('password');"],
+    'an unquoted argument' => ['$p = input(password) ?? $x;'],
 ]);
 
 test('scrubSource keeps a fallback that is code', function (): void {
@@ -1442,6 +1462,11 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'message keys repeated',
         str_repeat("'password.required' => 'a', 'password.requiredx' => 'b', ", 5_000),
         str_repeat("'password.required' => 'a', 'password.requiredx' => '[REDACTED]', ", 5_000),
+    ],
+    'call keys before long blanks' => [
+        'call keys before long blanks',
+        str_repeat("f('token')     ", 10_000)."f('token')".str_repeat(' ', 50_000).'?? x',
+        str_repeat("f('token')     ", 10_000)."f('token')".str_repeat(' ', 50_000).'?? [REDACTED]',
     ],
     'exception calls repeated' => [
         'exception calls repeated',

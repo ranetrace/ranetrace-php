@@ -389,7 +389,10 @@ final class SecretTextRedactor
      *
      * - A key is a token of `[\w.\-]` holding a sensitive fragment, optionally
      *   quoted and optionally closing a subscript: `password=`, `"api_key":`,
-     *   `'token' =>`, `$config['db']['password'] =`.
+     *   `'token' =>`, `$config['db']['password'] =`. A quoted key that closes
+     *   a call is one too, but only before a fallback:
+     *   `$request->input('password') ?? 'default'`. Before a comparison it is
+     *   not, since `strpos($x, 'token') !== false` is everywhere.
      * - The separator is `=>`, `:`, `=`, `.=`, `??=`, a comparison (`==`,
      *   `===`, `!=`, `!==`) or a fallback (`??`, `?:`), held atomically so
      *   `=>` can never be taken as `=` followed by a value of `>`, nor `??=` as
@@ -442,7 +445,7 @@ final class SecretTextRedactor
         $separator = '(?>=>|:(?!:)|!==?|===?|\.=|\?\?=|\?\?|\?:|=)';
 
         return $this->anchorPatterns[$variant] = '/(?<![\w.\-])(?:'
-            .'["\']?'.$key.'["\']?'.$this->messageKeyGuard().'\]?\s*+'.$separator.'\s*+'
+            .'["\']?'.$key.'["\']?'.$this->messageKeyGuard().'(?:\]|(?<=["\'])\)(?=\s*+\?[?:]))?\s*+'.$separator.'\s*+'
             .'|(?<comma>["\']'.$key.'["\']'.$this->messageKeyGuard().'\s*+,\s*+)(?=["\'])'
             .')|(?<!\w)(?<call>'.$call.')/i';
     }
