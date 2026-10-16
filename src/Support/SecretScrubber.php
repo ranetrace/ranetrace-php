@@ -97,6 +97,27 @@ final class SecretScrubber implements Scrubber
     private const string BARE_VALUE_STOPS = "\"' \t\n\v\f\r,;&)]}";
 
     /**
+     * What a line can leave for the start of the next one in
+     * {@see scrubSource()}: the value of a key, or the arguments of a call.
+     */
+    private const string CARRIED_VALUE = 'value';
+
+    private const string CARRIED_CALL = 'call';
+
+    /**
+     * The characters that continue a heredoc marker, so `EOT` closes a body
+     * and `EOTX` does not.
+     */
+    private const string NAME_CHARACTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_';
+
+    /**
+     * The fewest base64 characters a line must hold to be taken for the body
+     * of a private key in {@see redactPrivateKeyBodies()}. A PEM body line is
+     * 64, and the last one of a block is often shorter.
+     */
+    private const int MIN_KEY_BODY_LINE = 40;
+
+    /**
      * Built-in fragments merged with the user-configured extensions, resolved
      * once per instance.
      *
@@ -108,6 +129,13 @@ final class SecretScrubber implements Scrubber
      * {@see anchorPattern()}, built once per instance.
      */
     private ?string $anchorPattern = null;
+
+    /**
+     * {@see carryPatterns()}, built once per instance.
+     *
+     * @var array{value: string, heredoc: string}|null
+     */
+    private ?array $carryPatterns = null;
 
     public function __construct(
         private readonly Config $config,
@@ -407,7 +435,58 @@ final class SecretScrubber implements Scrubber
     }
 
     /**
-     * {@see scrubString()} without the fail-closed wrapper.
+     * Redact the secrets in a window of consecutive source lines, read as a
+     * whole so that a secret spanning lines is caught. Each line goes through
+     * {@see scrubString()}'s rules, and three things are added that only a run
+     * of lines can show:
+     *
+     * - A value on the next line. A line that ends in a sensitive key and
+     *   `=>`, `=`, `.=` or `??=`, or in the `(` of a sensitive call, has the
+     *   start of the next line read as that value. Only one line ahead, and
+     *   never after `:` or a comparison, so `case 'token':` followed by
+     *   `return $x;` stays readable.
+     * - A heredoc or nowdoc assigned to a sensitive key, or passed to a
+     *   sensitive call, loses every body line up to its closing marker. Its
+     *   opener and closer stay, and so does each line's indentation.
+     * - A private key. See {@see redactPrivateKeyBodies()}.
+     *
+     * Lines come without their line breaks, and exactly one line comes back
+     * per line given, in the same order. When PCRE gives up, every line of the
+     * window becomes the placeholder and the internal log says so, for the
+     * reason {@see scrubString()} fails closed.
+     *
+     * @param  list<string>  $lines
+     * @return list<string>
+     */
+    public function scrubSource(array $lines): array
+    {
+        $lines = array_values($lines);
+
+        try {
+            $lines = $this->redactHeredocBodies($this->redactPrivateKeyBodies($lines));
+            $scrubbed = [];
+            $carried = null;
+
+            foreach ($lines as $line) {
+                $scrubbed[] = $line === '' ? $line : $this->scrubText($line, $carried);
+                $carried = $this->valueCarriedOver($line);
+            }
+
+            return $scrubbed;
+        } catch (UnexpectedValueException $failure) {
+            $this->log->warning('Secret scrubbing of a source window failed, so every line of it was redacted.', [
+                'error' => $failure->getMessage(),
+                'lines' => count($lines),
+            ]);
+
+            return array_fill(0, count($lines), self::REDACTION);
+        }
+    }
+
+    /**
+     * {@see scrubString()} without the fail-closed wrapper. $carried, one of
+     * the `CARRIED_*` constants, says the start of $text is the value of a key
+     * that ended the line before it.
      *
      * Offsets here are byte offsets, as PCRE reports them, hence `8bit` on
      * every length and substring. Every boundary the scrubber cuts at is an
@@ -415,11 +494,23 @@ final class SecretScrubber implements Scrubber
      *
      * @throws UnexpectedValueException when PCRE gives up
      */
-    private function scrubText(string $text): string
+    private function scrubText(string $text, ?string $carried = null): string
     {
         $length = mb_strlen($text, '8bit');
         $scrubbed = '';
         $offset = 0;
+
+        if ($carried !== null) {
+            $start = strspn($text, " \t");
+            $value = $carried === self::CARRIED_CALL
+                ? $this->redactCodeValue($text, $start, true)
+                : $this->redactValue($text, $start);
+
+            if ($value !== null) {
+                $scrubbed = mb_substr($text, 0, $start, '8bit').$value[0];
+                $offset = $value[1];
+            }
+        }
 
         while ($offset < $length) {
             $found = preg_match($this->anchorPattern(), $text, $matches, PREG_OFFSET_CAPTURE | PREG_UNMATCHED_AS_NULL, $offset);
@@ -498,18 +589,32 @@ final class SecretScrubber implements Scrubber
             return $this->anchorPattern;
         }
 
-        $alternation = implode('|', array_map(
-            static fn (string $fragment): string => preg_quote($fragment, '/'),
-            $this->sensitiveFragments()
-        ));
-
-        $key = '[\w.\-]{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')[\w.\-]*+';
+        [$key, $call] = $this->keyAndCallPatterns();
         $separator = '(?>=>|:(?!:)|!==?|===?|\.=|\?\?=|=)';
 
         return $this->anchorPattern = '/(?<![\w.\-])(?:'
             .'["\']?'.$key.'["\']?\]?\s*+'.$separator.'\s*+'
             .'|(?<comma>["\']'.$key.'["\']\s*+,\s*+)(?=["\'])'
-            .')|(?<!\w)(?<call>\w{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')\w*+\()/i';
+            .')|(?<!\w)(?<call>'.$call.')/i';
+    }
+
+    /**
+     * The sub-patterns for a sensitive key and for the name of a sensitive
+     * call up to its `(`, as {@see anchorPattern()} describes them.
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function keyAndCallPatterns(): array
+    {
+        $alternation = implode('|', array_map(
+            static fn (string $fragment): string => preg_quote($fragment, '/'),
+            $this->sensitiveFragments()
+        ));
+
+        return [
+            '[\w.\-]{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')[\w.\-]*+',
+            '\w{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')\w*+\(',
+        ];
     }
 
     /**
@@ -615,7 +720,7 @@ final class SecretScrubber implements Scrubber
             if ($character === '"' || $character === "'") {
                 [$bodyEnd, $closed] = $this->quotedBodyEnd($text, $position);
 
-                if ($bodyEnd > $position + 1) {
+                if ($bodyEnd > $position + 1 && ! $this->opensHeredoc($text, $position)) {
                     $redacted .= mb_substr($text, $kept, $position + 1 - $kept, '8bit').self::REDACTION;
                     $kept = $bodyEnd;
                 }
@@ -649,6 +754,17 @@ final class SecretScrubber implements Scrubber
         }
 
         return [$redacted.mb_substr($text, $kept, $position - $kept, '8bit'), $position];
+    }
+
+    /**
+     * Whether the quote at $offset names the marker of a heredoc or nowdoc
+     * (`<<<"EOT"`, `<<<'EOT'`) rather than opening a string literal.
+     */
+    private function opensHeredoc(string $text, int $offset): bool
+    {
+        $from = max(0, $offset - 16);
+
+        return str_ends_with(mb_rtrim(mb_substr($text, $from, $offset - $from, '8bit'), " \t"), '<<<');
     }
 
     /**
@@ -706,6 +822,235 @@ final class SecretScrubber implements Scrubber
 
             $position += 2;
         }
+    }
+
+    /**
+     * Whether $line leaves the start of the next line to be read as a value,
+     * and as which kind: one of the `CARRIED_*` constants, or null.
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function valueCarriedOver(string $line): ?string
+    {
+        $found = preg_match($this->carryPatterns()['value'], $line, $matches, PREG_UNMATCHED_AS_NULL);
+
+        if ($found === false) {
+            throw new UnexpectedValueException(preg_last_error_msg());
+        }
+
+        if ($found === 0) {
+            return null;
+        }
+
+        return ($matches['call'] ?? null) !== null ? self::CARRIED_CALL : self::CARRIED_VALUE;
+    }
+
+    /**
+     * The patterns {@see valueCarriedOver()} and {@see redactHeredocBodies()}
+     * look for at the end of a line: a sensitive key and an assignment, or a
+     * sensitive call's `(`, followed by nothing or by a heredoc opener.
+     *
+     * @return array{value: string, heredoc: string}
+     */
+    private function carryPatterns(): array
+    {
+        if ($this->carryPatterns !== null) {
+            return $this->carryPatterns;
+        }
+
+        [$key, $call] = $this->keyAndCallPatterns();
+        $assignment = '(?<![\w.\-])["\']?'.$key.'["\']?\]?\s*+(?:=>|=|\.=|\?\?=)';
+
+        return $this->carryPatterns = [
+            'value' => '/(?:'.$assignment.'|(?<!\w)(?<call>'.$call.'))\s*+$/i',
+            'heredoc' => '/(?:'.$assignment.'|(?<!\w)'.$call.')'
+                .'\s*+<<<[ \t]*+(?<quote>["\']?)(?<marker>[A-Za-z_]\w*+)\k<quote>\s*+$/i',
+        ];
+    }
+
+    /**
+     * Replace the body lines of every heredoc or nowdoc that holds a sensitive
+     * value, see {@see scrubSource()}. A body runs to the line its closing
+     * marker starts, or to the end of the window.
+     *
+     * @param  list<string>  $lines
+     * @return list<string>
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function redactHeredocBodies(array $lines): array
+    {
+        $closing = null;
+
+        foreach ($lines as $index => $line) {
+            if ($closing !== null) {
+                $indent = strspn($line, " \t");
+                $markerLength = mb_strlen($closing, '8bit');
+
+                if (mb_substr($line, $indent, $markerLength, '8bit') === $closing
+                    && strspn($line, self::NAME_CHARACTERS, $indent + $markerLength) === 0) {
+                    $closing = null;
+
+                    continue;
+                }
+
+                if ($indent < mb_strlen($line, '8bit')) {
+                    $lines[$index] = mb_substr($line, 0, $indent, '8bit').self::REDACTION;
+                }
+
+                continue;
+            }
+
+            $found = preg_match($this->carryPatterns()['heredoc'], $line, $matches);
+
+            if ($found === false) {
+                throw new UnexpectedValueException(preg_last_error_msg());
+            }
+
+            if ($found === 1) {
+                $closing = $matches['marker'];
+            }
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Replace the body of every private key in a window with the placeholder,
+     * leaving its `-----BEGIN ... PRIVATE KEY-----` and `-----END ...-----`
+     * markers, each line's indentation and the quotes, `.` and `\n` around the
+     * body as they were, so the code still reads as what it is.
+     *
+     * A window is a cut from the middle of a file, so it can start inside a
+     * key: an END marker with no BEGIN before it means everything before it is
+     * body. It can also sit wholly inside a long body, with neither marker, so
+     * any line that holds nothing but a base64 run of
+     * {@see MIN_KEY_BODY_LINE} or more characters, with digits and both cases
+     * among them, is redacted as well. Requiring all three keeps a long path
+     * or word alone on a line readable, and a real body line has them all.
+     * Certificate markers are not private keys, though their body lines can
+     * still be caught by that rule.
+     *
+     * @param  list<string>  $lines
+     * @return list<string>
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function redactPrivateKeyBodies(array $lines): array
+    {
+        $marker = '/-----(?<kind>BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/';
+        $markers = [];
+        $insideKey = null;
+
+        foreach ($lines as $index => $line) {
+            if (preg_match_all($marker, $line, $markers[$index], PREG_SET_ORDER | PREG_OFFSET_CAPTURE) === false) {
+                throw new UnexpectedValueException(preg_last_error_msg());
+            }
+
+            if ($insideKey === null && $markers[$index] !== []) {
+                $insideKey = $markers[$index][0]['kind'][0] === 'END';
+            }
+        }
+
+        $insideKey ??= false;
+
+        foreach ($lines as $index => $line) {
+            if ($markers[$index] === []) {
+                if ($insideKey || $this->isKeyBodyLine($line)) {
+                    $lines[$index] = $this->redactKeyBody($line);
+                }
+
+                continue;
+            }
+
+            $rebuilt = '';
+            $position = 0;
+
+            foreach ($markers[$index] as $found) {
+                [$text, $at] = $found[0];
+                $before = mb_substr($line, $position, $at - $position, '8bit');
+                $rebuilt .= ($insideKey ? $this->redactKeyBody($before) : $before).$text;
+                $position = $at + mb_strlen($text, '8bit');
+                $insideKey = $found['kind'][0] === 'BEGIN';
+            }
+
+            $rest = mb_substr($line, $position, null, '8bit');
+            $lines[$index] = $rebuilt.($insideKey ? $this->redactKeyBody($rest) : $rest);
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Whether $line holds nothing but what a private key body line looks like
+     * outside its markers, see {@see redactPrivateKeyBodies()}.
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function isKeyBodyLine(string $line): bool
+    {
+        [, $body] = $this->splitKeyBody($line);
+
+        if (mb_strlen($body, '8bit') < self::MIN_KEY_BODY_LINE) {
+            return false;
+        }
+
+        return $this->matchAt('/\G[A-Za-z0-9+\/]++={0,2}+$/', $body, 0) !== ''
+            && strpbrk($body, '0123456789') !== false
+            && strpbrk($body, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') !== false
+            && strpbrk($body, 'abcdefghijklmnopqrstuvwxyz') !== false;
+    }
+
+    /**
+     * $segment with its key body replaced by the placeholder, or as it was
+     * when it holds no body.
+     */
+    private function redactKeyBody(string $segment): string
+    {
+        [$before, $body, $after] = $this->splitKeyBody($segment);
+
+        return $body === '' ? $segment : $before.self::REDACTION.$after;
+    }
+
+    /**
+     * $segment split into what surrounds a key body and the body itself: the
+     * whitespace, quotes, `.` concatenation and `\n` or `\r` escapes before it,
+     * and those plus a trailing `,`, `;` or `)` after it.
+     *
+     * @return array{0: string, 1: string, 2: string}
+     */
+    private function splitKeyBody(string $segment): array
+    {
+        $length = mb_strlen($segment, '8bit');
+        $start = 0;
+
+        while ($start < $length) {
+            if (str_contains(" \t.\"'", $segment[$start])) {
+                $start++;
+            } elseif ($segment[$start] === '\\' && in_array($segment[$start + 1] ?? '', ['n', 'r'], true)) {
+                $start += 2;
+            } else {
+                break;
+            }
+        }
+
+        $end = $length;
+
+        while ($end > $start) {
+            if (str_contains(" \t.\"',;)", $segment[$end - 1])) {
+                $end--;
+            } elseif ($end - 2 >= $start && $segment[$end - 2] === '\\' && in_array($segment[$end - 1], ['n', 'r'], true)) {
+                $end -= 2;
+            } else {
+                break;
+            }
+        }
+
+        return [
+            mb_substr($segment, 0, $start, '8bit'),
+            mb_substr($segment, $start, $end - $start, '8bit'),
+            mb_substr($segment, $end, null, '8bit'),
+        ];
     }
 
     /**

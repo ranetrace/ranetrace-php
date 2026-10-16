@@ -8,6 +8,7 @@ use Ranetrace\Php\Support\Diagnostics;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\Utf8;
 use Throwable;
+use UnexpectedValueException;
 
 /**
  * Reads the source lines an error item carries: the item's own `context`, each
@@ -29,8 +30,9 @@ use Throwable;
  * into exceptions must not see the SDK's file checks. A scrubber that throws
  * costs that one window too.
  *
- * Every line is repaired to valid UTF-8, scrubbed for `key=value` secrets, and
- * capped, in that order, so a secret cannot survive by straddling the cap.
+ * Every line is repaired to valid UTF-8, then the window is scrubbed for
+ * secrets as a whole, so one that spans lines is caught, and only then is each
+ * line capped, so a secret cannot survive by straddling the cap.
  *
  * @internal
  */
@@ -109,7 +111,7 @@ final class SourceReader
     /**
      * {@see windowOf()}, with a failure costing that one window. The scrubber
      * is an interface a host may implement, so it is host code called on
-     * every line.
+     * every window.
      *
      * @param  array<int, string>  $lines
      */
@@ -167,10 +169,7 @@ final class SourceReader
         // Clamped at the start of the file, so line 3 shows lines 1 to 11.
         $start = max(0, $line - self::LINES_BEFORE - 1);
 
-        $window = array_map(
-            $this->capLine(...),
-            array_values(array_slice($lines, $start, self::WINDOW_LINES)),
-        );
+        $window = $this->scrubbedLines(array_values(array_slice($lines, $start, self::WINDOW_LINES)));
 
         $context = $this->dedent(implode('', $window));
 
@@ -187,21 +186,43 @@ final class SourceReader
     }
 
     /**
-     * Repair, scrub and cap a single line, preserving a trailing newline so
-     * the line structure survives. Guards against a minified or generated line
-     * bloating the item.
+     * Repair the lines of a window, scrub them together and cap each one,
+     * preserving every trailing newline so the line structure survives. The
+     * cap guards against a minified or generated line bloating the item.
+     *
+     * @param  list<string>  $lines
+     * @return list<string>
      */
-    private function capLine(string $line): string
+    private function scrubbedLines(array $lines): array
     {
-        $line = Utf8::repair($line);
-        $newline = str_ends_with($line, "\n") ? "\n" : '';
-        $content = $this->scrubber->scrubString(mb_rtrim($line, "\n"));
-
-        if (mb_strlen($content) > self::MAX_LINE_LENGTH) {
-            $content = mb_substr($content, 0, self::MAX_LINE_LENGTH).self::TRUNCATION_SUFFIX;
+        if ($lines === []) {
+            return [];
         }
 
-        return $content.$newline;
+        $contents = [];
+        $newlines = [];
+
+        foreach ($lines as $line) {
+            $line = Utf8::repair($line);
+            $newlines[] = str_ends_with($line, "\n") ? "\n" : '';
+            $contents[] = mb_rtrim($line, "\n");
+        }
+
+        $scrubbed = array_values($this->scrubber->scrubSource($contents));
+
+        if (count($scrubbed) !== count($contents)) {
+            throw new UnexpectedValueException('The scrubber returned '.count($scrubbed).' lines for a window of '.count($contents));
+        }
+
+        foreach ($scrubbed as $index => $content) {
+            if (mb_strlen($content) > self::MAX_LINE_LENGTH) {
+                $content = mb_substr($content, 0, self::MAX_LINE_LENGTH).self::TRUNCATION_SUFFIX;
+            }
+
+            $scrubbed[$index] = $content.$newlines[$index];
+        }
+
+        return $scrubbed;
     }
 
     /**

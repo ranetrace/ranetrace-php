@@ -522,6 +522,182 @@ test('scrubString keeps multibyte keys and values whole under a UTF-8 locale', f
     }
 });
 
+test('scrubSource reads the start of the next line as the value of a key that ends a line', function (array $lines, array $expected): void {
+    // Each line used to be scrubbed on its own, so a value formatted onto the
+    // line after its key shipped as written.
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'array element' => [["'password' =>", "    'hunter2',"], ["'password' =>", "    '[REDACTED]',"]],
+    'assignment' => [['$token =', "    'abc';"], ['$token =', "    '[REDACTED]';"]],
+    'code value' => [["'password' =>", "    Hash::make('x'),"], ["'password' =>", "    Hash::make('[REDACTED]'),"]],
+    'sensitive call' => [
+        ['Stripe::setApiKey(', "    'sk_live_x'", ');'],
+        ['Stripe::setApiKey(', "    '[REDACTED]'", ');'],
+    ],
+    'sensitive call, several arguments' => [
+        ['$client->setCredentials(', "    'user', 'pass'", ');'],
+        ['$client->setCredentials(', "    '[REDACTED]', '[REDACTED]'", ');'],
+    ],
+    'the rest of the next line is scrubbed as usual' => [
+        ["'password' =>", "    'x', 'token' => 'y', 'name' => 'Bob'"],
+        ["'password' =>", "    '[REDACTED]', 'token' => '[REDACTED]', 'name' => 'Bob'"],
+    ],
+]);
+
+test('scrubSource carries a value over only after an assignment or a call, and only one line', function (array $lines): void {
+    // `case 'token':` followed by `return $x;` is code to read, and so is the
+    // literal a sensitive value is compared with on the next line.
+    expect(scrubber()->scrubSource($lines))->toBe($lines);
+})->with([
+    'a case label' => [["case 'token':", "    return 'abc';"]],
+    'a comparison' => [['if ($token ===', "    'abc') {"]],
+    'a key with no separator' => [["'password'", "    'abc'"]],
+    'two lines ahead' => [["'password' =>", '', "    'abc',"]],
+    'a key that is not sensitive' => [["'name' =>", "    'Bob',"]],
+    'a call that is not sensitive' => [['Hash::check(', "    'abc'", ');']],
+]);
+
+test('scrubSource returns one line per line given, in order', function (): void {
+    $lines = ['<?php', '', '$token = Str::random(60);', 'password=hunter2', '    return $x;'];
+
+    expect(scrubber()->scrubSource($lines))->toBe(['<?php', '', '$token = Str::random(60);', 'password=[REDACTED]', '    return $x;'])
+        ->and(scrubber()->scrubSource([]))->toBe([])
+        ->and(scrubber()->scrubSource([3 => 'token=a', 7 => 'x']))->toBe(['token=[REDACTED]', 'x']);
+});
+
+test('scrubSource redacts the body of a private key and keeps its markers and code shape', function (array $lines, array $expected): void {
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'a block in a string' => [
+        [
+            '$key = "-----BEGIN RSA PRIVATE KEY-----\n"',
+            '    . "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun\n"',
+            '    . "VTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u+qKhbwKfBstIs+bMY2Zkp18gnTxK\n"',
+            '    . "-----END RSA PRIVATE KEY-----";',
+        ],
+        [
+            '$key = "-----BEGIN RSA PRIVATE KEY-----\n"',
+            '    . "[REDACTED]\n"',
+            '    . "[REDACTED]\n"',
+            '    . "-----END RSA PRIVATE KEY-----";',
+        ],
+    ],
+    'a block in a heredoc, with a short last line' => [
+        ['-----BEGIN PRIVATE KEY-----', 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj', 'AbC1=', '-----END PRIVATE KEY-----'],
+        ['-----BEGIN PRIVATE KEY-----', '[REDACTED]', '[REDACTED]', '-----END PRIVATE KEY-----'],
+    ],
+    'the window starts inside the block' => [
+        ['    xyz1AbC/+', '    AbC1=', '    -----END OPENSSH PRIVATE KEY-----', "    \$name = 'Bob';"],
+        ['    [REDACTED]', '    [REDACTED]', '    -----END OPENSSH PRIVATE KEY-----', "    \$name = 'Bob';"],
+    ],
+    'the window ends inside the block' => [
+        ["\$name = 'Bob';", '-----BEGIN EC PRIVATE KEY-----', 'short1A'],
+        ["\$name = 'Bob';", '-----BEGIN EC PRIVATE KEY-----', '[REDACTED]'],
+    ],
+    'the window sits inside the body' => [
+        ['MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj', "'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj\\n' ."],
+        ['[REDACTED]', "'[REDACTED]\\n' ."],
+    ],
+    'a single line' => [
+        ['$key = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----";'],
+        ['$key = "-----BEGIN PRIVATE KEY-----\n[REDACTED]\n-----END PRIVATE KEY-----";'],
+    ],
+    'a pgp block' => [
+        ['-----BEGIN PGP PRIVATE KEY BLOCK-----', 'Version: 1', '', 'lQOYBF', '-----END PGP PRIVATE KEY BLOCK-----'],
+        ['-----BEGIN PGP PRIVATE KEY BLOCK-----', '[REDACTED]', '', '[REDACTED]', '-----END PGP PRIVATE KEY BLOCK-----'],
+    ],
+]);
+
+test('scrubSource keeps a certificate marker and a long path readable', function (): void {
+    // A certificate is public, though a base64 line of its body can still be
+    // taken for a key body: that costs the line, never a secret.
+    $lines = [
+        '-----BEGIN CERTIFICATE-----',
+        "'/var/www/html/storage/app/public/uploads/images/avatars',",
+        'SomeVeryLongIdentifierWithoutAnyDigitsInItAtAllReally',
+        '-----END CERTIFICATE-----',
+    ];
+
+    expect(scrubber()->scrubSource($lines))->toBe($lines);
+});
+
+test('scrubSource redacts the body of a heredoc or nowdoc assigned to a sensitive key', function (array $lines, array $expected): void {
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'nowdoc' => [
+        ["\$secret = <<<'EOT'", '    abc def', '    EOT;', "\$name = 'Bob';"],
+        ["\$secret = <<<'EOT'", '    [REDACTED]', '    EOT;', "\$name = 'Bob';"],
+    ],
+    'heredoc in an array' => [
+        ["'token' => <<<EOT", 'abc', '', 'EOT,'],
+        ["'token' => <<<EOT", '[REDACTED]', '', 'EOT,'],
+    ],
+    'a sensitive call' => [
+        ['$c->setToken(<<<"TXT"', 'abc', 'TXT);'],
+        ['$c->setToken(<<<"TXT"', '[REDACTED]', 'TXT);'],
+    ],
+    'no closing marker in the window' => [
+        ['$password = <<<EOT', 'EOTX is not the marker', 'still body'],
+        ['$password = <<<EOT', '[REDACTED]', '[REDACTED]'],
+    ],
+    'not a sensitive key' => [
+        ['$body = <<<EOT', 'Hello', 'EOT;'],
+        ['$body = <<<EOT', 'Hello', 'EOT;'],
+    ],
+]);
+
+test('scrubSource redacts the whole window when PCRE gives up, and says so in the internal log', function (): void {
+    $directory = tempDirectory();
+    $scrubber = scrubber(['buffer_path' => $directory]);
+    $limit = ini_get('pcre.backtrack_limit');
+
+    try {
+        ini_set('pcre.backtrack_limit', '10');
+
+        $result = $scrubber->scrubSource(['$name = 1;', str_repeat('token', 400), '$x = 2;']);
+    } finally {
+        ini_set('pcre.backtrack_limit', $limit === false ? '1000000' : $limit);
+    }
+
+    expect($result)->toBe(['[REDACTED]', '[REDACTED]', '[REDACTED]'])
+        ->and(scrubberInternalLog($directory))->toContain('source window failed');
+});
+
+test('scrubSource stays linear on long windows', function (string $label, array $lines, array $expected): void {
+    $started = microtime(true);
+
+    $result = scrubber()->scrubSource($lines);
+
+    expect($result)->toBe($expected)
+        ->and(microtime(true) - $started)->toBeLessThan(1.0, $label);
+})->with([
+    'eleven long base64 lines' => [
+        'eleven long base64 lines',
+        array_fill(0, 11, str_repeat('Ab1+', 12_500)),
+        array_fill(0, 11, '[REDACTED]'),
+    ],
+    'a begin with no end' => [
+        'a begin with no end',
+        ['-----BEGIN PRIVATE KEY-----', ...array_fill(0, 10, str_repeat('Ab1 ', 12_500))],
+        ['-----BEGIN PRIVATE KEY-----', ...array_fill(0, 10, '[REDACTED] ')],
+    ],
+    'many markers on one line' => [
+        'many markers on one line',
+        [str_repeat('-----BEGIN '.str_repeat('A', 39), 1_000)],
+        [str_repeat('-----BEGIN '.str_repeat('A', 39), 1_000)],
+    ],
+    'a key and a long run of spaces at the end of every line' => [
+        'a key and a long run of spaces at the end of every line',
+        array_fill(0, 11, "'token' =>".str_repeat(' ', 50_000).'x'),
+        array_fill(0, 11, "'token' =>".str_repeat(' ', 50_000).'[REDACTED]'),
+    ],
+    'an open heredoc' => [
+        'an open heredoc',
+        ['$secret = <<<EOT', ...array_fill(0, 10, str_repeat('E', 50_000))],
+        ['$secret = <<<EOT', ...array_fill(0, 10, '[REDACTED]')],
+    ],
+]);
+
 test('scrubDeep redacts a sensitive query param in a relative URL value', function (): void {
     // A signed download link recorded by the fetch/XHR breadcrumb hooks is
     // usually relative; only the absolute form used to be redacted.

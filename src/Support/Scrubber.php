@@ -29,6 +29,17 @@ interface Scrubber
     public function scrubString(string $value): string;
 
     /**
+     * Redact the secrets in a window of consecutive source lines, read as a
+     * whole so a secret that spans lines is caught. Lines come without their
+     * line breaks, and exactly one line comes back for each line given, in the
+     * same order.
+     *
+     * @param  list<string>  $lines
+     * @return list<string>
+     */
+    public function scrubSource(array $lines): array;
+
+    /**
      * Redact the sensitive query (and query-shaped fragment) parameters of a
      * URL, leaving every other byte of it intact.
      */

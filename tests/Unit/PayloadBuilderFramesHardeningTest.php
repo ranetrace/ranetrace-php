@@ -43,8 +43,8 @@ function contractViolations(array $payload): array
 }
 
 /**
- * A scrubber that throws on every string $explodes picks and scrubs the rest
- * for real.
+ * A scrubber that throws on every string $explodes picks, and on every source
+ * window holding a line it picks, and scrubs the rest for real.
  *
  * @param  Closure(string): bool  $explodes
  */
@@ -63,6 +63,17 @@ function throwingScrubber(Closure $explodes): Scrubber
             }
 
             return $this->real->scrubString($value);
+        }
+
+        public function scrubSource(array $lines): array
+        {
+            foreach ($lines as $line) {
+                if (($this->explodes)($line)) {
+                    throw new RuntimeException('scrubber exploded');
+                }
+            }
+
+            return $this->real->scrubSource($lines);
         }
 
         public function scrubUrl(?string $url): ?string
@@ -239,6 +250,53 @@ test('a scrubber that throws on source lines costs those sources, never the repo
         ->and($payload['highlight_line'])->toBeNull()
         ->and(array_filter(array_column($payload['frames'], 'source')))->toBe([])
         ->and(frameDiagnostics($root))->toContain('Ranetrace could not cut a source window')
+        ->and(contractViolations($payload))->toBe([]);
+});
+
+test('a scrubber that returns the wrong number of source lines costs those sources, never the report', function (): void {
+    // A line out of step with its neighbours would put a scrubbed line beside
+    // the wrong line number, or an unscrubbed one in the window.
+    $root = frameProject();
+    $exception = throwThrough($root, 'app/Short.php', "\n");
+    $config = testConfig(['internal_logging' => ['enabled' => false]]);
+    $real = new SecretScrubber($config, new Ranetrace\Php\Support\InternalLogger($config));
+
+    $scrubber = new class($real) implements Scrubber
+    {
+        public function __construct(private SecretScrubber $real) {}
+
+        public function scrubString(string $value): string
+        {
+            return $this->real->scrubString($value);
+        }
+
+        public function scrubSource(array $lines): array
+        {
+            return array_slice($this->real->scrubSource($lines), 1);
+        }
+
+        public function scrubUrl(?string $url): ?string
+        {
+            return $this->real->scrubUrl($url);
+        }
+
+        public function scrubUrlPath(?string $url, array|callable|null $sensitiveValues = null): ?string
+        {
+            return $this->real->scrubUrlPath($url, $sensitiveValues);
+        }
+
+        public function scrubDeep(mixed $data, array|callable|null $sensitiveValues = null): mixed
+        {
+            return $this->real->scrubDeep($data, $sensitiveValues);
+        }
+    };
+
+    $payload = hardenedPayload($root, $exception, $scrubber);
+
+    expect($payload['message'])->toBe('boom')
+        ->and($payload['context'])->toBeNull()
+        ->and(array_filter(array_column($payload['frames'], 'source')))->toBe([])
+        ->and(frameDiagnostics($root))->toContain('lines for a window of')
         ->and(contractViolations($payload))->toBe([]);
 });
 

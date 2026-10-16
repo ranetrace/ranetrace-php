@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Ranetrace\Php\Errors\FrameLocation;
 use Ranetrace\Php\Errors\FrameMapper;
 use Ranetrace\Php\Errors\PayloadBuilder;
+use Ranetrace\Php\Errors\SourceReader;
 
 /**
  * The structured frames, their source lines and the previous-exception chain,
@@ -406,6 +407,56 @@ test('a secret on a source line is scrubbed in the frame source and in the conte
         ->and($payload['context'])->toContain("'api_key' => '[REDACTED]'")
         ->and($json)->not->toContain('sk_live_9f8e7d6c')
         ->and($json)->not->toContain('abc123def');
+});
+
+test('a secret that spans the lines of a source window is scrubbed in the frame source', function (): void {
+    $root = frameProject();
+    $call = require writeProjectFile($root, 'app/Billing.php', <<<'PHP'
+        <?php
+
+        return static function (): void {
+            $key = "-----BEGIN PRIVATE KEY-----\n"
+                . "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj\n"
+                . "-----END PRIVATE KEY-----";
+            $options = ['password' =>
+                'hunter2-on-its-own-line'];
+            throw new RuntimeException('boom');
+        };
+
+        PHP);
+
+    try {
+        $call();
+    } catch (RuntimeException $exception) {
+    }
+
+    $payload = framePayload(frameBuilder($root), $exception);
+    $json = (string) json_encode($payload);
+
+    expect($payload['context'])->toContain("    '[REDACTED]'];")
+        ->and($payload['context'])->toContain('-----BEGIN PRIVATE KEY-----')
+        ->and($json)->not->toContain('hunter2-on-its-own-line')
+        ->and($json)->not->toContain('MIIEvQIBADANBgkqhkiG9w0BAQEFAASC');
+});
+
+test('a source line is scrubbed before it is capped, so a secret cannot straddle the cap', function (): void {
+    $root = frameProject();
+    $padding = str_repeat('x', SourceReader::MAX_LINE_LENGTH - 40);
+    $call = require writeProjectFile($root, 'app/Long.php', "<?php\n\nreturn static function (): void {\n    \$a = '{$padding}'; \$password = 'abcdefghijklmnopqrstuvwxyz0123456789';\n    throw new RuntimeException('boom');\n};\n");
+
+    try {
+        $call();
+    } catch (RuntimeException $exception) {
+    }
+
+    $payload = framePayload(frameBuilder($root), $exception);
+    $long = array_values(array_filter(explode("\n", (string) $payload['context']), static fn (string $line): bool => str_contains($line, $padding)))[0];
+
+    // The secret straddles the cap as written. Scrubbed first, the line fits
+    // under it and keeps its redacted literal whole.
+    expect($long)->toEndWith("\$password = '[REDACTED]';")
+        ->and(mb_strlen($long))->toBeLessThanOrEqual(SourceReader::MAX_LINE_LENGTH)
+        ->and((string) json_encode($payload))->not->toContain('abcdefghij');
 });
 
 test('closure and anonymous class names lose the absolute project path and the NUL byte', function (): void {
