@@ -605,6 +605,43 @@ test('scrubSource reads the start of the next line as the value of a key that en
     ],
 ]);
 
+test('scrubSource carries an open bracket of a sensitive value onto the lines after it until it closes', function (array $lines, array $expected): void {
+    // Only the line after the opening bracket used to be read as the value, so
+    // a call or a code value spread over more lines shipped its later literals.
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'sensitive call over several lines' => [
+        ['$client->setCredentials(', "    'user',", "    'pass'", ');', "\$name = 'Bob';"],
+        ['$client->setCredentials(', "    '[REDACTED]',", "    '[REDACTED]'", ');', "\$name = 'Bob';"],
+    ],
+    'code value over several lines' => [
+        ["'password' => Hash::make(", "    'x'", '),', "'name' => 'Bob',"],
+        ["'password' => Hash::make(", "    '[REDACTED]'", '),', "'name' => 'Bob',"],
+    ],
+    'the rest of the closing line is scrubbed as usual' => [
+        ['Stripe::setApiKey(', "    'a'); \$token = 'b'; \$name = 'Bob';"],
+        ['Stripe::setApiKey(', "    '[REDACTED]'); \$token = '[REDACTED]'; \$name = 'Bob';"],
+    ],
+    'nested brackets and a blank line' => [
+        ['$c->setSecret([', "    'a' => ['b'],", '', "    'c',", ']);', "\$x = 'y';"],
+        ['$c->setSecret([', "    '[REDACTED]' => ['[REDACTED]'],", '', "    '[REDACTED]',", ']);', "\$x = 'y';"],
+    ],
+    'a literal open inside the call' => [
+        ['$c->setToken(', "    'a", "b', 'c'", ');', "\$x = 'y';"],
+        ['$c->setToken(', "    '[REDACTED]", "[REDACTED]', '[REDACTED]'", ');', "\$x = 'y';"],
+    ],
+    'a bracket that never closes costs only literals' => [
+        ["'token' => \$this->issue(function () {", "    return \$x . 'y';", '    $z = 1;'],
+        ["'token' => \$this->issue(function () {", "    return \$x . '[REDACTED]';", '    $z = 1;'],
+    ],
+]);
+
+test('scrubSource stops carrying once the bracket of a sensitive value closes', function (): void {
+    $lines = ["'password' => Hash::make(\$a,", '    $b),', "'name' => 'Bob',", "    'Alice',"];
+
+    expect(scrubber()->scrubSource($lines))->toBe($lines);
+});
+
 test('scrubSource carries a value over only after an assignment or a call, and only one line', function (array $lines): void {
     // `case 'token':` followed by `return $x;` is code to read, and so is the
     // literal a sensitive value is compared with on the next line.
@@ -800,6 +837,11 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         'keys that never end a line',
         array_fill(0, 11, str_repeat("'token' => \$x ", 5_000)),
         array_fill(0, 11, "'token' => ".str_repeat("\$x '[REDACTED]' => ", 4_999).'$x '),
+    ],
+    'a sensitive call left open over the window' => [
+        'a sensitive call left open over the window',
+        ['setToken(', ...array_fill(0, 10, str_repeat("('a', ", 10_000))],
+        ['setToken(', ...array_fill(0, 10, str_repeat("('[REDACTED]', ", 10_000))],
     ],
     'an open heredoc' => [
         'an open heredoc',
