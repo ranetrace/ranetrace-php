@@ -129,16 +129,34 @@ final class SecretTextRedactor
     ];
 
     /**
-     * {@see anchorPattern()}, built once per instance.
+     * The constructor call a subclass of `PDO` or `mysqli` passes its
+     * credentials on with, read as a {@see CREDENTIAL_CALLS} entry only while
+     * {@see redactSource()} reads lines that declare such a subclass. Anywhere
+     * else it is most often an exception handing its message on.
      */
-    private ?string $anchorPattern = null;
+    private const string PARENT_CONSTRUCTOR_CALL = 'parent\s*+::\s*+__construct';
 
     /**
-     * {@see carryPatterns()}, built once per instance.
+     * {@see anchorPattern()}, built once per instance for each value of
+     * {@see $readsCredentialSubclass}.
      *
-     * @var array{value: string, heredoc: string}|null
+     * @var array<int, string>
      */
-    private ?array $carryPatterns = null;
+    private array $anchorPatterns = [];
+
+    /**
+     * {@see carryPatterns()}, built once per instance for each value of
+     * {@see $readsCredentialSubclass}.
+     *
+     * @var array<int, array{value: string, heredoc: string}>
+     */
+    private array $carryPatterns = [];
+
+    /**
+     * Whether {@see redactSource()} is reading lines that declare a subclass
+     * of `PDO` or `mysqli`, see {@see PARENT_CONSTRUCTOR_CALL}.
+     */
+    private bool $readsCredentialSubclass = false;
 
     /**
      * Whether {@see scrubComment()} is scrubbing a comment, inside which a
@@ -188,6 +206,8 @@ final class SecretTextRedactor
      *   the end of its line goes on being redacted on the lines after it, up
      *   to its closing quote, and the value goes on as code after it.
      * - A private key. See {@see redactPrivateKeyBodies()}.
+     * - A subclass of `PDO` or `mysqli`. When a line declares one, its
+     *   `parent::__construct(` is read as a credential call in every line.
      *
      * @param  list<string>  $lines  Without their line breaks.
      * @return list<string> One line per line given, in the same order.
@@ -196,23 +216,55 @@ final class SecretTextRedactor
      */
     public function redactSource(array $lines): array
     {
-        $lines = $this->redactHeredocBodies($this->redactPrivateKeyBodies(array_values($lines)));
-        $scrubbed = [];
-        $carried = null;
+        $lines = array_values($lines);
+        $this->readsCredentialSubclass = $this->declaresCredentialSubclass($lines);
 
-        foreach ($lines as $line) {
-            if ($line === '') {
-                $scrubbed[] = $line;
-                $carried = ($carried['kind'] ?? null) === self::CARRIED_VALUE ? null : $carried;
+        try {
+            $lines = $this->redactHeredocBodies($this->redactPrivateKeyBodies($lines));
+            $scrubbed = [];
+            $carried = null;
 
-                continue;
+            foreach ($lines as $line) {
+                if ($line === '') {
+                    $scrubbed[] = $line;
+                    $carried = ($carried['kind'] ?? null) === self::CARRIED_VALUE ? null : $carried;
+
+                    continue;
+                }
+
+                [$scrubbed[], $open] = $this->scrubText($line, readsCode: true, carried: $carried);
+                $carried = $open ?? $this->valueCarriedOver($line);
             }
 
-            [$scrubbed[], $open] = $this->scrubText($line, readsCode: true, carried: $carried);
-            $carried = $open ?? $this->valueCarriedOver($line);
+            return $scrubbed;
+        } finally {
+            $this->readsCredentialSubclass = false;
+        }
+    }
+
+    /**
+     * Whether a line declares a class that extends `PDO` or `mysqli`, the
+     * global class itself and not one whose name merely starts the same.
+     *
+     * @param  list<string>  $lines
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    private function declaresCredentialSubclass(array $lines): bool
+    {
+        foreach ($lines as $line) {
+            $found = preg_match('/(?<![\w$])extends\s++\\\\?+(?:pdo|mysqli)(?![\w\\\\])/i', $line);
+
+            if ($found === false) {
+                throw new UnexpectedValueException(preg_last_error_msg());
+            }
+
+            if ($found === 1) {
+                return true;
+            }
         }
 
-        return $scrubbed;
+        return false;
     }
 
     /**
@@ -345,14 +397,16 @@ final class SecretTextRedactor
      */
     private function anchorPattern(): string
     {
-        if ($this->anchorPattern !== null) {
-            return $this->anchorPattern;
+        $variant = (int) $this->readsCredentialSubclass;
+
+        if (isset($this->anchorPatterns[$variant])) {
+            return $this->anchorPatterns[$variant];
         }
 
         [$key, $call] = $this->keyAndCallPatterns();
         $separator = '(?>=>|:(?!:)|!==?|===?|\.=|\?\?=|\?\?|\?:|=)';
 
-        return $this->anchorPattern = '/(?<![\w.\-])(?:'
+        return $this->anchorPatterns[$variant] = '/(?<![\w.\-])(?:'
             .'["\']?'.$key.'["\']?\]?\s*+'.$separator.'\s*+'
             .'|(?<comma>["\']'.$key.'["\']\s*+,\s*+)(?=["\'])'
             .')|(?<!\w)(?<call>'.$call.')/i';
@@ -374,8 +428,21 @@ final class SecretTextRedactor
         return [
             '[\w.\-]{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')[\w.\-]*+',
             '(?:\w{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')\w*+(?<!exception|error)'
-                .'|(?:'.implode('|', self::CREDENTIAL_CALLS).')\s*+)\(',
+                .'|(?:'.implode('|', $this->credentialCalls()).')\s*+)\(',
         ];
+    }
+
+    /**
+     * {@see CREDENTIAL_CALLS}, plus {@see PARENT_CONSTRUCTOR_CALL} while the
+     * lines being read declare a subclass of `PDO` or `mysqli`.
+     *
+     * @return list<string>
+     */
+    private function credentialCalls(): array
+    {
+        return $this->readsCredentialSubclass
+            ? [...self::CREDENTIAL_CALLS, self::PARENT_CONSTRUCTOR_CALL]
+            : self::CREDENTIAL_CALLS;
     }
 
     /**
@@ -912,14 +979,16 @@ final class SecretTextRedactor
      */
     private function carryPatterns(): array
     {
-        if ($this->carryPatterns !== null) {
-            return $this->carryPatterns;
+        $variant = (int) $this->readsCredentialSubclass;
+
+        if (isset($this->carryPatterns[$variant])) {
+            return $this->carryPatterns[$variant];
         }
 
         [$key, $call] = $this->keyAndCallPatterns();
         $assignment = '(?<![\w.\-])["\']?'.$key.'["\']?\]?\s*+(?:=>|=|\.=|\?\?=)';
 
-        return $this->carryPatterns = [
+        return $this->carryPatterns[$variant] = [
             'value' => '/'.$assignment.'\s*+$/i',
             'heredoc' => '/(?:'.$assignment.'|(?<!\w)'.$call.')'
                 .'\s*+<<<[ \t]*+(?<quote>["\']?)(?<marker>[A-Za-z_]\w*+)\k<quote>\s*+$/i',

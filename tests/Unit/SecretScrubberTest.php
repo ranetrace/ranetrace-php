@@ -701,6 +701,47 @@ test('scrubString leaves calls that only look like a credential-taking call read
     'withBasicAuth with no literal' => ['Http::withBasicAuth($user, $pass);'],
 ]);
 
+test('scrubSource reads parent::__construct as a credential call in a PDO or mysqli subclass', function (array $lines, array $expected): void {
+    // A subclass passes the credentials on to the constructor PHP masks only
+    // in a trace, so the call's name says nothing, but its class does.
+    expect(scrubber()->scrubSource($lines))->toBe($expected);
+})->with([
+    'one line' => [
+        ['class Db extends PDO', '{', "    public function __construct() { parent::__construct(\$dsn, 'root', 'hunter2'); }", '}'],
+        ['class Db extends PDO', '{', "    public function __construct() { parent::__construct(\$dsn, '[REDACTED]', '[REDACTED]'); }", '}'],
+    ],
+    'over several lines' => [
+        ['final class Db extends \\PDO {', '    parent::__construct(', "        'mysql:host=db',", "        'root',", "        'hunter2',", '    );', "    \$name = 'Bob';"],
+        ['final class Db extends \\PDO {', '    parent::__construct(', "        '[REDACTED]',", "        '[REDACTED]',", "        '[REDACTED]',", '    );', "    \$name = 'Bob';"],
+    ],
+    'mysqli in lower case, spaced' => [
+        ['class Db extends mysqli', "parent :: __construct ('db', 'root', 'pw');"],
+        ['class Db extends mysqli', "parent :: __construct ('[REDACTED]', '[REDACTED]', '[REDACTED]');"],
+    ],
+    'the extends line far above the call' => [
+        ['class Db extends PDO', ...array_fill(0, 40, '    // filler'), "parent::__construct(\$dsn, 'root', 'pw');"],
+        ['class Db extends PDO', ...array_fill(0, 40, '    // filler'), "parent::__construct(\$dsn, '[REDACTED]', '[REDACTED]');"],
+    ],
+]);
+
+test('scrubSource leaves parent::__construct readable outside a PDO or mysqli subclass', function (array $lines): void {
+    expect(scrubber()->scrubSource($lines))->toBe($lines);
+})->with([
+    'an exception subclass' => [['class Expired extends RuntimeException', "parent::__construct('Your session has expired.');"]],
+    'a PDO exception subclass' => [['class DbFailed extends PDOException', "parent::__construct('Connection refused.');"]],
+    'a class whose name starts with PDO' => [['class Db extends PDOWrapper', "parent::__construct('root', 'pw');"]],
+    'a namespaced PDO' => [['class Db extends App\\PDO', "parent::__construct('root', 'pw');"]],
+    'no extends line at all' => [["parent::__construct(\$dsn, 'root', 'pw');"]],
+]);
+
+test('a PDO subclass in one window does not change how the next window is read', function (): void {
+    $scrubber = scrubber();
+    $scrubber->scrubSource(['class Db extends PDO', "parent::__construct('root', 'pw');"]);
+
+    expect($scrubber->scrubSource(["parent::__construct('Expired.');"]))->toBe(["parent::__construct('Expired.');"])
+        ->and($scrubber->scrubString("parent::__construct('Expired.') extends PDO"))->toBe("parent::__construct('Expired.') extends PDO");
+});
+
 test('scrubSource redacts the literals passed to a known credential-taking call', function (array $lines, array $expected): void {
     expect(scrubber()->scrubSource($lines))->toBe($expected);
 })->with([
@@ -1155,6 +1196,16 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         'a name spaced from its call',
         array_fill(0, 11, "'password' => f".str_repeat(' ', 50_000)."('x')"),
         array_fill(0, 11, "'password' => [REDACTED]".str_repeat(' ', 50_000)."('[REDACTED]')"),
+    ],
+    'a PDO subclass with many parent calls' => [
+        'a PDO subclass with many parent calls',
+        ['class Db extends PDO', ...array_fill(0, 10, str_repeat("parent::__construct('a'); ", 5_000))],
+        ['class Db extends PDO', ...array_fill(0, 10, str_repeat("parent::__construct('[REDACTED]'); ", 5_000))],
+    ],
+    'extends and long blank runs on every line' => [
+        'extends and long blank runs on every line',
+        array_fill(0, 11, str_repeat('extends ', 5_000).'extends'.str_repeat(' ', 50_000).'PDOX'),
+        array_fill(0, 11, str_repeat('extends ', 5_000).'extends'.str_repeat(' ', 50_000).'PDOX'),
     ],
     'an open heredoc' => [
         'an open heredoc',
