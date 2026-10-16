@@ -970,6 +970,22 @@ test('scrubSource carries an open bracket of a sensitive value past a comment', 
         ['$c->setToken(', '    /* first', "    second */ 'x'", ');', "\$name = 'Bob';"],
         ['$c->setToken(', '    /* first', "    second */ '[REDACTED]'", ');', "\$name = 'Bob';"],
     ],
+    'a block comment with an apostrophe before its end' => [
+        ['$c->setToken(', '    /* first', "    it's */ 'x'", ');', "\$name = 'Bob';"],
+        ['$c->setToken(', '    /* first', "    it's */ '[REDACTED]'", ');', "\$name = 'Bob';"],
+    ],
+    'a block comment of several lines' => [
+        ['$c->setCredentials(', "    /* the user's", "    name, and don't", '       forget the', "    password: hunter2 */ 'u',", "    'p'", ');', "\$name = 'Bob';"],
+        ['$c->setCredentials(', "    /* the user's", "    name, and don't", '       forget the', "    password: [REDACTED] */ '[REDACTED]',", "    '[REDACTED]'", ');', "\$name = 'Bob';"],
+    ],
+    'a block comment reopened after one closes' => [
+        ['$c->setToken(', '    /* a', "    b */ 'u', /* c", '', "    d */ 'p'", ');'],
+        ['$c->setToken(', '    /* a', "    b */ '[REDACTED]', /* c", '', "    d */ '[REDACTED]'", ');'],
+    ],
+    'a block comment that never closes in the window' => [
+        ["'password' => Hash::make(", "    /* it's", "    'x'"],
+        ["'password' => Hash::make(", "    /* it's", "    'x'"],
+    ],
     'a closing php tag still ends it' => [
         ['$c->setCredentials(', "    'u' ?>", "<p>'Bob'</p>"],
         ['$c->setCredentials(', "    '[REDACTED]' ?>", "<p>'Bob'</p>"],
@@ -1224,8 +1240,8 @@ test('scrubSource stays linear on long windows', function (string $label, array 
     ],
     'sensitive calls each opening a comment' => [
         'sensitive calls each opening a comment',
-        [str_repeat('setToken( // ', 5_000), str_repeat('setToken(/* ', 5_000), "'x'"],
-        [str_repeat('setToken( // ', 5_000), str_repeat('setToken(/* ', 5_000), "'[REDACTED]'"],
+        [str_repeat('setToken( // ', 5_000), str_repeat('setToken(/* ', 5_000), "*/ 'x'"],
+        [str_repeat('setToken( // ', 5_000), str_repeat('setToken(/* ', 5_000), "*/ '[REDACTED]'"],
     ],
     'a name and a long run of blanks' => [
         'a name and a long run of blanks',
@@ -1246,6 +1262,11 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         'extends and long blank runs on every line',
         array_fill(0, 11, str_repeat('extends ', 5_000).'extends'.str_repeat(' ', 50_000).'PDOX'),
         array_fill(0, 11, str_repeat('extends ', 5_000).'extends'.str_repeat(' ', 50_000).'PDOX'),
+    ],
+    'a block comment left open over the window' => [
+        'a block comment left open over the window',
+        ['setToken(/*', ...array_fill(0, 10, str_repeat("it's * / ", 10_000))],
+        ['setToken(/*', ...array_fill(0, 10, str_repeat("it's * / ", 10_000))],
     ],
     'an open heredoc' => [
         'an open heredoc',

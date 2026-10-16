@@ -76,6 +76,12 @@ final class SecretTextRedactor
     private const string CARRIED_CODE = 'code';
 
     /**
+     * What a carried value's `quote` holds when the line before left a block
+     * comment open inside it, rather than a string literal.
+     */
+    private const string CARRIED_BLOCK_COMMENT = '*/';
+
+    /**
      * The characters that continue a heredoc marker, so `EOT` closes a body
      * and `EOTX` does not.
      */
@@ -290,7 +296,9 @@ final class SecretTextRedactor
      * code; see {@see redactValue()}. $carried is what the line before left
      * open: its `kind` is one of the `CARRIED_*` constants, `depth` the
      * brackets open inside it and `quote` the quote of a literal it left
-     * open. Comes back with what $text leaves open in turn, or null.
+     * open, or {@see CARRIED_BLOCK_COMMENT} for a block comment it left open,
+     * which is read as a comment up to its end before the value goes on.
+     * Comes back with what $text leaves open in turn, or null.
      *
      * Offsets here are byte offsets, as PCRE reports them, hence `8bit` on
      * every length and substring. Every boundary the scrubber cuts at is an
@@ -313,7 +321,17 @@ final class SecretTextRedactor
             $scrubbed = mb_substr($text, 0, $start, '8bit');
             $offset = $start;
 
-            if ($carried['quote'] !== null) {
+            if ($carried['quote'] === self::CARRIED_BLOCK_COMMENT) {
+                [$commentEnd, $closed] = $this->blockCommentEnd($text, $start);
+                $scrubbed .= $this->scrubComment(mb_substr($text, $start, $commentEnd - $start, '8bit'));
+
+                if (! $closed) {
+                    return [$scrubbed.mb_substr($text, $commentEnd, null, '8bit'), $carried];
+                }
+
+                $offset = $commentEnd;
+                $carried['quote'] = null;
+            } elseif ($carried['quote'] !== null) {
                 [$bodyEnd, $closed] = $this->literalBodyEnd($text, $start, $carried['quote']);
                 $scrubbed .= $bodyEnd > $start ? SecretScrubber::REDACTION : '';
 
@@ -752,6 +770,7 @@ final class SecretTextRedactor
 
                 if (! $closed) {
                     $reachedLineEnd = true;
+                    $openQuote = $character === '/' && $next === '*' ? self::CARRIED_BLOCK_COMMENT : null;
 
                     break;
                 }
@@ -782,7 +801,18 @@ final class SecretTextRedactor
             return [$offset + strcspn($text, "\r\n", $offset), false];
         }
 
-        $position = $offset + 2;
+        return $this->blockCommentEnd($text, $offset + 2);
+    }
+
+    /**
+     * Where a block comment that is open at $from ends, just past its closing
+     * marker, and whether that marker comes before the end of the line.
+     *
+     * @return array{0: int, 1: bool}
+     */
+    private function blockCommentEnd(string $text, int $from): array
+    {
+        $position = $from;
 
         while (true) {
             $position += strcspn($text, "*\r\n", $position);
