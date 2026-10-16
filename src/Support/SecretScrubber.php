@@ -433,9 +433,11 @@ final class SecretScrubber implements Scrubber
             }
 
             $anchorEnd = $matches[0][1] + mb_strlen((string) $matches[0][0], '8bit');
-            $value = ($matches['comma'][1] ?? -1) >= 0
-                ? $this->redactQuotedValue($text, $anchorEnd)
-                : $this->redactValue($text, $anchorEnd);
+            $value = match (true) {
+                ($matches['call'][1] ?? -1) >= 0 => $this->redactCodeValue($text, $anchorEnd, true),
+                ($matches['comma'][1] ?? -1) >= 0 => $this->redactQuotedValue($text, $anchorEnd),
+                default => $this->redactValue($text, $anchorEnd),
+            };
 
             $scrubbed .= mb_substr($text, $offset, $anchorEnd - $offset, '8bit');
             $offset = $anchorEnd;
@@ -454,7 +456,8 @@ final class SecretScrubber implements Scrubber
      * the separator after it.
      *
      * - A key is a token of `[\w.\-]` holding a sensitive fragment, optionally
-     *   quoted: `password=`, `"api_key":`, `'token' =>`.
+     *   quoted and optionally closing a subscript: `password=`, `"api_key":`,
+     *   `'token' =>`, `$config['db']['password'] =`.
      * - The separator is `=>`, `:`, `=`, `.=`, `??=` or a comparison (`==`,
      *   `===`, `!=`, `!==`), held atomically so `=>` can never be taken as `=`
      *   followed by a value of `>`. `::` is not a separator, so
@@ -462,6 +465,13 @@ final class SecretScrubber implements Scrubber
      * - A quoted key followed by `,` and a quote is an anchor too:
      *   `define('STRIPE_SECRET', '...')`, `env('API_KEY', '...')`. Its value is
      *   read as a quoted value only.
+     * - A call to a function or method whose name holds a sensitive fragment
+     *   is an anchor as well, up to its `(`: `Stripe::setApiKey(`,
+     *   `$client->setToken(`, `Http::withToken(`. What follows is read as a code
+     *   value inside the call's parentheses, so its literals are redacted, every
+     *   argument of it, and a call with no literal stays as written. A
+     *   credential passed to a call whose name says nothing about it, such as
+     *   `new PDO($dsn, 'root', 'hunter2')`, is not recognised.
      *
      * Three details are load-bearing, all of them about cost. It runs on stack
      * traces and log messages, which are the longest, least structured strings
@@ -497,9 +507,9 @@ final class SecretScrubber implements Scrubber
         $separator = '(?>=>|:(?!:)|!==?|===?|\.=|\?\?=|=)';
 
         return $this->anchorPattern = '/(?<![\w.\-])(?:'
-            .'["\']?'.$key.'["\']?\s*+'.$separator.'\s*+'
+            .'["\']?'.$key.'["\']?\]?\s*+'.$separator.'\s*+'
             .'|(?<comma>["\']'.$key.'["\']\s*+,\s*+)(?=["\'])'
-            .')/i';
+            .')|(?<!\w)(?<call>\w{0,'.self::MAX_KEY_PREFIX.'}(?:'.$alternation.')\w*+\()/i';
     }
 
     /**
@@ -575,7 +585,8 @@ final class SecretScrubber implements Scrubber
      * the offset just past it.
      *
      * The value ends at the end of its line, at a closing bracket that has no
-     * opening one inside the value, at a `,` (unless $insideCall) or `;` outside
+     * opening one inside the value (for a call, the one that closes it), at a
+     * `,` (not inside a call, where it only separates arguments) or `;` outside
      * every bracket, or where a `//`, `/*` or `#` comment or a `?>` starts. A
      * literal runs as a quoted value does, so a comma, bracket or comment
      * marker inside one is never taken for the end. This is one pass over the

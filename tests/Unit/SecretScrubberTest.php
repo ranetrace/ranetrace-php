@@ -412,6 +412,56 @@ test('a code value stops at the end of its line, so the next line of a trace is 
         ->toBe("'password' => Hash::make('[REDACTED]\nnext 'line'");
 });
 
+test('scrubString treats a quoted key that closes a subscript as a key', function (string $line, string $expected): void {
+    // The `]` between the key and the separator used to hide the key, so an
+    // assignment into a config array shipped its value as written.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'single subscript' => ["\$config['password'] = 'hunter2';", "\$config['password'] = '[REDACTED]';"],
+    'nested subscript' => ['$config["db"]["password"] = "hunter2";', '$config["db"]["password"] = "[REDACTED]";'],
+    'environment' => ["\$_ENV['API_KEY'] = 'sk_live_x';", "\$_ENV['API_KEY'] = '[REDACTED]';"],
+    'code value' => ["\$config['password'] = Hash::make('x');", "\$config['password'] = Hash::make('[REDACTED]');"],
+    'compared with a literal' => ["if (\$config['password'] === 'x') {", "if (\$config['password'] === '[REDACTED]') {"],
+]);
+
+test('scrubString keeps a subscript key compared with code readable', function (): void {
+    expect(scrubber()->scrubString("if (\$config['password'] === \$input) {"))->toBe("if (\$config['password'] === \$input) {")
+        ->and(scrubber()->scrubString("\$value = \$config['password'];"))->toBe("\$value = \$config['password'];")
+        ->and(scrubber()->scrubString("foo(\$config['token'], 'x');"))->toBe("foo(\$config['token'], 'x');");
+});
+
+test('scrubString redacts the literals passed to a call whose name holds a sensitive fragment', function (string $line, string $expected): void {
+    // The argument of a setter carries no key of its own, so the call's name is
+    // the only thing that says what it holds.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'static setter' => ["Stripe::setApiKey('sk_live_abc123');", "Stripe::setApiKey('[REDACTED]');"],
+    'method setter' => ["\$client->setToken('tok_abc');", "\$client->setToken('[REDACTED]');"],
+    'fluent call' => ["Http::withToken('abc')->get(\$url);", "Http::withToken('[REDACTED]')->get(\$url);"],
+    'every argument' => ["\$client->setCredentials('user', 'pass');", "\$client->setCredentials('[REDACTED]', '[REDACTED]');"],
+    'a function' => ["\$hash = password_hash('hunter2', PASSWORD_DEFAULT);", "\$hash = password_hash('[REDACTED]', PASSWORD_DEFAULT);"],
+    'nested arguments' => ["\$c->setSecret(trim('a'), ['k' => 'v']);", "\$c->setSecret(trim('[REDACTED]'), ['[REDACTED]' => '[REDACTED]']);"],
+    'the rest of the line is untouched' => ["\$c->setToken('a'); \$name = 'Bob';", "\$c->setToken('[REDACTED]'); \$name = 'Bob';"],
+    'a frame in a text trace' => ['#0 /app/Billing.php(12): App\Billing->setApiKey(\'sk_live_x\')', '#0 /app/Billing.php(12): App\Billing->setApiKey(\'[REDACTED]\')'],
+]);
+
+test('scrubString leaves a sensitive call with no literal byte-for-byte', function (string $line): void {
+    expect(scrubber()->scrubString($line))->toBe($line);
+})->with([
+    'getter' => ['$token = $user->getRememberToken();'],
+    'static lookup' => ['$found = PersonalAccessToken::findToken($token);'],
+    'no arguments' => ['PersonalAccessToken::findToken();'],
+    'a helper' => ['<input type="hidden" value="{{ csrf_token() }}">'],
+]);
+
+test('scrubString does not catch a credential passed to a call with no sensitive name', function (): void {
+    // Not covered on purpose: positional arguments carry no marker, and every
+    // call with a literal argument would have to be redacted to catch them.
+    // RANETRACE_ERRORS_CAPTURE_SOURCE=false is the way to send no source.
+    expect(scrubber()->scrubString("\$pdo = new PDO(\$dsn, 'root', 'hunter2');"))->toBe("\$pdo = new PDO(\$dsn, 'root', 'hunter2');")
+        ->and(scrubber()->scrubString("mysqli_connect('db', 'root', 'hunter2');"))->toBe("mysqli_connect('db', 'root', 'hunter2');");
+});
+
 test('scrubString still redacts a bare token whole, whatever it spells', function (string $line, string $expected): void {
     // true, null, numbers and constants stay bare tokens: they are redacted as
     // before, which hides nothing a reader needs.
@@ -594,6 +644,21 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'a long chain of names with no call',
         'token='.str_repeat('a.', 25_000),
         'token=[REDACTED]',
+    ],
+    'a sensitive call left open' => [
+        'a sensitive call left open',
+        'setToken('.str_repeat("'a', (", 25_000),
+        'setToken('.str_repeat("'[REDACTED]', (", 25_000),
+    ],
+    'sensitive calls repeated' => [
+        'sensitive calls repeated',
+        str_repeat('getToken()->', 10_000),
+        str_repeat('getToken()->', 10_000),
+    ],
+    'a long name before a paren' => [
+        'a long name before a paren',
+        str_repeat('a', 50_000).'token(',
+        str_repeat('a', 50_000).'token(',
     ],
     'many code values in a row' => [
         'many code values in a row',
