@@ -198,7 +198,7 @@ test('a vendor frame is recognised with forward and back slashes on either side'
         }
     };
 
-    $frame = framePayload(frameBuilder($root, [], [$mapper]), $exception)['frames'][0];
+    $frame = framePayload(frameBuilder($root, ['buffer_path' => tempDirectory()], [$mapper]), $exception)['frames'][0];
 
     expect($frame['is_vendor'])->toBe($isVendor)
         ->and($frame['source'])->toBeNull();
