@@ -336,6 +336,34 @@ final class SecretTextRedactor
     }
 
     /**
+     * $text with every secret that its value alone gives away redacted: the
+     * password of a URL ({@see URL_PASSWORD}) and a token with a known prefix
+     * ({@see PREFIXED_TOKEN}). It runs after the key pass, on its output, so
+     * it reaches what that pass keeps: a literal under a name nobody listed
+     * (`$dsn = 'pgsql://app:secret@db'`), a positional argument and prose.
+     * A shape inside a placeholder the key pass left cannot match, since
+     * `[REDACTED]` holds none. {@see SecretScrubber::scrubDeep()} runs it on
+     * every string value on its own, without the key pass, which the keys of
+     * an array stand in for there.
+     *
+     * @throws UnexpectedValueException when PCRE gives up
+     */
+    public function redactSecretValues(string $text): string
+    {
+        $redacted = preg_replace(
+            [self::URL_PASSWORD, self::PREFIXED_TOKEN],
+            ['${1}'.SecretScrubber::REDACTION.'@', SecretScrubber::REDACTION],
+            $text,
+        );
+
+        if ($redacted === null) {
+            throw new UnexpectedValueException(preg_last_error_msg());
+        }
+
+        return $redacted;
+    }
+
+    /**
      * Whether the lines declare a class that extends `PDO` or `mysqli`, the
      * global class itself and not one whose name merely starts the same. The
      * lines are read as one text, so the class name can sit on a line after
@@ -1427,32 +1455,6 @@ final class SecretTextRedactor
             mb_substr($segment, $start, $end - $start, '8bit'),
             mb_substr($segment, $end, null, '8bit'),
         ];
-    }
-
-    /**
-     * $text with every secret that its value alone gives away redacted: the
-     * password of a URL ({@see URL_PASSWORD}) and a token with a known prefix
-     * ({@see PREFIXED_TOKEN}). It runs after the key pass, on its output, so
-     * it reaches what that pass keeps: a literal under a name nobody listed
-     * (`$dsn = 'pgsql://app:secret@db'`), a positional argument and prose.
-     * A shape inside a placeholder the key pass left cannot match, since
-     * `[REDACTED]` holds none.
-     *
-     * @throws UnexpectedValueException when PCRE gives up
-     */
-    private function redactSecretValues(string $text): string
-    {
-        $redacted = preg_replace(
-            [self::URL_PASSWORD, self::PREFIXED_TOKEN],
-            ['${1}'.SecretScrubber::REDACTION.'@', SecretScrubber::REDACTION],
-            $text,
-        );
-
-        if ($redacted === null) {
-            throw new UnexpectedValueException(preg_last_error_msg());
-        }
-
-        return $redacted;
     }
 
     /**

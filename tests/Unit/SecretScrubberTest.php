@@ -1956,3 +1956,83 @@ test('the value shapes stay linear on long runs', function (string $label, strin
     'slack prefixes back to back' => ['slack prefixes back to back', str_repeat('xoxb-', 10_000), '[REDACTED]'],
     'a long stripe key' => ['a long stripe key', 'sk_live_'.str_repeat('a', 50_000), '[REDACTED]'],
 ]);
+
+test('scrubDeep redacts a secret that its value gives away under a key that says nothing', function (): void {
+    $result = scrubber()->scrubDeep([
+        'dsn' => 'pgsql://app:Pw0rd@db/app',
+        'note' => 'charged with sk_live_abc123',
+        'nested' => ['cache' => ['url' => 'redis://:pw@cache:6379']],
+        'list' => ['AKIAIOSFODNN7EXAMPLE', 'plain'],
+        'count' => 3,
+        'enabled' => true,
+        'missing' => null,
+        'empty' => '',
+    ]);
+
+    expect($result)->toBe([
+        'dsn' => 'pgsql://app:[REDACTED]@db/app',
+        'note' => 'charged with [REDACTED]',
+        'nested' => ['cache' => ['url' => 'redis://:[REDACTED]@cache:6379']],
+        'list' => ['[REDACTED]', 'plain'],
+        'count' => 3,
+        'enabled' => true,
+        'missing' => null,
+        'empty' => '',
+    ]);
+});
+
+test('scrubDeep redacts the password of a url and its sensitive query together', function (): void {
+    // The value pass runs last because parse_url(), which the query scrub
+    // relies on, gives up on the `[` of a placeholder in the userinfo.
+    expect(scrubber()->scrubDeep(['endpoint' => 'https://app:pw@api.test/v1?token=abc&page=2']))
+        ->toBe(['endpoint' => 'https://app:[REDACTED]@api.test/v1?token=[REDACTED]&page=2']);
+});
+
+test('scrubDeep leaves a look-alike of a secret value readable', function (string $value): void {
+    expect(scrubber()->scrubDeep(['v' => $value]))->toBe(['v' => $value]);
+})->with([
+    'a url without a password' => ['https://user@example.com/x'],
+    'a stripe publishable key' => ['pk_live_abc123'],
+    'an identifier' => ['sk_live_key_id'],
+    'prose' => ['the build passed in 3s'],
+]);
+
+test('scrubDeep passes the callable the value as recorded, before its password is redacted', function (): void {
+    $seen = [];
+
+    scrubber()->scrubDeep(
+        ['url' => 'https://app:pw@app.test/reset-password/AAA'],
+        function (string $url) use (&$seen): array {
+            $seen[] = $url;
+
+            return ['AAA'];
+        }
+    );
+
+    expect($seen)->toBe(['https://app:pw@app.test/reset-password/AAA']);
+});
+
+test('scrub stays key-based and leaves a secret value under a key that says nothing alone', function (): void {
+    // scrub() is the key primitive; every capture path goes through
+    // scrubDeep(), which adds the value pass.
+    expect(scrubber()->scrub(['note' => 'sk_live_abc123']))->toBe(['note' => 'sk_live_abc123']);
+});
+
+test('scrubDeep redacts a value whose value pass fails, and says so in the internal log', function (): void {
+    // The value patterns barely backtrack, so the limit has to be 1 before
+    // PCRE gives up on them, and only on a value with a match to find.
+    $directory = tempDirectory();
+    $scrubber = scrubber(['buffer_path' => $directory]);
+    $limit = ini_get('pcre.backtrack_limit');
+
+    try {
+        ini_set('pcre.backtrack_limit', '1');
+
+        $result = $scrubber->scrubDeep(['note' => 'pgsql://app:pw@db', 'count' => 3]);
+    } finally {
+        ini_set('pcre.backtrack_limit', $limit === false ? '1000000' : $limit);
+    }
+
+    expect($result)->toBe(['note' => '[REDACTED]', 'count' => 3])
+        ->and(scrubberInternalLog($directory))->toContain('Secret scrubbing of a value failed');
+});

@@ -141,9 +141,21 @@ final class SecretScrubber implements Scrubber
 
     /**
      * Like {@see scrub()} (key-based redaction), but ALSO scrubs secrets inside
-     * URL-shaped string VALUES, catching a secret in an innocuously-keyed URL
-     * (e.g. a breadcrumb `data.endpoint` of `https://api/x?token=…`) that
-     * key-based scrubbing alone would miss.
+     * string VALUES, catching a secret under an innocuous key that key-based
+     * scrubbing alone would miss: a breadcrumb `data.endpoint` of
+     * `https://api/x?token=…`, or a log context `dsn` of
+     * `pgsql://app:secret@db`.
+     *
+     * Every string value gets the value pass of
+     * {@see SecretTextRedactor::redactSecretValues()}: the password of a URL
+     * and a token with a known prefix. It lives here rather than in
+     * {@see scrub()}, which stays the key primitive, because every capture
+     * path (log context and extra, event properties, breadcrumbs, an
+     * exception's context()) comes through this method. It costs two linear
+     * regex passes per string, over data {@see DataSanitizer} has already
+     * bounded. A value whose pass fails becomes the placeholder, for the
+     * reason {@see scrubString()} fails closed, and the rest of the data is
+     * scrubbed as usual.
      *
      * Both halves of a URL can carry one. The QUERY is always scrubbed. The
      * PATH is scrubbed only for the segment values the caller declares secret,
@@ -174,7 +186,7 @@ final class SecretScrubber implements Scrubber
      */
     public function scrubDeep(mixed $data, array|callable|null $sensitiveValues = null): mixed
     {
-        return $this->scrubUrlValues($this->scrub($data), $sensitiveValues);
+        return $this->scrubValues($this->scrub($data), $sensitiveValues);
     }
 
     /**
@@ -526,10 +538,57 @@ final class SecretScrubber implements Scrubber
     }
 
     /**
-     * Recursively apply {@see scrubUrl()} to every string value that looks like
-     * a URL, leaving all other values untouched. A relative reference counts:
-     * a signed download link recorded as `/exports/42/download?signature=…`
-     * carries its secret in exactly the same place an absolute one does.
+     * Recursively apply {@see scrubUrlValue()} and then the value pass to
+     * every string value, leaving all other values untouched.
+     *
+     * The value pass runs last because {@see scrubUrl()} reads the query with
+     * `parse_url()`, which gives up on the `[` of a placeholder in a URL's
+     * userinfo and would then leave the query unscrubbed.
+     *
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitiveValues
+     */
+    private function scrubValues(mixed $data, array|callable|null $sensitiveValues): mixed
+    {
+        if (is_string($data)) {
+            return $this->redactSecretValues($this->scrubUrlValue($data, $sensitiveValues));
+        }
+
+        if (is_array($data)) {
+            foreach ($data as $key => $value) {
+                $data[$key] = $this->scrubValues($value, $sensitiveValues);
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * {@see SecretTextRedactor::redactSecretValues()} for one string value of
+     * {@see scrubDeep()}, failing closed for that value alone.
+     */
+    private function redactSecretValues(string $value): string
+    {
+        if ($value === '') {
+            return $value;
+        }
+
+        try {
+            return $this->textRedactor()->redactSecretValues($value);
+        } catch (UnexpectedValueException $failure) {
+            $this->log->warning('Secret scrubbing of a value failed, so the whole value was redacted.', [
+                'error' => $failure->getMessage(),
+                'length' => mb_strlen($value),
+            ]);
+
+            return self::REDACTION;
+        }
+    }
+
+    /**
+     * Apply {@see scrubUrl()} to a string value that looks like a URL, and
+     * return any other value untouched. A relative reference counts: a signed
+     * download link recorded as `/exports/42/download?signature=…` carries its
+     * secret in exactly the same place an absolute one does.
      *
      * The QUERY is always scrubbed. The PATH is scrubbed only for the segment
      * values $sensitiveValues declares secret-bearing, in whichever of its three
@@ -545,26 +604,16 @@ final class SecretScrubber implements Scrubber
      *
      * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitiveValues
      */
-    private function scrubUrlValues(mixed $data, array|callable|null $sensitiveValues): mixed
+    private function scrubUrlValue(string $value, array|callable|null $sensitiveValues): string
     {
-        if (is_string($data)) {
-            if (! $this->isScrubbableUrl($data)) {
-                return $data;
-            }
-
-            $resolved = $this->resolveSensitiveValues($data, $sensitiveValues);
-            $scrubbed = $this->scrubUrl($data) ?? $data;
-
-            return $this->scrubUrlPath($scrubbed, $resolved) ?? $scrubbed;
+        if (! $this->isScrubbableUrl($value)) {
+            return $value;
         }
 
-        if (is_array($data)) {
-            foreach ($data as $key => $value) {
-                $data[$key] = $this->scrubUrlValues($value, $sensitiveValues);
-            }
-        }
+        $resolved = $this->resolveSensitiveValues($value, $sensitiveValues);
+        $scrubbed = $this->scrubUrl($value) ?? $value;
 
-        return $data;
+        return $this->scrubUrlPath($scrubbed, $resolved) ?? $scrubbed;
     }
 
     /**
