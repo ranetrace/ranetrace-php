@@ -377,6 +377,20 @@ test('scrubString never keeps an unquoted value under a sensitive key', function
     'an unclosed bracket' => ['token=(abc def', 'token=[REDACTED]'],
 ]);
 
+test('scrubString never ships a literal inside a code-shaped value under a sensitive key', function (string $line, string $expected): void {
+    // The value used to stop at its first quote, which left the literal, the
+    // actual secret, behind the placeholder.
+    expect(scrubber()->scrubString($line))->toBe($expected);
+})->with([
+    'a static call' => ["'password' => Hash::make('x'),", "'password' => [REDACTED],"],
+    'a call with arguments' => ["token=foo(bar, 'baz') rest", 'token=[REDACTED] rest'],
+    'an env lookup' => ["secret: env('X', 'y')", 'secret: [REDACTED]'],
+    'a chain after the call' => ["token=\$a->get('x')->value rest", 'token=[REDACTED] rest'],
+    'a bracket inside a literal' => ["token=f(')', 'y') rest", 'token=[REDACTED] rest'],
+    'an unclosed call' => ["token=f('x', 'y'", 'token=[REDACTED]'],
+    'an unclosed call ends with its line' => ["token=f('x'\nnext 'line'", "token=[REDACTED]\nnext 'line'"],
+]);
+
 test('scrubString keeps the code and redacts the literals of a sensitive call, as source does', function (): void {
     $line = '#0 /app/Billing.php(12): App\Billing->setApiKey(\'sk_live_x\')';
 
@@ -957,6 +971,16 @@ test('scrubString stays linear on the long word runs that used to burn the backt
         'deeply nested code value',
         "'password' => ".str_repeat('[', 25_000).str_repeat(']', 25_000).',',
         "'password' => [REDACTED],",
+    ],
+    'code-shaped value of many calls' => [
+        'code-shaped value of many calls',
+        'token=a'.str_repeat("('x')", 25_000).' rest',
+        'token=[REDACTED] rest',
+    ],
+    'code-shaped value left open' => [
+        'code-shaped value left open',
+        'token=a'.str_repeat("(('x', ", 20_000),
+        'token=[REDACTED]',
     ],
     'a long chain of names with no call' => [
         'a long chain of names with no call',

@@ -32,9 +32,10 @@ use UnexpectedValueException;
  *   `'password' => Hash::make('x')` the literal is the secret and the rest is
  *   what makes the line worth reading. {@see startsCodeValue()} says what
  *   starts one, and {@see redactCodeValue()} where it ends.
- * - Outside source, a bracketed value (`(`, `[`, `{`) is redacted whole up to
- *   its matching closing bracket: `token=(abc)` and
- *   `{"token":{"value":"abc"}}` lose the bracket and all it holds.
+ * - Outside source, an unquoted value is redacted whole, and a bracket in it
+ *   is followed to its matching close: `token=(abc)`,
+ *   `{"token":{"value":"abc"}}` and `'password' => Hash::make('x')` lose the
+ *   value and every literal it holds.
  * - Anything else is a bare token, redacted up to whitespace, a quote or
  *   `,;&)]}`, after an optional `Bearer`, `Basic` or `Digest` scheme that is
  *   kept. `true`, `null`, a number or a constant is a bare token too: it is
@@ -329,8 +330,7 @@ final class SecretTextRedactor
      * its code and losing its literals. In a message, a trace or a command
      * line, `password=$Up3r`, `Bearer $TOKEN` and `token=(abc)` are not code:
      * the shell or the developer already put the secret there. So outside
-     * source an unquoted value is redacted whole, a bracketed one up to its
-     * matching closing bracket and any other up to a bare value's end.
+     * source an unquoted value is redacted whole, see {@see proseValueEnd()}.
      *
      * @return array{0: string, 1: int, 2: CarriedState|null}|null
      *
@@ -353,9 +353,9 @@ final class SecretTextRedactor
         }
 
         if (! $readsCode) {
-            return in_array($first, ['(', '[', '{'], true)
-                ? [$scheme.SecretScrubber::REDACTION, $this->bracketedValueEnd($text, $start), null]
-                : $this->redactBareValue($text, $start, $scheme);
+            $end = $this->proseValueEnd($text, $start);
+
+            return $end === $start ? null : [$scheme.SecretScrubber::REDACTION, $end, null];
         }
 
         $heredoc = $this->matchAt('/\G<<<[ \t]*+(["\']?)[A-Za-z_]\w*+\1/', $text, $start);
@@ -388,6 +388,28 @@ final class SecretTextRedactor
         }
 
         return [$scheme.SecretScrubber::REDACTION, $offset + $bareLength, null];
+    }
+
+    /**
+     * Where an unquoted value outside source that starts at $offset ends: at a
+     * bare value's stop, except that a bracket it reaches is followed to its
+     * matching close first. So `Hash::make('x')`, `foo(bar, 'baz')` and
+     * `(abc)` are redacted whole, and no literal inside one is left behind
+     * the placeholder.
+     */
+    private function proseValueEnd(string $text, int $offset): int
+    {
+        $position = $offset;
+
+        while (true) {
+            $position += strcspn($text, self::BARE_VALUE_STOPS.'([{', $position);
+
+            if (! in_array($text[$position] ?? '', ['(', '[', '{'], true)) {
+                return $position;
+            }
+
+            $position = $this->bracketedValueEnd($text, $position);
+        }
     }
 
     /**
