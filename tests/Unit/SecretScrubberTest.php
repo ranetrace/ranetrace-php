@@ -1410,6 +1410,11 @@ test('scrubSource stays linear on long windows', function (string $label, array 
         array_fill(0, 11, "'password' => f".str_repeat(' ', 50_000)."('x')"),
         array_fill(0, 11, "'password' => [REDACTED]".str_repeat(' ', 50_000)."('[REDACTED]')"),
     ],
+    'many closed sensitive calls on every line' => [
+        'many closed sensitive calls on every line',
+        array_fill(0, 10, str_repeat("\$c->setToken('a'); ", 10_000)),
+        array_fill(0, 10, str_repeat("\$c->setToken('[REDACTED]'); ", 10_000)),
+    ],
     'a PDO subclass with many parent calls' => [
         'a PDO subclass with many parent calls',
         ['class Db extends PDO', ...array_fill(0, 10, str_repeat("parent::__construct('a'); ", 5_000))],
