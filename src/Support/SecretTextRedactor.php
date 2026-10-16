@@ -230,7 +230,7 @@ final class SecretTextRedactor
      *   the end of its line goes on being redacted on the lines after it, up
      *   to its closing quote, and the value goes on as code after it.
      * - A private key. See {@see redactPrivateKeyBodies()}.
-     * - A subclass of `PDO` or `mysqli`. When a line declares one, its
+     * - A subclass of `PDO` or `mysqli`. When the lines declare one, its
      *   `parent::__construct(` is read as a credential call in every line.
      *
      * @param  list<string>  $lines  Without their line breaks.
@@ -267,8 +267,10 @@ final class SecretTextRedactor
     }
 
     /**
-     * Whether a line declares a class that extends `PDO` or `mysqli`, the
-     * global class itself and not one whose name merely starts the same.
+     * Whether the lines declare a class that extends `PDO` or `mysqli`, the
+     * global class itself and not one whose name merely starts the same. The
+     * lines are read as one text, so the class name can sit on a line after
+     * `extends`, with blank lines between; a comment between is not skipped.
      *
      * @param  list<string>  $lines
      *
@@ -276,19 +278,13 @@ final class SecretTextRedactor
      */
     private function declaresCredentialSubclass(array $lines): bool
     {
-        foreach ($lines as $line) {
-            $found = preg_match('/(?<![\w$])extends\s++\\\\?+(?:pdo|mysqli)(?![\w\\\\])/i', $line);
+        $found = preg_match('/(?<![\w$])extends\s++\\\\?+(?:pdo|mysqli)(?![\w\\\\])/i', implode("\n", $lines));
 
-            if ($found === false) {
-                throw new UnexpectedValueException(preg_last_error_msg());
-            }
-
-            if ($found === 1) {
-                return true;
-            }
+        if ($found === false) {
+            throw new UnexpectedValueException(preg_last_error_msg());
         }
 
-        return false;
+        return $found === 1;
     }
 
     /**
