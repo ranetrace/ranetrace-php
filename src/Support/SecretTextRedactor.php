@@ -597,10 +597,16 @@ final class SecretTextRedactor
      * A lookbehind, placed just past a key's closing quote, that refuses a
      * quoted key whose last dot segment is a {@see VALIDATION_RULES} entry.
      * Its alternatives are fixed-length words, so it costs a constant per key.
+     * They sit at the top level of the lookbehind because a nested alternation
+     * of unequal lengths needs PCRE2 10.43, and PHP is often linked to an older
+     * system PCRE2.
      */
     private function messageKeyGuard(): string
     {
-        return '(?<!\.(?:'.implode('|', self::VALIDATION_RULES).')["\'])';
+        return '(?<!'.implode('|', array_map(
+            static fn (string $rule): string => '\.'.$rule.'["\']',
+            self::VALIDATION_RULES
+        )).')';
     }
 
     /**

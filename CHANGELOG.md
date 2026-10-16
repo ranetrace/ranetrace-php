@@ -6,6 +6,9 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Fixed
+- **Scrubbing works on PHP linked to a PCRE2 older than 10.43.** 1.1.0 built a pattern that only PCRE2 10.43 and later can compile, and PHP is often linked to an older system PCRE2 (Ubuntu 22.04 and 24.04, Debian 12). There, every free-form scrub failed to compile, so error reports, logs and JavaScript errors were not captured. The pattern now compiles on every PCRE2 and redacts exactly what it did before. Nothing to do on upgrade
+
 ## [1.1.0] - 2026-10-16
 
 ### Added
