@@ -33,6 +33,24 @@ test('it registers both capture listeners, the error one in the capture phase', 
         ->toContain('    }, true);');
 });
 
+/**
+ * The capture phase hands the listener the `error` event of every resource that
+ * failed to load, fired on its element and carrying nothing. Reported under a
+ * name the script made up, a blocked tag manager alone filled the error list.
+ * `JavaScriptCaptureScriptBehaviourTest` runs both paths where node is present.
+ */
+test('the error listener leaves an event fired on an element alone and makes up no message', function (): void {
+    $script = captureScript();
+
+    $listener = mb_strpos($script, "window.addEventListener('error', function(event) {");
+    $guard = mb_strpos($script, 'if (event.target !== window) {');
+    $send = mb_strpos($script, "message: event.message || event.error?.message || '',");
+
+    expect($guard)->toBeGreaterThan($listener)
+        ->and($send)->toBeGreaterThan($guard)
+        ->and($script)->not->toContain('Unknown error');
+});
+
 test('the deduplication key is built from message, filename, line and column', function (): void {
     expect(captureScript())->toContain('return `${message}|${filename}|${line}|${column}`;');
 });

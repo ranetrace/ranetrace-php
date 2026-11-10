@@ -232,10 +232,23 @@
 
     /**
      * Global error handler
+     *
+     * A listener in the capture phase also receives the `error` event of a
+     * resource that failed to load (a blocked script, a broken image). The
+     * browser fires that one on the element, and it carries no message, file,
+     * line or error object. It is not a script error, so it is not reported.
+     *
+     * An event with no message of its own takes its error object's. One with
+     * neither is dropped by sendError() and never given a name here: every such
+     * report would be grouped under that name with nothing in it to act on.
      */
     window.addEventListener('error', function(event) {
+        if (event.target !== window) {
+            return;
+        }
+
         sendError({
-            message: event.message || 'Unknown error',
+            message: event.message || event.error?.message || '',
             filename: event.filename || '',
             line: event.lineno || 0,
             column: event.colno || 0,

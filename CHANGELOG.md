@@ -6,6 +6,9 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Fixed
+- **A resource that fails to load is no longer reported as an error named "Unknown error".** The browser script listens for `error` in the capture phase, so it also received the event a browser fires on a script, stylesheet or image that failed to load. That event carries no message, file, line or error object, and the script sent it under the name "Unknown error": a tag manager blocked by an ad blocker filed one empty report per page view. The script now reports an `error` event only when it was fired on `window`, which is where a script error is fired. An event without a message of its own takes the message of its error object, and one with neither is dropped instead of being given a name. If you added `'Unknown error'` to `javascript_errors.ignored_errors` to keep these reports out, remove it: the list matches on part of a message, so that entry also hides every real error whose message contains those words. Nothing else to do on upgrade
+
 ## [1.1.1] - 2026-10-16
 
 ### Fixed

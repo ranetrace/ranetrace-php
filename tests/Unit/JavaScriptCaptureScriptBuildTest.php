@@ -155,6 +155,9 @@ test('the twin still carries the behaviour the relay depends on', function (stri
     // Both listeners, the error one in the capture phase (`true` minifies to `!0`).
     'error listener in the capture phase' => ['window.addEventListener("error",'],
     'rejection listener' => ['window.addEventListener("unhandledrejection",'],
+    // Only an error event fired on window is a script error. One fired on an
+    // element is a resource that failed to load, and is not reported.
+    'error listener skips element events' => ['.target===window&&'],
     // The two headers every host sends, and the third only Laravel configures.
     'content type header' => ['"Content-Type":"application/json"'],
     'requested with header' => ['"X-Requested-With"]="XMLHttpRequest"'],
@@ -186,6 +189,14 @@ test('the twin still carries the behaviour the relay depends on', function (stri
     'keepalive on' => ['keepalive:!0'],
     'keepalive off' => ['keepalive:!1'],
 ]);
+
+/**
+ * An error event that carries no message is dropped. Given a name instead, every
+ * one of them is sent and grouped under that name with nothing in it to act on.
+ */
+test('the twin makes up no message for an error event that carries none', function (): void {
+    expect(minifiedCaptureScript())->not->toContain('Unknown error');
+});
 
 /**
  * The config keys are how a host talks to the script. They are property reads, so
