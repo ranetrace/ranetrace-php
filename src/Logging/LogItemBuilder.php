@@ -7,6 +7,7 @@ namespace Ranetrace\Php\Logging;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\PayloadSizer;
+use Ranetrace\Php\Support\ProjectRootStripper;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\Utf8;
 
@@ -25,6 +26,11 @@ use Ranetrace\Php\Support\Utf8;
  * Every string, array keys included, passes through {@see Utf8} before it is
  * scrubbed or capped, so an invalid byte becomes U+FFFD inside the caps rather
  * than failing the JSON encode of the item.
+ *
+ * The message and every string value of the context and the extra lose the
+ * project root from the paths they name, through {@see ProjectRootStripper},
+ * as an error item's free-form fields do: a logged throwable arrives as its
+ * string form, which holds its file and its whole text trace.
  */
 final class LogItemBuilder
 {
@@ -36,10 +42,14 @@ final class LogItemBuilder
 
     private const int MAX_EXTRA_BYTES = 10_240;
 
+    private readonly ProjectRootStripper $projectRoot;
+
     public function __construct(
         private readonly Config $config,
         private readonly Scrubber $scrubber,
-    ) {}
+    ) {
+        $this->projectRoot = new ProjectRootStripper($config);
+    }
 
     /**
      * @param  array<array-key, mixed>  $context  The record's own context, free-shape and untrusted.
@@ -72,7 +82,7 @@ final class LogItemBuilder
             // replacing mid-structure rather than truncating, since partial JSON
             // is not JSON.
             'context' => PayloadSizer::capBytes(
-                (array) $this->scrubber->scrubDeep(Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($context)), $sensitivePathValues),
+                (array) $this->scrubber->scrubDeep($this->withoutProjectRoot($context), $sensitivePathValues),
                 self::MAX_CONTEXT_BYTES,
                 'Context exceeded 50KB limit and was removed',
             ),
@@ -88,13 +98,24 @@ final class LogItemBuilder
      */
     private function message(string $message): string
     {
-        $message = $this->scrubber->scrubString(Utf8::repair($message));
+        $message = $this->scrubber->scrubString($this->projectRoot->strip(Utf8::repair($message)));
 
         if (mb_strlen($message) <= self::MAX_MESSAGE_LENGTH) {
             return $message;
         }
 
         return mb_substr($message, 0, self::MAX_MESSAGE_LENGTH - mb_strlen(self::TRUNCATION_SUFFIX)).self::TRUNCATION_SUFFIX;
+    }
+
+    /**
+     * Free-form record data made serializable and valid UTF-8, with the
+     * project root off the paths in its string values, ready to be scrubbed.
+     *
+     * @param  array<array-key, mixed>  $data
+     */
+    private function withoutProjectRoot(array $data): mixed
+    {
+        return $this->projectRoot->stripDeep(Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($data)));
     }
 
     /**
@@ -114,7 +135,7 @@ final class LogItemBuilder
     private function extra(array $extra, array|callable|null $sensitivePathValues): array
     {
         $capped = PayloadSizer::capBytes(
-            (array) $this->scrubber->scrubDeep(Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($extra)), $sensitivePathValues),
+            (array) $this->scrubber->scrubDeep($this->withoutProjectRoot($extra), $sensitivePathValues),
             self::MAX_EXTRA_BYTES,
             'Extra data exceeded 10KB limit and was removed',
         );

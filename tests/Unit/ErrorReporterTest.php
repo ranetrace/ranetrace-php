@@ -538,7 +538,10 @@ test('it never reports a throwable this SDK itself threw', function (): void {
 test('it falls back to the live superglobal and SAPI when no context was set', function (): void {
     $buffer = new ArrayBuffer;
 
-    errorReporter($buffer)->report(new RuntimeException('Something broke'));
+    // A project root no argument is under, so the arguments arrive as the
+    // process got them: the test runner is started by a path under the real
+    // root, which would be sent relative to it.
+    errorReporter($buffer, ['project_root' => '/nowhere'])->report(new RuntimeException('Something broke'));
 
     $payload = $buffer->payloads('errors')[0];
 

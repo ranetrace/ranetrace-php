@@ -56,3 +56,26 @@ test('a fixed list of sensitive values applies to every url in the record', func
     expect(logItem(['link' => 'https://api.test/reset-password/live-token'], [], ['live-token'])['context'])
         ->toBe(['link' => 'https://api.test/reset-password/[REDACTED]']);
 });
+
+test('a log record names a file under the project root by its relative path, in its message, context and extra', function (): void {
+    // A logged throwable is the usual carrier: Monolog hands it over as an
+    // object, and its string form holds the file and the whole text trace.
+    $config = testConfig(['project_root' => '/var/www/app']);
+    $exception = new RuntimeException('Could not read /var/www/app/storage/import.csv');
+
+    $item = (new LogItemBuilder($config, new SecretScrubber($config, new InternalLogger($config))))->build(
+        'error',
+        'Import failed for /var/www/app/storage/import.csv',
+        ['file' => '/var/www/app/storage/import.csv', 'exception' => $exception, 'rows' => 12],
+        'stack',
+        '2026-08-19T10:00:00+00:00',
+        ['script' => '/var/www/app/artisan'],
+    );
+
+    expect($item['message'])->toBe('Import failed for storage/import.csv')
+        ->and($item['context']['file'])->toBe('storage/import.csv')
+        ->and($item['context']['exception'])->toStartWith('RuntimeException: Could not read storage/import.csv in ')
+        ->and($item['context']['rows'])->toBe(12)
+        ->and($item['extra']['script'])->toBe('artisan')
+        ->and(json_encode($item, JSON_UNESCAPED_SLASHES))->not->toContain('/var/www/app');
+});

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ranetrace\Php\Errors;
 
 use Ranetrace\Php\Support\Diagnostics;
+use Ranetrace\Php\Support\ProjectRootStripper;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\Utf8;
 use Throwable;
@@ -30,10 +31,12 @@ use UnexpectedValueException;
  * into exceptions must not see the SDK's file checks. A scrubber that throws
  * costs that one window too.
  *
- * Every line is repaired to valid UTF-8, then the window is scrubbed for
- * secrets as a whole together with the lines above it (see
- * {@see LOOKBEHIND_LINES}), so one that spans lines is caught, and only then
- * is each line capped, so a secret cannot survive by straddling the cap.
+ * Every line is repaired to valid UTF-8 and loses the project root from any
+ * path it names (a compiled Blade view ends in a comment naming its template
+ * by absolute path), then the window is scrubbed for secrets as a whole
+ * together with the lines above it (see {@see LOOKBEHIND_LINES}), so one that
+ * spans lines is caught, and only then is each line capped, so a secret
+ * cannot survive by straddling the cap.
  *
  * @internal
  */
@@ -84,6 +87,7 @@ final class SourceReader
     public function __construct(
         private readonly Scrubber $scrubber,
         private readonly Diagnostics $log,
+        private readonly ProjectRootStripper $projectRoot,
     ) {}
 
     /**
@@ -223,7 +227,7 @@ final class SourceReader
             $contents[] = mb_rtrim($line, "\n");
         }
 
-        $scrubbed = array_values($this->scrubber->scrubSource($contents));
+        $scrubbed = array_values($this->scrubber->scrubSource($this->projectRoot->stripLines($contents)));
 
         if (count($scrubbed) !== count($contents)) {
             throw new UnexpectedValueException('The scrubber returned '.count($scrubbed).' lines for a window of '.count($contents));

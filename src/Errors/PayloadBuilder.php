@@ -10,6 +10,7 @@ use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\Diagnostics;
 use Ranetrace\Php\Support\ItemByteBudget;
+use Ranetrace\Php\Support\ProjectRootStripper;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
 use Ranetrace\Php\Support\Utf8;
@@ -55,6 +56,12 @@ use Throwable;
  * Every string taken from the throwable or the host passes through
  * {@see Utf8::repair()} before it is scrubbed or capped, so an invalid byte
  * becomes U+FFFD inside the cap rather than failing the JSON encode of its item.
+ *
+ * The absolute path of the project never leaves the host: it says how the
+ * server is laid out. A field that is a path is made relative by
+ * {@see boundFilePath()}, and every free-form text that can name one (a
+ * message, the trace, a source line, the command line, the exception context)
+ * passes through {@see ProjectRootStripper}.
  */
 final class PayloadBuilder
 {
@@ -153,6 +160,8 @@ final class PayloadBuilder
      */
     private readonly array $frameMappers;
 
+    private readonly ProjectRootStripper $projectRoot;
+
     /**
      * Set per build, so a mapper that fails on every frame writes one
      * diagnostics line per item rather than one per frame.
@@ -177,6 +186,7 @@ final class PayloadBuilder
         }
 
         $this->frameMappers = array_values($frameMappers);
+        $this->projectRoot = new ProjectRootStripper($config);
     }
 
     /**
@@ -212,7 +222,7 @@ final class PayloadBuilder
     {
         $this->frameMapperFailureLogged = false;
         $captureSource = $this->config->get('errors.capture_source') === true;
-        $reader = new SourceReader($this->scrubber, $this->log);
+        $reader = new SourceReader($this->scrubber, $this->log, $this->projectRoot);
 
         // The item's own throw site is NOT passed through the frame mappers:
         // its `file` and `line` decide grouping, so mapping them is a separate
@@ -239,12 +249,12 @@ final class PayloadBuilder
         // strings, "invalid api_key=…"), and getTraceAsString() can carry them
         // in argument values.
         return [
-            'message' => $this->truncate($this->scrubber->scrubString(Utf8::repair($throwable->getMessage())), self::MAX_MESSAGE_LENGTH),
+            'message' => $this->truncate($this->freeText($throwable->getMessage()), self::MAX_MESSAGE_LENGTH),
             'file' => $this->boundFilePath($file),
             'line' => $line,
             'type' => Utf8::repair($throwable::class),
             'environment' => $this->stringConfig('environment'),
-            'trace' => $this->truncate($this->scrubber->scrubString(Utf8::repair($throwable->getTraceAsString())), self::MAX_TRACE_LENGTH),
+            'trace' => $this->truncate($this->freeText($throwable->getTraceAsString()), self::MAX_TRACE_LENGTH),
             'headers' => $isConsole ? null : $this->headers($context),
             'context' => $source,
             'highlight_line' => $highlightLine,
@@ -380,7 +390,7 @@ final class PayloadBuilder
 
         return [
             'type' => (string) $this->codeName($previous::class, self::MAX_TYPE_LENGTH),
-            'message' => $this->truncate($this->scrubber->scrubString(Utf8::repair($previous->getMessage())), self::MAX_MESSAGE_LENGTH),
+            'message' => $this->truncate($this->freeText($previous->getMessage()), self::MAX_MESSAGE_LENGTH),
             'file' => $this->boundFilePath($location->file),
             'line' => max(0, $location->line),
             'source' => $wantsSource ? $location : null,
@@ -492,16 +502,9 @@ final class PayloadBuilder
             return null;
         }
 
-        $name = str_replace("\0", ' ', $name);
-
-        // Compared against the raw name, like boundFilePath(), and only at the
-        // start of a path: after the start of the name, a space, `:`, `{` or `(`.
-        $root = $this->config->get('project_root');
-        $root = is_scalar($root) ? mb_rtrim((string) $root, '/\\') : '';
-
-        if ($root !== '') {
-            $name = preg_replace('~(?<=^|[\s:{(])'.preg_quote($root, '~').'[/\\\\]~', '', $name) ?? $name;
-        }
+        // Stripped from the raw name, like boundFilePath(), so a root holding
+        // invalid bytes still matches the name that shares them.
+        $name = $this->projectRoot->strip(str_replace("\0", ' ', $name));
 
         return $this->truncate(Utf8::repair($name), $maxLength);
     }
@@ -531,7 +534,7 @@ final class PayloadBuilder
             }
 
             $scrubbed = $this->scrubber->scrubDeep(
-                Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($raw)),
+                $this->projectRoot->stripDeep(Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($raw))),
                 $context->refererPathValues(...),
             );
         } catch (Throwable $failure) {
@@ -764,7 +767,7 @@ final class PayloadBuilder
     {
         $command = $context->consoleCommand;
 
-        return $command === null ? null : $this->scrubber->scrubString(Utf8::repair($command));
+        return $command === null ? null : $this->freeText($command);
     }
 
     /**
@@ -784,13 +787,13 @@ final class PayloadBuilder
 
         foreach ($arguments as $argument) {
             if (is_scalar($argument)) {
-                $strings[] = Utf8::repair((string) $argument);
+                $strings[] = (string) $argument;
             }
         }
 
         return array_map(
             fn (string $argument): string => $this->truncate(
-                $this->scrubber->scrubString($argument),
+                $this->freeText($argument),
                 self::MAX_CONSOLE_ARGV_LENGTH,
             ),
             array_slice($strings, 0, self::MAX_CONSOLE_ARGV_COUNT)
@@ -851,6 +854,17 @@ final class PayloadBuilder
                     ? $email
                     : null,
         ];
+    }
+
+    /**
+     * A free-form text from the throwable or the host as it may leave: valid
+     * UTF-8, the project root taken off the paths in it, then secret-scrubbed.
+     * The root goes first, from the text as it was written, so nothing the
+     * scrubber puts in can come between the root and the path under it.
+     */
+    private function freeText(string $text): string
+    {
+        return $this->scrubber->scrubString($this->projectRoot->strip(Utf8::repair($text)));
     }
 
     /**
