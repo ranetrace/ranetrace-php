@@ -135,3 +135,54 @@ test('a root holding pattern characters is matched literally', function (): void
     expect(stripper('/srv/app (v2)+')->strip('/srv/app (v2)+/src/Foo.php and /srv/app (v2)/src'))
         ->toBe('src/Foo.php and /srv/app (v2)/src');
 });
+
+/**
+ * A root of so many segments that PCRE refuses to compile the pattern built
+ * from it: the stand-in for any PCRE build that rejects the pattern.
+ */
+function uncompilableRoot(): string
+{
+    return str_repeat('/segment', 10_000);
+}
+
+test('a pattern PCRE cannot compile leaves the text as written, also when the host throws on the warning', function (): void {
+    $warnings = 0;
+    set_error_handler(static function (int $level, string $message) use (&$warnings): never {
+        $warnings++;
+
+        throw new ErrorException($message, 0, $level);
+    });
+
+    try {
+        $stripper = stripper(uncompilableRoot());
+        $first = $stripper->strip('Could not open /var/www/app/storage/import.csv');
+        $second = $stripper->strip('Could not open /var/www/app/storage/export.csv');
+    } finally {
+        restore_error_handler();
+    }
+
+    // Once is enough: a pattern that did not compile is not tried again for
+    // every string of every capture.
+    expect($first)->toBe('Could not open /var/www/app/storage/import.csv')
+        ->and($second)->toBe('Could not open /var/www/app/storage/export.csv')
+        ->and($warnings)->toBe(1);
+});
+
+test('a pattern PCRE cannot compile is given up on after one warning on a host that only logs it', function (): void {
+    $warnings = 0;
+    set_error_handler(static function () use (&$warnings): bool {
+        $warnings++;
+
+        return true;
+    });
+
+    try {
+        $stripper = stripper(uncompilableRoot());
+        $stripped = [$stripper->strip('/var/www/app/a.php'), $stripper->strip('/var/www/app/b.php')];
+    } finally {
+        restore_error_handler();
+    }
+
+    expect($stripped)->toBe(['/var/www/app/a.php', '/var/www/app/b.php'])
+        ->and($warnings)->toBe(1);
+});

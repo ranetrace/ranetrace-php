@@ -155,3 +155,25 @@ test('the root is taken off the message before it is cut to length, so a cut can
         ->and($payload['message'])->toStartWith('storage/file.txt storage/file.txt ')
         ->and($payload['message'])->not->toContain(mb_substr($root, 0, 12));
 });
+
+test('a root strip that cannot run costs the strip, never the error report or its secret scrub', function (): void {
+    // A root PCRE cannot build a pattern from, on a host that throws on the
+    // warning PCRE raises for it.
+    $root = frameProject();
+    $builder = frameBuilder($root, ['project_root' => str_repeat('/segment', 10_000)]);
+
+    set_error_handler(static function (int $level, string $message): never {
+        throw new ErrorException($message, 0, $level);
+    });
+
+    try {
+        $payload = framePayload($builder, new RuntimeException("Could not open {$root}/storage/import.csv with password=hunter2"));
+    } finally {
+        restore_error_handler();
+    }
+
+    expect($payload['message'])->toBe("Could not open {$root}/storage/import.csv with password=[REDACTED]")
+        ->and($payload['type'])->toBe(RuntimeException::class)
+        ->and($payload['frames'])->not->toBeEmpty()
+        ->and(mb_substr_count(frameDiagnostics($root), 'could not take the project root off'))->toBe(1);
+});

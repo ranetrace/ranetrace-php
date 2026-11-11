@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ranetrace\Php\Support;
 
 use Ranetrace\Php\Config;
+use Throwable;
 
 /**
  * Takes the project root off every path under it in free-form text, so the
@@ -26,6 +27,13 @@ use Ranetrace\Php\Config;
  *
  * A root that is empty, relative or the filesystem root strips nothing: the
  * first two say no place, and every absolute path starts with the third.
+ *
+ * It fails soft: a strip that cannot run returns the text as written. What is
+ * at stake here is a path, the secrets in the text are the scrubber's to
+ * remove after it, and a capture must never be lost to this. A pattern PCRE
+ * cannot compile is given up on for good, since PCRE says so with a warning
+ * on every attempt, which a host whose error handler throws on warnings turns
+ * into an exception.
  *
  * Two things it cannot tell. A deployment that serves the project through a
  * symlink can name a second path for the same directory. And a URL path that
@@ -50,21 +58,40 @@ final class ProjectRootStripper
      */
     private string|false|null $pattern = null;
 
+    /**
+     * @param  Diagnostics|null  $log  Told once when the pattern cannot be used, by a caller that has one.
+     */
     public function __construct(
         private readonly Config $config,
+        private readonly ?Diagnostics $log = null,
     ) {}
 
     public function strip(string $text): string
     {
-        $pattern = $this->pattern();
-
-        if ($pattern === false || $text === '') {
+        if ($text === '' || $this->pattern === false) {
             return $text;
         }
 
-        // A null is PCRE giving up. The text is kept: what is at stake is a
-        // path, and the secrets in the text are the scrubber's to remove.
-        return preg_replace_callback($pattern, self::replacement(...), $text) ?? $text;
+        try {
+            $pattern = $this->pattern ??= $this->buildPattern();
+
+            if ($pattern === false) {
+                return $text;
+            }
+
+            $stripped = preg_replace_callback($pattern, self::replacement(...), $text);
+        } catch (Throwable $failure) {
+            return $this->giveUp($text, $failure->getMessage());
+        }
+
+        if ($stripped !== null) {
+            return $stripped;
+        }
+
+        // An internal error is a pattern that did not compile, on a host that
+        // let the warning pass. Any other null is PCRE giving up on this one
+        // text, which says nothing about the next.
+        return preg_last_error() === PREG_INTERNAL_ERROR ? $this->giveUp($text, preg_last_error_msg()) : $text;
     }
 
     /**
@@ -105,12 +132,22 @@ final class ProjectRootStripper
         return ($match['under'] ?? '') !== '' ? '' : self::ROOT_MARKER;
     }
 
-    private function pattern(): string|false
+    /**
+     * Stop stripping for the life of this instance and hand the text back.
+     */
+    private function giveUp(string $text, string $reason): string
     {
-        if ($this->pattern !== null) {
-            return $this->pattern;
-        }
+        $this->pattern = false;
 
+        $this->log?->warning('Ranetrace could not take the project root off the paths in a text, so paths are sent as written.', [
+            'error' => $reason,
+        ]);
+
+        return $text;
+    }
+
+    private function buildPattern(): string|false
+    {
         $root = $this->config->get('project_root');
         $root = is_scalar($root) ? mb_rtrim((string) $root, '/\\') : '';
 
@@ -118,7 +155,7 @@ final class ProjectRootStripper
         // relative root (`app`) would be found in every text that holds the
         // word, so only an absolute one is looked for.
         if ($root === '' || preg_match('#^(?:[/\\\\]|[A-Za-z]:[/\\\\]).#', $root) !== 1) {
-            return $this->pattern = false;
+            return false;
         }
 
         $segments = array_map(
@@ -135,6 +172,6 @@ final class ProjectRootStripper
         $after = '(?:(?<under>'.self::SEPARATOR.')(?=[^\s"\'`)\]},;:<>|\\\\/])'
             .'|'.self::SEPARATOR.'?(?![\w\-~]|\.\w))';
 
-        return $this->pattern = '#'.$before.implode(self::SEPARATOR, $segments).$after.'#';
+        return '#'.$before.implode(self::SEPARATOR, $segments).$after.'#';
     }
 }

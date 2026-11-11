@@ -79,3 +79,21 @@ test('a log record names a file under the project root by its relative path, in 
         ->and($item['extra']['script'])->toBe('artisan')
         ->and(json_encode($item, JSON_UNESCAPED_SLASHES))->not->toContain('/var/www/app');
 });
+
+test('a root strip that cannot run costs the strip, never the log record or its secret scrub', function (): void {
+    $config = testConfig(['project_root' => str_repeat('/segment', 10_000), 'internal_logging' => ['enabled' => false]]);
+    $builder = new LogItemBuilder($config, new SecretScrubber($config, new InternalLogger($config)));
+
+    set_error_handler(static function (int $level, string $message): never {
+        throw new ErrorException($message, 0, $level);
+    });
+
+    try {
+        $item = $builder->build('error', 'Import of /var/www/app/a.csv failed for token=abc123', ['file' => '/var/www/app/a.csv'], 'stack', '2026-08-19T10:00:00+00:00', []);
+    } finally {
+        restore_error_handler();
+    }
+
+    expect($item['message'])->toBe('Import of /var/www/app/a.csv failed for token=[REDACTED]')
+        ->and($item['context'])->toBe(['file' => '/var/www/app/a.csv']);
+});

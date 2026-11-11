@@ -186,7 +186,7 @@ final class PayloadBuilder
         }
 
         $this->frameMappers = array_values($frameMappers);
-        $this->projectRoot = new ProjectRootStripper($config);
+        $this->projectRoot = new ProjectRootStripper($config, $log);
     }
 
     /**
