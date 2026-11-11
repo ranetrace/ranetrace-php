@@ -6,7 +6,6 @@ namespace Ranetrace\Php\Support;
 
 use Ranetrace\Php\Config;
 use Throwable;
-use UnexpectedValueException;
 
 /**
  * Redacts values stored under sensitive keys before telemetry leaves the host.
@@ -383,9 +382,16 @@ final class SecretScrubber implements Scrubber
      * It fails closed. PCRE can still give up (a pathological input, a
      * lowered `pcre.backtrack_limit`), and returning the input then would ship
      * the very string we were asked to redact, so the whole value becomes the
-     * placeholder instead: losing the string beats leaking it. The give-up is
+     * placeholder instead: losing the string beats leaking it. The failure is
      * written to the internal log so a scrubber that has started swallowing
      * strings is visible rather than silent.
+     *
+     * Whatever the redactor throws is caught, not only its own give-up. A
+     * pattern PCRE cannot compile (an older PCRE2, a list of
+     * `scrubbing.extra_keys` too long for one pattern) is reported as a PHP
+     * warning, and a host whose error handler turns warnings into exceptions,
+     * as Laravel's does, throws it from inside the redactor. Left to escape,
+     * it would cost the whole capture where it should cost one string.
      */
     public function scrubString(string $value): string
     {
@@ -395,7 +401,7 @@ final class SecretScrubber implements Scrubber
 
         try {
             return $this->textRedactor()->redactString($value);
-        } catch (UnexpectedValueException $failure) {
+        } catch (Throwable $failure) {
             $this->log->warning('Secret scrubbing of a free-form string failed, so the whole string was redacted.', [
                 'error' => $failure->getMessage(),
                 'length' => mb_strlen($value),
@@ -411,9 +417,9 @@ final class SecretScrubber implements Scrubber
      * {@see SecretTextRedactor::redactSource()} describes.
      *
      * Lines come without their line breaks, and exactly one line comes back
-     * per line given, in the same order. When PCRE gives up, every line of the
-     * window becomes the placeholder and the internal log says so, for the
-     * reason {@see scrubString()} fails closed.
+     * per line given, in the same order. When the redactor fails, every line
+     * of the window becomes the placeholder and the internal log says so, for
+     * the reasons {@see scrubString()} fails closed.
      *
      * @param  list<string>  $lines
      * @return list<string>
@@ -422,7 +428,7 @@ final class SecretScrubber implements Scrubber
     {
         try {
             return $this->textRedactor()->redactSource($lines);
-        } catch (UnexpectedValueException $failure) {
+        } catch (Throwable $failure) {
             $this->log->warning('Secret scrubbing of a source window failed, so every line of it was redacted.', [
                 'error' => $failure->getMessage(),
                 'lines' => count($lines),
@@ -574,7 +580,7 @@ final class SecretScrubber implements Scrubber
 
         try {
             return $this->textRedactor()->redactSecretValues($value);
-        } catch (UnexpectedValueException $failure) {
+        } catch (Throwable $failure) {
             $this->log->warning('Secret scrubbing of a value failed, so the whole value was redacted.', [
                 'error' => $failure->getMessage(),
                 'length' => mb_strlen($value),

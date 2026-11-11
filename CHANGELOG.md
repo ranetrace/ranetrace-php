@@ -6,6 +6,9 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Fixed
+- **A capture whose secret scrub fails is sent redacted, also on a host that turns PHP warnings into exceptions.** When PCRE cannot compile the scrub pattern it says so with a warning. `SecretScrubber` caught only its own give-up, so on a host whose error handler throws on a warning, as Laravel's and Symfony's do, the exception escaped the scrubber and the whole error report, log record or browser error was dropped, with a line in the internal log as the only trace. One way to get there is a list of `scrubbing.extra_keys` too long for one pattern, from about 500 entries. `scrubString()`, `scrubSource()` and the value pass of `scrubDeep()` now fail closed on whatever is thrown: the string, the source window or the value becomes `[REDACTED]`, the internal log says so, and the item is sent with its type, file, line, level and every other field intact. Nothing to do on upgrade. An error whose message reads `[REDACTED]` means the scrubber is failing on your host: the internal log names the cause
+
 ## [1.1.2] - 2026-11-10
 
 ### Fixed
