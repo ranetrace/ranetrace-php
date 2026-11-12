@@ -97,6 +97,12 @@ final class PayloadBuilder
     private const int MAX_TYPE_LENGTH = 255;
 
     /**
+     * The counter that ends an anonymous class's own name, after its file and
+     * line, wherever that name stands in a longer one. See {@see codeName()}.
+     */
+    private const string ANONYMOUS_CLASS_COUNTER = '/(@anonymous .*?:\d+)\$[0-9a-f]+/s';
+
+    /**
      * How many previous exceptions the item carries, nearest first.
      */
     private const int MAX_PREVIOUS = 5;
@@ -498,9 +504,13 @@ final class PayloadBuilder
      * project root: a closure is named `{closure:/abs/app/file.php:12}` and an
      * anonymous class `class@anonymous`, or `RuntimeException@anonymous` for
      * one that extends it, then a NUL and `/abs/app/file.php:12$0`. The NUL
-     * becomes a space, so the name still
-     * reads as the class and where it is declared. An ordinary class name has
-     * no path and no NUL, and comes out as PHP spells it.
+     * becomes a space, so the name still reads as the class and where it is
+     * declared. An ordinary class name has no path and no NUL, and comes out
+     * as PHP spells it.
+     *
+     * The `$0` goes: it counts the anonymous classes the process compiled
+     * before this one, so it differs from one process or opcache reset to the
+     * next, and the `type` is part of how the backend groups errors.
      */
     private function codeName(mixed $name, int $maxLength): ?string
     {
@@ -511,6 +521,7 @@ final class PayloadBuilder
         // Stripped from the raw name, like boundFilePath(), so a root holding
         // invalid bytes still matches the name that shares them.
         $name = $this->projectRoot->strip(str_replace("\0", ' ', $name));
+        $name = preg_replace(self::ANONYMOUS_CLASS_COUNTER, '$1', $name) ?? $name;
 
         return $this->truncate(Utf8::repair($name), $maxLength);
     }

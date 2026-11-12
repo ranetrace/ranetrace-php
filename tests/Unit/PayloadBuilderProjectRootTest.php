@@ -326,7 +326,7 @@ test('a script path that open_basedir keeps from being resolved costs nothing on
  * PHP names an anonymous class by its parent, a NUL byte, the absolute path of
  * the file that declares it and the line: `RuntimeException@anonymous` + NUL +
  * `/abs/app/Jobs/Import.php:3$0`, where the number after `$` counts the
- * anonymous classes compiled before it.
+ * anonymous classes the process compiled before it.
  */
 function anonymousExceptionIn(string $root, string $relative): RuntimeException
 {
@@ -337,16 +337,24 @@ function anonymousExceptionIn(string $root, string $relative): RuntimeException
         PHP);
 }
 
-test('an anonymous exception class is typed by its path relative to the project root, without a NUL byte', function (): void {
+test('an anonymous exception class is typed by its path relative to the project root, without a NUL byte or a compile counter', function (): void {
     $root = frameProject();
 
     $payload = framePayload(frameBuilder($root), anonymousExceptionIn($root, 'app/Jobs/Import.php'));
 
-    // The `$` suffix counts the anonymous classes the process has compiled, so
-    // it is `$0` only for the first.
-    expect($payload['type'])->toMatch('#^RuntimeException@anonymous app/Jobs/Import\.php:3\$[0-9a-f]+$#')
-        ->and($payload['type'])->not->toContain("\0")
-        ->and($payload['type'])->not->toContain($root);
+    expect($payload['type'])->toBe('RuntimeException@anonymous app/Jobs/Import.php:3');
+});
+
+test('an anonymous exception class keeps one type however many anonymous classes were compiled before it', function (): void {
+    $root = frameProject();
+    $builder = frameBuilder($root);
+
+    // Requiring the file again compiles the class again, under the next counter.
+    $first = anonymousExceptionIn($root, 'app/Jobs/Import.php');
+    $second = anonymousExceptionIn($root, 'app/Jobs/Import.php');
+
+    expect($first::class)->not->toBe($second::class)
+        ->and(framePayload($builder, $first)['type'])->toBe(framePayload($builder, $second)['type']);
 });
 
 test('an anonymous exception class declared under a long path is typed within the contract maximum', function (): void {

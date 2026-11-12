@@ -459,13 +459,13 @@ test('a source line is scrubbed before it is capped, so a secret cannot straddle
         ->and((string) json_encode($payload))->not->toContain('abcdefghij');
 });
 
-test('closure and anonymous class names lose the absolute project path and the NUL byte', function (): void {
+test('closure and anonymous class names lose the absolute project path, the NUL byte and the compile counter', function (): void {
     $root = frameProject();
     $payload = framePayload(frameBuilder($root), nestedCallException($root));
     $json = (string) json_encode($payload['frames']);
 
-    expect($payload['frames'][0]['class'])->toMatch('/^class@anonymous app\/Service\.php:3\$[0-9a-f]+$/')
-        ->and($payload['frames'][1]['function'])->toMatch('/^\{closure:class@anonymous app\/Service\.php:3\$[0-9a-f]+::handle\(\):7\}$/')
+    expect($payload['frames'][0]['class'])->toBe('class@anonymous app/Service.php:3')
+        ->and($payload['frames'][1]['function'])->toBe('{closure:class@anonymous app/Service.php:3::handle():7}')
         ->and($payload['frames'][2]['function'])->toBe('{closure:vendor/acme/runner/Runner.php:3}')
         ->and($json)->not->toContain($root)
         ->and($json)->not->toContain('\u0000');
