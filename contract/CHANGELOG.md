@@ -47,6 +47,12 @@ Nothing is in flight. The 2026-11-12 entry on a client without an API key is app
 
 ## Change log
 
+### 2026-11-12, an event without a user agent sends `user_agent_hash` as null
+
+Status: **APPLIED in `ranetrace/ranetrace-php`, unreleased, and `ranetrace/ranetrace-laravel` sends it once it runs on that release; nothing to do for the backend.** The field's rule did not move: `items/events.json` already gave it as optional and, when present, a string of 64 characters, which is the backend's `nullable|string|size:64`. What moved is the emitter. An event tracked with no user agent, as every event from a console process is, went out with `user_agent_hash: ""`, which that rule refuses. It was accepted only because the backend runs Laravel's `ConvertEmptyStringsToNull` middleware before it validates, so the two sides agreed by way of a step neither had written down. `Support\FingerprintGenerator::generateUserAgentHash()` now returns null for a missing user agent and `Events\EventItemBuilder` passes it on, so the item matches the fixture as it leaves the SDK. `items/events.json` says so in its notes.
+
+The backend stores the same either way, null, and its duplicate check hashes the same value, so there is no order to keep: an SDK that sends null and one that still sends the empty string are both accepted. Checked on 2026-11-12 with `bin/ranetrace-test` against the backend's main branch: the event was accepted and stored with a null `user_agent_hash`. A page visit is not affected, because the Laravel SDK never tracks a request without a user agent, and `session_id_hash` is always a hash.
+
 ### 2026-11-12, a client without an API key sends nothing and pauses nothing
 
 Status: **APPLIED in `ranetrace/ranetrace-php` and in `ranetrace/ranetrace-laravel`, both unreleased; nothing to do for the backend.** No request or response shape moved. What changed is what a client does when it has no key: `responses.json` gains a top-level `without_api_key` statement, and its `network` row no longer lists a missing key among the causes of status 0. The backend never sees a keyless client either way, so it has nothing to do. `ranetrace/ranetrace-laravel` follows the same statement: its batch job takes nothing from the buffer without a key, and `ranetrace:work` dispatches nothing and says the key is missing while items wait.

@@ -38,13 +38,15 @@ final class FingerprintGenerator
     }
 
     /**
-     * Hash of the raw user agent, or an empty string when the request carried
-     * none. Empty rather than a hash of '' so the backend can tell "no user
-     * agent" from "some user agent we hashed".
+     * Hash of the raw user agent, or null when there is none: a request
+     * without the header, and every console process. Null rather than a hash
+     * of '' so the backend can tell "no user agent" from "some user agent we
+     * hashed", and rather than '' because the API takes this field as null or
+     * 64 characters.
      */
-    public function generateUserAgentHash(?string $userAgent): string
+    public function generateUserAgentHash(?string $userAgent): ?string
     {
-        return $userAgent === null || $userAgent === '' ? '' : $this->hash($userAgent);
+        return $userAgent === null || $userAgent === '' ? null : $this->hash($userAgent);
     }
 
     /**

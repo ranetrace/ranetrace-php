@@ -54,21 +54,6 @@ function sendTestSnapshot(string $directory): array
     return $files;
 }
 
-/**
- * An item as the API's validator sees it. The backend runs Laravel's
- * `ConvertEmptyStringsToNull` over the request first, so the empty
- * `user_agent_hash` of an event tracked from the command line reaches its
- * `nullable|string|size:64` rule as null; the descriptor validator does not
- * model that step.
- *
- * @param  array<string, mixed>  $item
- * @return array<string, mixed>
- */
-function sendTestAsReceived(array $item): array
-{
-    return array_map(static fn (mixed $value): mixed => $value === '' ? null : $value, $item);
-}
-
 it('sends one error and one event straight to the api, the way a drain sends them', function (): void {
     $http = new FakeHttpClient(sendTestResponse(200), sendTestResponse(200));
 
@@ -102,7 +87,7 @@ it('sends one error and one event straight to the api, the way a drain sends the
         ->and($event['event_name'])->toBe('test_event')
         ->and($event['properties'])->toBe(['source' => 'ranetrace-test'])
         ->and(DescriptorValidator::violations(WireContract::item('errors')['fields'], $error, true))->toBe([])
-        ->and(DescriptorValidator::violations(WireContract::item('events')['fields'], sendTestAsReceived($event), true))->toBe([]);
+        ->and(DescriptorValidator::violations(WireContract::item('events')['fields'], $event, true))->toBe([]);
 });
 
 it('renders the whole report in the documented layout', function (): void {

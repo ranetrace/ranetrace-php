@@ -60,9 +60,9 @@ test('it generates a user agent hash of sha256 length', function (): void {
     expect(fingerprints()->generateUserAgentHash('Test Browser'))->toHaveLength(64);
 });
 
-test('it returns an empty string for a missing user agent', function (): void {
-    expect(fingerprints()->generateUserAgentHash(null))->toBe('')
-        ->and(fingerprints()->generateUserAgentHash(''))->toBe('');
+test('it hashes no user agent to null, so no agent cannot pass for a hashed one', function (): void {
+    expect(fingerprints()->generateUserAgentHash(null))->toBeNull()
+        ->and(fingerprints()->generateUserAgentHash(''))->toBeNull();
 });
 
 test('the user agent hash is consistent and distinguishes agents', function (): void {

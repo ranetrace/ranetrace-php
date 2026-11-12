@@ -252,14 +252,14 @@ test('it hashes the user agent and the session fingerprint rather than sending t
         ->and($event['session_id_hash'])->toHaveLength(64);
 });
 
-test('the user agent hash is empty when the request carried none', function (): void {
+test('the user agent hash is null, never an empty string, when the request carried none', function (): void {
     $buffer = new ArrayBuffer;
 
     $tracker = eventTracker($buffer);
     $tracker->setServerContext(['HTTP_HOST' => 'app.test', 'REQUEST_URI' => '/'], console: false);
     $tracker->track('page_view');
 
-    expect(firstEvent($buffer)['user_agent_hash'])->toBe('');
+    expect(firstEvent($buffer)['user_agent_hash'])->toBeNull();
 });
 
 test('an invalid event name throws loudly because it is a developer mistake', function (): void {
