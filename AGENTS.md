@@ -111,6 +111,8 @@ Two things are not automatic. Without either, the SDK captures or delivers nothi
 * * * * * /path/to/app/vendor/bin/ranetrace-flush >/dev/null 2>&1
 ```
 
+The line discards the command's output, so run `vendor/bin/ranetrace-flush` once by hand as the user of the cron job to check it: it prints nothing and exits `0` when it can use the buffer, and prints the reason and exits `1` when it cannot.
+
 Every minute matches the API's 60 requests per minute per endpoint for each website (all keys of one website share it); one run sends at most one batch per type. The binary is configured **entirely from the environment** (a cron entry has no bootstrap), sets `flush_on_shutdown => false` for itself, prints nothing on success, exits `1` when it could not run or when it cannot use the buffer (run as a user other than the web server's), and takes `--type=errors|events|logs|javascript_errors`. Shutdown flush and cron compose safely: the spool is locked and drained atomically.
 
 A spool that nothing drains is kept until it is delivered, up to `batch.max_buffer_size` items per type, with the oldest dropped first beyond that. So with no cron and almost no traffic, captured data waits on disk for the next flush, however long that takes, and nothing is lost below the cap.

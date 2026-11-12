@@ -36,6 +36,8 @@ Captured items are buffered locally and drained when the process shuts down. On 
 * * * * * /path/to/app/vendor/bin/ranetrace-flush >/dev/null 2>&1
 ```
 
+Run the cron job as the user your web server runs as: the buffer is for one user. The line discards the command's output, so run `vendor/bin/ranetrace-flush` once by hand as that user to check it. It prints nothing when it can use the buffer, and prints the reason and exits `1` when it cannot.
+
 ## What it captures
 
 - **Errors**: uncaught exceptions, fatal errors and exceptions you report yourself, with a source preview, the stack trace and its structured frames, the chain of previous exceptions, allowlisted request headers, console context and the current user.
