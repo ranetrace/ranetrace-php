@@ -8,7 +8,10 @@ namespace Ranetrace\Php\Worker;
  * What {@see TestRun} found, and the text `vendor/bin/ranetrace-test` prints.
  *
  * The wording lives here rather than in the binary so it can be asserted
- * in-process. A setting is named the way the reader set it: the binary reads
+ * in-process. The report's own lines (the key, the buffer, what waits, the
+ * pauses) are worded here; a type's line, a lifted pause and the closing
+ * sentence are {@see TestResult}'s, which the Laravel SDK prints as well. A
+ * setting is named the way the reader set it: the binary reads
  * the environment only, so it renders with `fromEnvironment: true` and names
  * `RANETRACE_KEY`; a host that configured the SDK in its own bootstrap gets
  * the config key instead, and no sentence about an environment it did not use.
@@ -22,7 +25,7 @@ final readonly class TestReport
 
     /**
      * @param  ?string  $keyPreview  The key's first four characters and `...`, or null when no key is set.
-     * @param  array<string, array{outcome: TestOutcome, status: int, message: string, seconds: int}>  $types  Per tested type, empty when nothing was sent.
+     * @param  array<string, TestResult>  $types  Per tested type, empty when nothing was sent.
      * @param  array<string, int>  $waiting  Items waiting in the spool, only for the types holding any.
      * @param  ?int  $oldestWaitSeconds  How long the oldest waiting item has waited.
      * @param  list<array{scope: string, reason: string}>  $lifted  Pauses a 200 lifted, `scope` being `everything` or a type.
@@ -47,7 +50,7 @@ final readonly class TestReport
     public function accepted(): bool
     {
         foreach ($this->types as $result) {
-            if ($result['outcome']->accepted()) {
+            if ($result->accepted()) {
                 return true;
             }
         }
@@ -77,7 +80,7 @@ final readonly class TestReport
         }
 
         foreach ($this->types as $type => $result) {
-            $lines[] = self::row($type, $this->typeLine($type, $result, $fromEnvironment));
+            $lines[] = self::row($type, $result->line($type, $this->baseUrl, $fromEnvironment));
         }
 
         $lines[] = '';
@@ -85,7 +88,7 @@ final readonly class TestReport
         array_push($lines, ...$this->statusLines());
 
         $lines[] = '';
-        $lines[] = $this->accepted() ? 'Open your website in Ranetrace to see what was accepted.' : 'Nothing was accepted.';
+        $lines[] = TestResult::closingLine($this->accepted());
 
         return implode("\n", $lines)."\n";
     }
@@ -116,14 +119,6 @@ final readonly class TestReport
         }
 
         return $lines;
-    }
-
-    private static function reason(string $reason): string
-    {
-        return match ($reason) {
-            'network' => 'a network failure',
-            default => 'a '.$reason,
-        };
     }
 
     private static function timeLeft(int $seconds): string
@@ -172,32 +167,6 @@ final readonly class TestReport
     }
 
     /**
-     * @param  array{outcome: TestOutcome, status: int, message: string, seconds: int}  $result
-     */
-    private function typeLine(string $type, array $result, bool $fromEnvironment): string
-    {
-        return match ($result['outcome']) {
-            TestOutcome::Accepted => 'accepted',
-            TestOutcome::AcceptedNotStored => $type === 'errors'
-                ? 'accepted, not stored: the API stores the same error once per 5 minutes and skips an error you set to ignored'
-                : 'accepted, not stored: the API ignored it',
-            TestOutcome::Refused => 'refused: the API did not store the test item. This is a bug in the SDK, please report it',
-            TestOutcome::NotProcessed => 'not processed: the API ran out of time. Run the test again',
-            TestOutcome::Unrecognised => "failed: the API answered 200 without counting the test item, so {$this->baseUrl} may not be the Ranetrace API",
-            TestOutcome::Unauthorized => "refused: the API answered 401 ({$result['message']}). Check ".($fromEnvironment ? 'RANETRACE_KEY' : 'the configured key'),
-            TestOutcome::Forbidden => "refused: the API answered 403 ({$result['message']}). The key lacks access to this feature, the website is in maintenance mode, or the account has no access",
-            TestOutcome::RateLimited => 'rate limited: the API answered 429. Try again in '.($result['seconds'] === 1 ? '1 second' : "{$result['seconds']} seconds"),
-            TestOutcome::Unreachable => "failed: could not reach {$this->baseUrl} ({$result['message']})",
-            TestOutcome::Failed => "failed: the API answered {$result['status']} ({$result['message']})",
-            TestOutcome::NotSent => 'not sent: the key was refused',
-            TestOutcome::Skipped => 'skipped: '.($fromEnvironment ? 'RANETRACE_'.mb_strtoupper($type).'_ENABLED' : $type.'.enabled').' is false',
-            TestOutcome::NotCaptured => $result['message'] === ''
-                ? 'not captured: the SDK could not build the test item. Turn internal logging on to see why'
-                : "not captured: the SDK could not build the test item. The reason is in {$result['message']}",
-        };
-    }
-
-    /**
      * @return list<string>
      */
     private function statusLines(): array
@@ -222,15 +191,14 @@ final readonly class TestReport
         }
 
         $lifted = array_map(
-            fn (array $pause): string => 'the pause on '.$pause['scope'].' (after '.self::reason($pause['reason']).'): '
-                .($pause['scope'] === 'everything' ? 'the key is accepted now' : "the {$pause['scope']} endpoint answered 200 just now"),
+            static fn (array $pause): string => TestResult::liftedPauseLine($pause['scope'], $pause['reason']),
             $this->lifted,
         );
 
         array_push($lines, ...self::rows('Lifted', $lifted));
 
         $pauses = array_map(
-            static fn (array $pause): string => $pause['scope'].', for '.self::timeLeft($pause['seconds']).' (after '.self::reason($pause['reason']).')',
+            static fn (array $pause): string => $pause['scope'].', for '.self::timeLeft($pause['seconds']).' (after '.TestResult::pauseReason($pause['reason']).')',
             $this->pauses,
         );
 

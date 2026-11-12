@@ -11,8 +11,6 @@ use Ranetrace\Php\Buffer\PauseStore;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Errors\ErrorReporter;
 use Ranetrace\Php\Events\EventTracker;
-use Ranetrace\Php\Http\BatchCounters;
-use Ranetrace\Php\Http\ResponsePolicy;
 use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\SecretScrubber;
@@ -32,7 +30,11 @@ use Ranetrace\Php\Support\SecretScrubber;
  * The one write is the other way round. A 200 disproves some pauses real
  * traffic left behind, so it lifts them: a global pause, which only a 401 sets,
  * and the type's own pause, unless the server set it for a reason one accepted
- * item says nothing about (see {@see PAUSES_A_200_KEEPS}).
+ * item says nothing about (see {@see TestResult::liftsFeaturePause()}).
+ *
+ * What an answer means for the test item, and how it reads, is
+ * {@see TestResult}'s, shared with the Laravel SDK's test command. This class
+ * decides what to send and what to lift.
  *
  * The items carry no test marker, because the API matches the field set
  * strictly. They are recognisable by content, the same content the Laravel
@@ -53,17 +55,6 @@ final class TestRun
      */
     public const int STALE_SECONDS = 600;
 
-    /**
-     * Feature pause reasons a 200 does not lift. A 429 pause lasts as long as
-     * the server said it should. A 413 or a 422 was the answer to one batch,
-     * and one accepted item says nothing about that batch.
-     *
-     * @var list<string>
-     */
-    private const array PAUSES_A_200_KEEPS = ['429', '413', '422'];
-
-    private readonly ResponsePolicy $policy;
-
     public function __construct(
         private readonly Config $config,
         private readonly FileBuffer $buffer,
@@ -72,9 +63,7 @@ final class TestRun
         private readonly SecretScrubber $scrubber,
         private readonly FingerprintGenerator $fingerprints,
         private readonly InternalLogger $log,
-    ) {
-        $this->policy = new ResponsePolicy;
-    }
+    ) {}
 
     public function run(): TestReport
     {
@@ -90,7 +79,7 @@ final class TestRun
             foreach (self::TYPES as $type) {
                 $types[$type] = $this->test($type, $keyRefused, $lifted);
 
-                $keyRefused = $keyRefused || $types[$type]['outcome'] === TestOutcome::Unauthorized;
+                $keyRefused = $keyRefused || $types[$type]->outcome === TestOutcome::Unauthorized;
             }
         }
 
@@ -111,32 +100,6 @@ final class TestRun
         );
     }
 
-    /**
-     * @return array{outcome: TestOutcome, status: int, message: string, seconds: int}
-     */
-    private static function result(TestOutcome $outcome, int $status = 0, string $message = '', int $seconds = 0): array
-    {
-        return ['outcome' => $outcome, 'status' => $status, 'message' => $message, 'seconds' => $seconds];
-    }
-
-    /**
-     * What a 200 said about the one item it was sent. One item means exactly
-     * one counter is 1. A 200 that counts nothing, which is also what a body
-     * that is not JSON reads as, did not come from the Ranetrace API as it is
-     * documented, so it is not taken as an acceptance.
-     */
-    private static function outcomeOfSuccess(?BatchCounters $counters): TestOutcome
-    {
-        return match (true) {
-            $counters === null => TestOutcome::Unrecognised,
-            $counters->failed > 0 => TestOutcome::Refused,
-            $counters->unprocessed > 0 => TestOutcome::NotProcessed,
-            $counters->ignored > 0 => TestOutcome::AcceptedNotStored,
-            $counters->processed > 0 => TestOutcome::Accepted,
-            default => TestOutcome::Unrecognised,
-        };
-    }
-
     private static function secondsLeft(string $pausedUntil): int
     {
         $until = strtotime($pausedUntil);
@@ -154,16 +117,15 @@ final class TestRun
      *
      * @param  bool  $keyRefused  Whether an earlier type met a 401.
      * @param  list<array{scope: string, reason: string}>  $lifted  Receives the pauses this type's 200 lifted.
-     * @return array{outcome: TestOutcome, status: int, message: string, seconds: int}
      */
-    private function test(string $type, bool $keyRefused, array &$lifted): array
+    private function test(string $type, bool $keyRefused, array &$lifted): TestResult
     {
         if ($this->config->get($type.'.enabled') !== true) {
-            return self::result(TestOutcome::Skipped);
+            return TestResult::skipped();
         }
 
         if ($keyRefused) {
-            return self::result(TestOutcome::NotSent);
+            return TestResult::notSent();
         }
 
         $item = $this->capture($type);
@@ -171,23 +133,12 @@ final class TestRun
         if ($item === null) {
             $logging = $this->config->get('internal_logging.enabled', true) === true;
 
-            return self::result(TestOutcome::NotCaptured, message: $logging ? $this->log->currentLogFile() : '');
+            return TestResult::notCaptured($logging ? $this->log->currentLogFile() : '');
         }
 
-        $result = $this->worker->send($type, [$item]);
-        $outcome = $this->policy->decide($result);
-        $body = $result['data'];
+        $tested = TestResult::fromResponse($this->worker->send($type, [$item]));
 
-        $tested = match ($outcome->status) {
-            0 => self::result(TestOutcome::Unreachable, message: $result['error'] ?? 'unknown network error'),
-            200 => self::result(self::outcomeOfSuccess($outcome->counters), 200),
-            401 => self::result(TestOutcome::Unauthorized, 401, ResponsePolicy::errorMessage($body, 'Unauthorized')),
-            403 => self::result(TestOutcome::Forbidden, 403, ResponsePolicy::errorMessage($body, 'Forbidden')),
-            429 => self::result(TestOutcome::RateLimited, 429, seconds: $outcome->pauseSeconds ?? ResponsePolicy::RATE_LIMIT_FLOOR_SECONDS),
-            default => self::result(TestOutcome::Failed, $outcome->status, ResponsePolicy::errorMessage($body, 'no message')),
-        };
-
-        if ($outcome->status === 200 && $tested['outcome'] !== TestOutcome::Unrecognised) {
+        if ($tested->disprovesPauses()) {
             array_push($lifted, ...$this->liftPausesDisprovedBy($type));
         }
 
@@ -240,7 +191,7 @@ final class TestRun
 
         $feature = $this->pauses->featurePause($type);
 
-        if ($feature !== null && ! in_array($feature['reason'], self::PAUSES_A_200_KEEPS, true)) {
+        if ($feature !== null && TestResult::liftsFeaturePause($feature['reason'])) {
             $this->pauses->clearFeaturePause($type);
 
             if (! $this->pauses->isFeaturePaused($type)) {

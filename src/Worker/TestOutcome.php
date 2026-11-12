@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Ranetrace\Php\Worker;
 
 /**
- * What happened to one type's test item. {@see TestRun} decides it,
- * {@see TestReport} words it.
+ * What happened to one type's test item. {@see TestResult} decides it from
+ * the API's answer and words it.
  */
 enum TestOutcome
 {

@@ -8,8 +8,8 @@ use Ranetrace\Php\Ranetrace;
 use Ranetrace\Php\Support\FileLock;
 use Ranetrace\Php\Tests\Contract\DescriptorValidator;
 use Ranetrace\Php\Tests\Doubles\FakeHttpClient;
-use Ranetrace\Php\Worker\TestOutcome;
 use Ranetrace\Php\Worker\TestReport;
+use Ranetrace\Php\Worker\TestResult;
 
 /**
  * An SDK on a temp spool and a fake transport, with the shutdown flush off so
@@ -563,7 +563,7 @@ it('names the internal log when a type\'s test item could not be captured', func
         keyPreview: 'test...',
         baseUrl: 'https://api.ranetrace.com/v1',
         masterSwitchOn: true,
-        types: ['errors' => ['outcome' => TestOutcome::NotCaptured, 'status' => 0, 'message' => $log, 'seconds' => 0]],
+        types: ['errors' => TestResult::notCaptured($log)],
         bufferPath: '/var/spool/ranetrace',
         accessProblem: null,
         waiting: [],
