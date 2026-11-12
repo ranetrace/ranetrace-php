@@ -146,6 +146,18 @@ final class Config
     }
 
     /**
+     * The API base URL every request goes to, without a trailing slash. A blank
+     * or non-string value falls back to the default, for the same reason
+     * {@see bufferPath()} repeats its fallback.
+     */
+    public function baseUrl(): string
+    {
+        $base = $this->get('base_url');
+
+        return is_string($base) && $base !== '' ? mb_rtrim($base, '/') : self::DEFAULT_BASE_URL;
+    }
+
+    /**
      * The directory every on-disk artefact of the SDK lives in: the spool files
      * and their locks, the pause store, the worker state and the internal log.
      *

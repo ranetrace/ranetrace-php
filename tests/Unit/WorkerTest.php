@@ -63,6 +63,22 @@ it('sends a batch to the right endpoint with the right agent and wrapper key', f
     ['javascript_errors', '/javascript-errors/store', 'Ranetrace-PHP/JavaScriptErrors/1.0'],
 ]);
 
+it('sends payloads on the drain\'s wire without touching the buffer, the pauses or the last-batch stamp', function (int $status): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith($status));
+    seedBuffer($harness['buffer'], 'events', 1);
+
+    $result = $harness['worker']->send('events', [['event_name' => 'test_event']]);
+
+    expect($result['status'])->toBe($status)
+        ->and($harness['http']->requests[0]['url'])->toBe('https://api.ranetrace.com/v1/events/store')
+        ->and($harness['http']->requests[0]['headers']['User-Agent'])->toBe('Ranetrace-PHP/Events/1.0')
+        ->and($harness['http']->requests[0]['timeout'])->toBe(10)
+        ->and($harness['http']->payload())->toBe(['events' => [['event_name' => 'test_event']]])
+        ->and($harness['buffer']->payloads('events'))->toBe([['message' => 'item-0']])
+        ->and(is_file($harness['directory'].'/pauses.json'))->toBeFalse()
+        ->and($harness['worker']->lastBatchAt('events'))->toBeNull();
+})->with([200, 401, 500]);
+
 it('reads the logs timeout from the logging config section', function (): void {
     $harness = workerHarness(FakeHttpClient::respondingWith(200), ['logging' => ['timeout' => 42]]);
     seedBuffer($harness['buffer'], 'logs', 1);

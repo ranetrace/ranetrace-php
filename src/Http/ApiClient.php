@@ -151,9 +151,6 @@ final class ApiClient
 
     private function url(string $path): string
     {
-        $base = $this->config->get('base_url', Config::DEFAULT_BASE_URL);
-        $base = is_string($base) && $base !== '' ? mb_rtrim($base, '/') : Config::DEFAULT_BASE_URL;
-
-        return $base.'/'.mb_ltrim($path, '/');
+        return $this->config->baseUrl().'/'.mb_ltrim($path, '/');
     }
 }

@@ -19,6 +19,8 @@ use Ranetrace\Php\Logging\RanetraceHandler;
 use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\SecretScrubber;
+use Ranetrace\Php\Worker\TestReport;
+use Ranetrace\Php\Worker\TestRun;
 use Ranetrace\Php\Worker\Worker;
 use Throwable;
 
@@ -188,13 +190,30 @@ final class Ranetrace
      */
     public function flush(?string $type = null): void
     {
-        new Worker(
+        $this->worker()->run($type);
+    }
+
+    /**
+     * Send one test error and one test event straight to the API and report
+     * what it answered, with the state of the buffer and the pauses. This is
+     * what `vendor/bin/ranetrace-test` runs; a host that configures the SDK in
+     * its own bootstrap calls it from its own console instead, because the
+     * binary reads the environment only.
+     *
+     * The test never writes to the buffer and never sets a pause. A 200 lifts
+     * the pauses it disproves, see {@see TestRun}.
+     */
+    public function sendTest(): TestReport
+    {
+        return new TestRun(
             $this->config,
             $this->buffer(),
             $this->pauses(),
-            new ApiClient($this->config, $this->httpClient(), $this->log()),
+            $this->worker(),
+            $this->scrubber(),
+            $this->fingerprints(),
             $this->log(),
-        )->run($type);
+        )->run();
     }
 
     /**
@@ -227,6 +246,17 @@ final class Ranetrace
     private function httpClient(): HttpClientInterface
     {
         return $this->http ??= new CurlHttpClient;
+    }
+
+    private function worker(): Worker
+    {
+        return new Worker(
+            $this->config,
+            $this->buffer(),
+            $this->pauses(),
+            new ApiClient($this->config, $this->httpClient(), $this->log()),
+            $this->log(),
+        );
     }
 
     private function errorReporter(): ErrorReporter

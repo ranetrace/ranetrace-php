@@ -52,6 +52,7 @@ $logger->pushHandler($ranetrace->monologHandler());
 | `javascriptSnippet(array $options = []): string` | `<script>` tag. `endpoint` is **required** (throws without it); `nonce` optional. Empty string when the feature is off. |
 | `relay(): JavaScript\Relay` | `handle()` for superglobals (reads `php://input` + `$_SERVER`, echoes JSON), `handleRequest(array $server, array $payload): RelayResponse` for a framework. |
 | `flush(?string $type = null): void` | Drain the buffer now. `flushQuietly()` is the never-throw variant. |
+| `sendTest(): Worker\TestReport` | Send one test error and one test event straight to the API, beside the buffer. `accepted()` says whether the API took at least one, `render()` is the text `vendor/bin/ranetrace-test` prints. |
 | `config(): Config`, `buffer(): Buffer\FileBuffer`, `pauses(): Buffer\PauseStore` | Diagnostics. |
 | `withHttpClient(HttpClientInterface $http): self` | Replace the transport (proxy, mTLS, tests). |
 
@@ -116,6 +117,14 @@ The line discards the command's output, so run `vendor/bin/ranetrace-flush` once
 Every minute matches the API's 60 requests per minute per endpoint for each website (all keys of one website share it); one run sends at most one batch per type. The binary is configured **entirely from the environment** (a cron entry has no bootstrap), sets `flush_on_shutdown => false` for itself, prints nothing on success, exits `1` when it could not run or when it cannot use the buffer (run as a user other than the web server's), and takes `--type=errors|events|logs|javascript_errors`. Shutdown flush and cron compose safely: the spool is locked and drained atomically.
 
 A spool that nothing drains is kept until it is delivered, up to `batch.max_buffer_size` items per type, with the oldest dropped first beyond that. So with no cron and almost no traffic, captured data waits on disk for the next flush, however long that takes, and nothing is lost below the cap.
+
+### Verify the install
+
+```bash
+vendor/bin/ranetrace-test
+```
+
+It captures one test error (`Test exception from Ranetrace`) and one test event (`test_event`), sends each straight to the API, and prints what the API answered per type, then the buffer path, what is waiting in it and any pauses. Exit code `0` when the API accepted at least one of the two, `1` otherwise. The test never writes to the buffer and never sets a pause; a 200 lifts a pause it disproves, such as the pause on everything a 401 left. Like the flush, the binary reads the environment only, so it does not see a key the application loads from a `.env` file or sets in its bootstrap: there, run `echo Ranetrace::instance()->sendTest()->render();` from the application's own console. The API stores an identical error once per 5 minutes, so a second run within 5 minutes reports the error as accepted, not stored.
 
 ## JavaScript relay
 

@@ -63,6 +63,14 @@ test('buffer path defaults under the system temp directory', function (): void {
     expect((new Config)->get('buffer_path'))->toBe(sys_get_temp_dir().'/ranetrace-buffer');
 });
 
+test('the base url drops a trailing slash and falls back to the default when blank', function (mixed $configured, string $resolved): void {
+    expect((new Config(['base_url' => $configured]))->baseUrl())->toBe($resolved);
+})->with([
+    'a trailing slash' => ['https://api.example.test/v1/', 'https://api.example.test/v1'],
+    'blank' => ['', 'https://api.ranetrace.com/v1'],
+    'null' => [null, 'https://api.ranetrace.com/v1'],
+]);
+
 test('project root defaults to the directory holding the composer autoloader', function (): void {
     $root = (new Config)->get('project_root');
 

@@ -1,0 +1,90 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Check the install: send one test error and one test event straight to the
+ * API, print what it answered for each, then the state of the buffer and the
+ * pauses. Run it by hand:
+ *
+ *     vendor/bin/ranetrace-test
+ *
+ * The work is `Ranetrace::sendTest()`, so a host that configures the SDK in its
+ * own bootstrap can run the same check from its own console. This binary, like
+ * `ranetrace-flush`, is configured entirely from the environment.
+ *
+ * The test items go beside the spool, never into it, and no answer sets a
+ * pause, so a failed test leaves nothing behind for the next run to trip over.
+ *
+ * Exit codes: 0 when the API accepted at least one test item. 1 when it
+ * accepted none, or the command could not run.
+ */
+
+use Ranetrace\Php\Ranetrace;
+
+(static function (array $argv): never {
+    // The same search as bin/ranetrace-flush. It cannot be shared, because
+    // nothing of this package can be loaded before the autoloader is found.
+    $autoloader = null;
+
+    $candidates = [];
+
+    // Composer's binary proxy sets this, which is the only reliable answer when
+    // the package is installed with a relocated vendor directory.
+    if (isset($GLOBALS['_composer_autoload_path']) && is_string($GLOBALS['_composer_autoload_path'])) {
+        $candidates[] = $GLOBALS['_composer_autoload_path'];
+    }
+
+    // Installed as a dependency (vendor/ranetrace/ranetrace-php/bin) and run
+    // directly rather than through the proxy.
+    $candidates[] = __DIR__.'/../../../autoload.php';
+
+    // Every vendor/autoload.php from here to the filesystem root, which covers
+    // the standalone checkout and any nesting in between.
+    for ($directory = __DIR__; $directory !== dirname($directory); $directory = dirname($directory)) {
+        $candidates[] = $directory.'/vendor/autoload.php';
+    }
+
+    foreach ($candidates as $candidate) {
+        if (is_file($candidate)) {
+            $autoloader = $candidate;
+
+            break;
+        }
+    }
+
+    if ($autoloader === null) {
+        fwrite(STDERR, "ranetrace-test: could not locate Composer's autoloader.\n");
+
+        exit(1);
+    }
+
+    require $autoloader;
+
+    foreach (array_slice($argv, 1) as $argument) {
+        if ($argument === '--help' || $argument === '-h') {
+            fwrite(STDOUT, "Usage: ranetrace-test\n");
+
+            exit(0);
+        }
+
+        fwrite(STDERR, sprintf("ranetrace-test: unknown argument [%s].\n", $argument));
+
+        exit(1);
+    }
+
+    try {
+        // The shutdown flush is turned off: this command must not drain the
+        // real spool on its way out, it only reports on it.
+        $report = new Ranetrace(['flush_on_shutdown' => false])->sendTest();
+    } catch (Throwable $failure) {
+        fwrite(STDERR, 'ranetrace-test: '.$failure->getMessage()."\n");
+
+        exit(1);
+    }
+
+    fwrite(STDOUT, $report->render(fromEnvironment: true));
+
+    exit($report->accepted() ? 0 : 1);
+})($argv ?? []);

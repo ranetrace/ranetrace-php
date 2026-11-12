@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ranetrace\Php\Worker;
 
+use InvalidArgumentException;
 use Ranetrace\Php\Buffer\BufferInterface;
 use Ranetrace\Php\Buffer\PauseStore;
 use Ranetrace\Php\Config;
@@ -119,6 +120,34 @@ final class Worker
             // to Ranetrace would then try to capture it.
             $this->log->error('Worker run failed', ['exception' => $failure->getMessage()]);
         }
+    }
+
+    /**
+     * POST payloads of one type to its endpoint and return the normalised
+     * result, unread.
+     *
+     * This is the whole wire half of a drain: the endpoint lookup, the
+     * per-feature User-Agent and the timeout. It touches neither the buffer, the
+     * pause store nor the last-batch stamp, so `TestRun` can send a test item
+     * exactly the way a drain sends a batch without either of them acting on
+     * the answer for the other.
+     *
+     * @param  array<int, array<string, mixed>>  $items  Payloads, not envelopes.
+     * @return array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
+     *
+     * @throws InvalidArgumentException When the type has no endpoint.
+     */
+    public function send(string $type, array $items): array
+    {
+        $endpoint = $this->endpoints->get($type);
+
+        return $this->api->sendBatch(
+            $endpoint->path,
+            $endpoint->wrapper,
+            $endpoint->userAgent(self::SDK),
+            $this->timeout($endpoint->timeoutKey),
+            $items,
+        );
     }
 
     /**
@@ -244,17 +273,7 @@ final class Worker
             return;
         }
 
-        $endpoint = $this->endpoints->get($type);
-
-        $result = $this->api->sendBatch(
-            $endpoint->path,
-            $endpoint->wrapper,
-            $endpoint->userAgent(self::SDK),
-            $this->timeout($endpoint->timeoutKey),
-            array_column($items, 'data'),
-        );
-
-        $this->handle($type, $items, $result);
+        $this->handle($type, $items, $this->send($type, array_column($items, 'data')));
     }
 
     /**

@@ -34,7 +34,8 @@
         "phpstan/phpstan-phpunit": "^2.0"
     },
     "bin": [
-        "bin/ranetrace-flush"
+        "bin/ranetrace-flush",
+        "bin/ranetrace-test"
     ],
     "autoload": {
         "psr-4": {
