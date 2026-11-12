@@ -89,11 +89,14 @@ final class PayloadBuilder
     private const int MAX_URL_LENGTH = 2_000;
 
     /**
-     * A frame's `class` and `function`, and a previous exception's `type`, as
-     * the backend bounds them.
+     * A frame's `class` and `function`, as the backend bounds them.
      */
     private const int MAX_CODE_NAME_LENGTH = 1_000;
 
+    /**
+     * The error's `type` and a previous exception's, as the backend bounds
+     * them.
+     */
     private const int MAX_TYPE_LENGTH = 255;
 
     /**
