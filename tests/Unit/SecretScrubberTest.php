@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use PHPUnit\Framework\ExpectationFailedException;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\SecretScrubber;
 
@@ -25,6 +26,88 @@ function scrubberInternalLog(string $directory): string
     $files = glob($directory.'/internal-*.log') ?: [];
 
     return $files === [] ? '' : (string) file_get_contents($files[0]);
+}
+
+/**
+ * How many times longer the large input of a shape may take to scrub than the
+ * small one. The large input is four times the small one, so a linear scrub
+ * takes about four times as long and a quadratic one about sixteen times. Eight
+ * sits between the two, far enough from both that neither a noisy linear run
+ * nor a real quadratic one lands on the wrong side.
+ */
+const SCRUB_GROWTH_BOUND = 8;
+
+/**
+ * Below this time for the large input, in nanoseconds, a shape passes without
+ * the ratio check: at a few milliseconds, timer resolution and fixed overhead
+ * swamp the ratio. A quadratic scrub of these inputs takes hundreds of
+ * milliseconds at the large size, so it cannot hide under this floor.
+ */
+const SCRUB_GROWTH_FLOOR = 5_000_000;
+
+/**
+ * The most rounds measured. A second round runs only when the ratio of the
+ * first is over the bound, and each round keeps the fastest time seen for
+ * each size, because a context switch can only make a run slower.
+ */
+const SCRUB_GROWTH_ROUNDS = 5;
+
+/**
+ * Whether the fastest times of a quarter-size and a full-size run, in
+ * nanoseconds, show a scrub that grows about linearly.
+ */
+function scrubGrewLinearly(int $small, int $large): bool
+{
+    return $large < SCRUB_GROWTH_FLOOR || $large <= $small * SCRUB_GROWTH_BOUND;
+}
+
+/**
+ * Asserts that a scrub gives the expected output for a shape at a quarter of
+ * its size and at its full size, and that its time grows about linearly
+ * between the two.
+ *
+ * @param  Closure(int): array{0: mixed, 1: mixed}  $shape  the input and the expected output at a scale, where 4 is the full size and 1 a quarter of it
+ * @param  Closure(mixed): mixed  $scrub
+ * @return array{small: int, large: int} the fastest time seen for each size, in nanoseconds
+ */
+function expectScrubStaysLinear(string $label, Closure $shape, Closure $scrub): array
+{
+    [$smallInput, $smallExpected] = $shape(1);
+    [$largeInput, $largeExpected] = $shape(4);
+
+    $small = PHP_INT_MAX;
+    $large = PHP_INT_MAX;
+
+    for ($round = 1; $round <= SCRUB_GROWTH_ROUNDS; $round++) {
+        $started = hrtime(true);
+        $smallResult = $scrub($smallInput);
+        $small = min($small, hrtime(true) - $started);
+
+        $started = hrtime(true);
+        $largeResult = $scrub($largeInput);
+        $large = min($large, hrtime(true) - $started);
+
+        if ($round === 1) {
+            expect($smallResult)->toBe($smallExpected, $label.', at a quarter of its size')
+                ->and($largeResult)->toBe($largeExpected, $label);
+        }
+
+        $grewLinearly = scrubGrewLinearly($small, $large);
+
+        if ($grewLinearly) {
+            break;
+        }
+    }
+
+    expect($grewLinearly)->toBeTrue(sprintf(
+        '%s: the full size took %.1f ms to scrub, more than %d times the %.1f ms of a quarter of it',
+        $label,
+        $large / 1_000_000,
+        SCRUB_GROWTH_BOUND,
+        $small / 1_000_000,
+    ));
+
+    return ['small' => $small, 'large' => $large];
 }
 
 test('it redacts values under sensitive keys', function (): void {
@@ -1317,168 +1400,280 @@ test('scrubSource redacts the whole window when PCRE gives up, and says so in th
         ->and(scrubberInternalLog($directory))->toContain('source window failed');
 });
 
-test('scrubSource stays linear on long windows', function (string $label, array $lines, array $expected): void {
-    $started = microtime(true);
+test('the growth check tells fourfold growth from sixteenfold', function (int $small, int $large, bool $isLinear): void {
+    expect(scrubGrewLinearly($small, $large))->toBe($isLinear);
+})->with([
+    'linear, four times as long' => [2_000_000, 8_000_000, true],
+    'on the bound, eight times as long' => [2_000_000, 16_000_000, true],
+    'just over the bound' => [2_000_000, 16_000_001, false],
+    'quadratic, sixteen times as long' => [2_000_000, 32_000_000, false],
+    'any ratio under the floor' => [100_000, 4_999_999, true],
+    'the same ratio at the floor' => [100_000, 5_000_000, false],
+]);
 
-    $result = scrubber()->scrubSource($lines);
+test('the growth check fails a scrub whose time grows far faster than its input', function (): void {
+    $shape = fn (int $scale): array => [str_repeat('a', 12_500 * $scale), str_repeat('a', 12_500 * $scale)];
 
-    expect($result)->toBe($expected)
-        ->and(microtime(true) - $started)->toBeLessThan(1.0, $label);
+    // The scans grow with the square of the length and each scan with the
+    // length, so the full size takes 64 times as long as a quarter of it:
+    // far enough over the bound that a slow quarter-size run on a busy
+    // machine cannot make it look linear.
+    $cubic = function (string $value): string {
+        $scans = intdiv(mb_strlen($value), 2_500) ** 2 * 2;
+
+        for ($scan = 0; $scan < $scans; $scan++) {
+            preg_match('/[^a]/', $value);
+        }
+
+        return $value;
+    };
+
+    expect(fn (): array => expectScrubStaysLinear('a cubic scrub', $shape, $cubic))
+        ->toThrow(function (ExpectationFailedException $exception): void {
+            expect($exception->getMessage())->toMatch(
+                '/^a cubic scrub: the full size took \d+\.\d ms to scrub, more than 8 times the \d+\.\d ms of a quarter of it/'
+            );
+        });
+});
+
+test('the growth check passes a scrub whose time grows in step with its input', function (): void {
+    $shape = fn (int $scale): array => [str_repeat('a', 12_500 * $scale), str_repeat('a', 12_500 * $scale)];
+
+    $linear = function (string $value): string {
+        for ($scan = 0; $scan < 200; $scan++) {
+            preg_match('/[^a]/', $value);
+        }
+
+        return $value;
+    };
+
+    $times = expectScrubStaysLinear('a linear scrub', $shape, $linear);
+
+    // Over the floor, so the pass comes from the ratio and not from the floor.
+    expect($times['large'])->toBeGreaterThanOrEqual(SCRUB_GROWTH_FLOOR);
+});
+
+test('scrubSource stays linear on long windows', function (string $label, Closure $shape): void {
+    $scrubber = scrubber();
+
+    expectScrubStaysLinear($label, $shape, fn (array $lines): array => $scrubber->scrubSource($lines));
 })->with([
     'eleven long base64 lines' => [
         'eleven long base64 lines',
-        array_fill(0, 11, str_repeat('Ab1+', 12_500)),
-        array_fill(0, 11, '[REDACTED]'),
+        fn (int $scale): array => [
+            array_fill(0, 11, str_repeat('Ab1+', 3_125 * $scale)),
+            array_fill(0, 11, '[REDACTED]'),
+        ],
     ],
     'a begin with no end' => [
         'a begin with no end',
-        ['-----BEGIN PRIVATE KEY-----', ...array_fill(0, 10, str_repeat('Ab1 ', 12_500))],
-        ['-----BEGIN PRIVATE KEY-----', ...array_fill(0, 10, '[REDACTED] ')],
+        fn (int $scale): array => [
+            ['-----BEGIN PRIVATE KEY-----', ...array_fill(0, 10, str_repeat('Ab1 ', 3_125 * $scale))],
+            ['-----BEGIN PRIVATE KEY-----', ...array_fill(0, 10, '[REDACTED] ')],
+        ],
     ],
     'many markers on one line' => [
         'many markers on one line',
-        [str_repeat('-----BEGIN '.str_repeat('A', 39), 1_000)],
-        [str_repeat('-----BEGIN '.str_repeat('A', 39), 1_000)],
+        fn (int $scale): array => [
+            [str_repeat('-----BEGIN '.str_repeat('A', 39), 250 * $scale)],
+            [str_repeat('-----BEGIN '.str_repeat('A', 39), 250 * $scale)],
+        ],
     ],
     'a key and a long run of spaces at the end of every line' => [
         'a key and a long run of spaces at the end of every line',
-        array_fill(0, 11, "'token' =>".str_repeat(' ', 50_000).'x'),
-        array_fill(0, 11, "'token' =>".str_repeat(' ', 50_000).'[REDACTED]'),
+        fn (int $scale): array => [
+            array_fill(0, 11, "'token' =>".str_repeat(' ', 12_500 * $scale).'x'),
+            array_fill(0, 11, "'token' =>".str_repeat(' ', 12_500 * $scale).'[REDACTED]'),
+        ],
     ],
     'a code value of many literals' => [
         'a code value of many literals',
-        ["'password' => f(".str_repeat("('a', ", 50_000)],
-        ["'password' => f(".str_repeat("('[REDACTED]', ", 50_000)],
+        fn (int $scale): array => [
+            ["'password' => f(".str_repeat("('a', ", 12_500 * $scale)],
+            ["'password' => f(".str_repeat("('[REDACTED]', ", 12_500 * $scale)],
+        ],
     ],
     'an unterminated quote inside a code value' => [
         'an unterminated quote inside a code value',
-        ["'password' => Hash::make('".str_repeat('a, ', 20_000)],
-        ["'password' => Hash::make('[REDACTED]"],
+        fn (int $scale): array => [
+            ["'password' => Hash::make('".str_repeat('a, ', 5_000 * $scale)],
+            ["'password' => Hash::make('[REDACTED]"],
+        ],
     ],
     'an open literal' => [
         'an open literal',
-        ["\$secret = '".str_repeat('a ', 25_000), ...array_fill(0, 10, str_repeat('b ', 25_000))],
-        ["\$secret = '[REDACTED]", ...array_fill(0, 10, '[REDACTED]')],
+        fn (int $scale): array => [
+            ["\$secret = '".str_repeat('a ', 6_250 * $scale), ...array_fill(0, 10, str_repeat('b ', 6_250 * $scale))],
+            ["\$secret = '[REDACTED]", ...array_fill(0, 10, '[REDACTED]')],
+        ],
     ],
     'keys that never end a line' => [
         'keys that never end a line',
-        array_fill(0, 11, str_repeat("'token' => \$x ", 5_000)),
-        array_fill(0, 11, "'token' => ".str_repeat("\$x '[REDACTED]' => ", 4_999).'$x '),
+        fn (int $scale): array => [
+            array_fill(0, 11, str_repeat("'token' => \$x ", 1_250 * $scale)),
+            array_fill(0, 11, "'token' => ".str_repeat("\$x '[REDACTED]' => ", 1_250 * $scale - 1).'$x '),
+        ],
     ],
     'a sensitive call left open over the window' => [
         'a sensitive call left open over the window',
-        ['setToken(', ...array_fill(0, 10, str_repeat("('a', ", 10_000))],
-        ['setToken(', ...array_fill(0, 10, str_repeat("('[REDACTED]', ", 10_000))],
+        fn (int $scale): array => [
+            ['setToken(', ...array_fill(0, 10, str_repeat("('a', ", 2_500 * $scale))],
+            ['setToken(', ...array_fill(0, 10, str_repeat("('[REDACTED]', ", 2_500 * $scale))],
+        ],
     ],
     'a credential call left open over the window' => [
         'a credential call left open over the window',
-        ['$pdo = new PDO(', ...array_fill(0, 10, str_repeat("('a', ", 10_000))],
-        ['$pdo = new PDO(', ...array_fill(0, 10, str_repeat("('[REDACTED]', ", 10_000))],
+        fn (int $scale): array => [
+            ['$pdo = new PDO(', ...array_fill(0, 10, str_repeat("('a', ", 2_500 * $scale))],
+            ['$pdo = new PDO(', ...array_fill(0, 10, str_repeat("('[REDACTED]', ", 2_500 * $scale))],
+        ],
     ],
     'lookups repeated inside a sensitive call' => [
         'lookups repeated inside a sensitive call',
-        ['setToken(', ...array_fill(0, 10, str_repeat("env( 'A', 'b'), ", 5_000))],
-        ['setToken(', ...array_fill(0, 10, str_repeat("env( 'A', '[REDACTED]'), ", 5_000))],
+        fn (int $scale): array => [
+            ['setToken(', ...array_fill(0, 10, str_repeat("env( 'A', 'b'), ", 1_250 * $scale))],
+            ['setToken(', ...array_fill(0, 10, str_repeat("env( 'A', '[REDACTED]'), ", 1_250 * $scale))],
+        ],
     ],
     'long blanks around a lookup' => [
         'long blanks around a lookup',
-        ["'password' => env".str_repeat(' ', 50_000).'('.str_repeat(' ', 50_000)."'A'".str_repeat(' ', 50_000).')'],
-        ["'password' => [REDACTED]".str_repeat(' ', 50_000).'('.str_repeat(' ', 50_000)."'A'".str_repeat(' ', 50_000).')'],
+        fn (int $scale): array => [
+            ["'password' => env".str_repeat(' ', 12_500 * $scale).'('.str_repeat(' ', 12_500 * $scale)."'A'".str_repeat(' ', 12_500 * $scale).')'],
+            ["'password' => [REDACTED]".str_repeat(' ', 12_500 * $scale).'('.str_repeat(' ', 12_500 * $scale)."'A'".str_repeat(' ', 12_500 * $scale).')'],
+        ],
     ],
     'many literals after blanks' => [
         'many literals after blanks',
-        ["'password' => f(".str_repeat("   'a'", 20_000)],
-        ["'password' => f(".str_repeat("   '[REDACTED]'", 20_000)],
+        fn (int $scale): array => [
+            ["'password' => f(".str_repeat("   'a'", 5_000 * $scale)],
+            ["'password' => f(".str_repeat("   '[REDACTED]'", 5_000 * $scale)],
+        ],
     ],
     'block comments inside a sensitive call' => [
         'block comments inside a sensitive call',
-        ['setToken(', ...array_fill(0, 10, str_repeat("/* a */ 'b', ", 5_000))],
-        ['setToken(', ...array_fill(0, 10, str_repeat("/* a */ '[REDACTED]', ", 5_000))],
+        fn (int $scale): array => [
+            ['setToken(', ...array_fill(0, 10, str_repeat("/* a */ 'b', ", 1_250 * $scale))],
+            ['setToken(', ...array_fill(0, 10, str_repeat("/* a */ '[REDACTED]', ", 1_250 * $scale))],
+        ],
     ],
     'sensitive calls each opening a comment' => [
         'sensitive calls each opening a comment',
-        [str_repeat('setToken( // ', 5_000), str_repeat('setToken(/* ', 5_000), "*/ 'x'"],
-        [str_repeat('setToken( // ', 5_000), str_repeat('setToken(/* ', 5_000), "*/ '[REDACTED]'"],
+        fn (int $scale): array => [
+            [str_repeat('setToken( // ', 1_250 * $scale), str_repeat('setToken(/* ', 1_250 * $scale), "*/ 'x'"],
+            [str_repeat('setToken( // ', 1_250 * $scale), str_repeat('setToken(/* ', 1_250 * $scale), "*/ '[REDACTED]'"],
+        ],
     ],
     'a name and a long run of blanks' => [
         'a name and a long run of blanks',
-        array_fill(0, 11, "'password' => a.b".str_repeat(" \t", 25_000).'x'),
-        array_fill(0, 11, "'password' => [REDACTED]".str_repeat(" \t", 25_000).'x'),
+        fn (int $scale): array => [
+            array_fill(0, 11, "'password' => a.b".str_repeat(" \t", 6_250 * $scale).'x'),
+            array_fill(0, 11, "'password' => [REDACTED]".str_repeat(" \t", 6_250 * $scale).'x'),
+        ],
     ],
     'a name spaced from its call' => [
         'a name spaced from its call',
-        array_fill(0, 11, "'password' => f".str_repeat(' ', 50_000)."('x')"),
-        array_fill(0, 11, "'password' => [REDACTED]".str_repeat(' ', 50_000)."('[REDACTED]')"),
+        fn (int $scale): array => [
+            array_fill(0, 11, "'password' => f".str_repeat(' ', 12_500 * $scale)."('x')"),
+            array_fill(0, 11, "'password' => [REDACTED]".str_repeat(' ', 12_500 * $scale)."('[REDACTED]')"),
+        ],
     ],
     'many closed sensitive calls on every line' => [
         'many closed sensitive calls on every line',
-        array_fill(0, 10, str_repeat("\$c->setToken('a'); ", 10_000)),
-        array_fill(0, 10, str_repeat("\$c->setToken('[REDACTED]'); ", 10_000)),
+        fn (int $scale): array => [
+            array_fill(0, 10, str_repeat("\$c->setToken('a'); ", 2_500 * $scale)),
+            array_fill(0, 10, str_repeat("\$c->setToken('[REDACTED]'); ", 2_500 * $scale)),
+        ],
     ],
     'a PDO subclass with many parent calls' => [
         'a PDO subclass with many parent calls',
-        ['class Db extends PDO', ...array_fill(0, 10, str_repeat("parent::__construct('a'); ", 5_000))],
-        ['class Db extends PDO', ...array_fill(0, 10, str_repeat("parent::__construct('[REDACTED]'); ", 5_000))],
+        fn (int $scale): array => [
+            ['class Db extends PDO', ...array_fill(0, 10, str_repeat("parent::__construct('a'); ", 1_250 * $scale))],
+            ['class Db extends PDO', ...array_fill(0, 10, str_repeat("parent::__construct('[REDACTED]'); ", 1_250 * $scale))],
+        ],
     ],
     'every line ending in extends' => [
         'every line ending in extends',
-        [...array_fill(0, 10, str_repeat('x extends ', 5_000).'extends'), str_repeat(' ', 50_000).'PDOX'],
-        [...array_fill(0, 10, str_repeat('x extends ', 5_000).'extends'), str_repeat(' ', 50_000).'PDOX'],
+        fn (int $scale): array => [
+            [...array_fill(0, 10, str_repeat('x extends ', 1_250 * $scale).'extends'), str_repeat(' ', 12_500 * $scale).'PDOX'],
+            [...array_fill(0, 10, str_repeat('x extends ', 1_250 * $scale).'extends'), str_repeat(' ', 12_500 * $scale).'PDOX'],
+        ],
     ],
     'extends before comments that never close' => [
         'extends before comments that never close',
-        [str_repeat('extends /* ', 20_000), str_repeat('extends // ', 20_000), str_repeat('extends # ', 20_000), "parent::__construct('a');"],
-        [str_repeat('extends /* ', 20_000), str_repeat('extends // ', 20_000), str_repeat('extends # ', 20_000), "parent::__construct('a');"],
+        fn (int $scale): array => [
+            [str_repeat('extends /* ', 5_000 * $scale), str_repeat('extends // ', 5_000 * $scale), str_repeat('extends # ', 5_000 * $scale), "parent::__construct('a');"],
+            [str_repeat('extends /* ', 5_000 * $scale), str_repeat('extends // ', 5_000 * $scale), str_repeat('extends # ', 5_000 * $scale), "parent::__construct('a');"],
+        ],
     ],
     'extends before a long run of comment lines' => [
         'extends before a long run of comment lines',
-        ['class Db extends', ...array_fill(0, 10, str_repeat('/* a */ ', 5_000).'// b'), "PDOX parent::__construct('a');"],
-        ['class Db extends', ...array_fill(0, 10, str_repeat('/* a */ ', 5_000).'// b'), "PDOX parent::__construct('a');"],
+        fn (int $scale): array => [
+            ['class Db extends', ...array_fill(0, 10, str_repeat('/* a */ ', 1_250 * $scale).'// b'), "PDOX parent::__construct('a');"],
+            ['class Db extends', ...array_fill(0, 10, str_repeat('/* a */ ', 1_250 * $scale).'// b'), "PDOX parent::__construct('a');"],
+        ],
     ],
     'extends and long blank runs on every line' => [
         'extends and long blank runs on every line',
-        array_fill(0, 11, str_repeat('extends ', 5_000).'extends'.str_repeat(' ', 50_000).'PDOX'),
-        array_fill(0, 11, str_repeat('extends ', 5_000).'extends'.str_repeat(' ', 50_000).'PDOX'),
+        fn (int $scale): array => [
+            array_fill(0, 11, str_repeat('extends ', 1_250 * $scale).'extends'.str_repeat(' ', 12_500 * $scale).'PDOX'),
+            array_fill(0, 11, str_repeat('extends ', 1_250 * $scale).'extends'.str_repeat(' ', 12_500 * $scale).'PDOX'),
+        ],
     ],
     'a block comment left open over the window' => [
         'a block comment left open over the window',
-        ['setToken(/*', ...array_fill(0, 10, str_repeat("it's * / ", 10_000))],
-        ['setToken(/*', ...array_fill(0, 10, str_repeat("it's * / ", 10_000))],
+        fn (int $scale): array => [
+            ['setToken(/*', ...array_fill(0, 10, str_repeat("it's * / ", 2_500 * $scale))],
+            ['setToken(/*', ...array_fill(0, 10, str_repeat("it's * / ", 2_500 * $scale))],
+        ],
     ],
     'a fallback and long blanks ending every line' => [
         'a fallback and long blanks ending every line',
-        array_fill(0, 11, 'token ??'.str_repeat(' ', 50_000)),
-        ['token ??'.str_repeat(' ', 50_000), ...array_fill(0, 10, '[REDACTED] ??'.str_repeat(' ', 50_000))],
+        fn (int $scale): array => [
+            array_fill(0, 11, 'token ??'.str_repeat(' ', 12_500 * $scale)),
+            ['token ??'.str_repeat(' ', 12_500 * $scale), ...array_fill(0, 10, '[REDACTED] ??'.str_repeat(' ', 12_500 * $scale))],
+        ],
     ],
     'sensitive reads ending every line' => [
         'sensitive reads ending every line',
-        array_fill(0, 11, '?? $token'.str_repeat(' ', 50_000)),
-        array_fill(0, 11, '?? $token'.str_repeat(' ', 50_000)),
+        fn (int $scale): array => [
+            array_fill(0, 11, '?? $token'.str_repeat(' ', 12_500 * $scale)),
+            array_fill(0, 11, '?? $token'.str_repeat(' ', 12_500 * $scale)),
+        ],
     ],
     'many keys on a line that ends in one' => [
         'many keys on a line that ends in one',
-        array_fill(0, 11, str_repeat("\$config['token'] + ", 5_000)."\$config['token']"),
-        array_fill(0, 11, str_repeat("\$config['token'] + ", 5_000)."\$config['token']"),
+        fn (int $scale): array => [
+            array_fill(0, 11, str_repeat("\$config['token'] + ", 1_250 * $scale)."\$config['token']"),
+            array_fill(0, 11, str_repeat("\$config['token'] + ", 1_250 * $scale)."\$config['token']"),
+        ],
     ],
     'sensitive calls ending every line before a fallback' => [
         'sensitive calls ending every line before a fallback',
-        array_fill(0, 11, "?? 'a' . getToken(".str_repeat('(', 10_000).str_repeat(')', 10_000).')'.str_repeat(' ', 20_000)),
-        ["?? 'a' . getToken(".str_repeat('(', 10_000).str_repeat(')', 10_000).')'.str_repeat(' ', 20_000), ...array_fill(0, 10, "?? '[REDACTED]' . getToken(".str_repeat('(', 10_000).str_repeat(')', 10_000).')'.str_repeat(' ', 20_000))],
+        fn (int $scale): array => [
+            array_fill(0, 11, "?? 'a' . getToken(".str_repeat('(', 2_500 * $scale).str_repeat(')', 2_500 * $scale).')'.str_repeat(' ', 5_000 * $scale)),
+            ["?? 'a' . getToken(".str_repeat('(', 2_500 * $scale).str_repeat(')', 2_500 * $scale).')'.str_repeat(' ', 5_000 * $scale), ...array_fill(0, 10, "?? '[REDACTED]' . getToken(".str_repeat('(', 2_500 * $scale).str_repeat(')', 2_500 * $scale).')'.str_repeat(' ', 5_000 * $scale))],
+        ],
     ],
     'a heredoc after a long run of fallbacks' => [
         'a heredoc after a long run of fallbacks',
-        [str_repeat('$a ?: ', 5_000).'getToken() ?? <<<EOT', ...array_fill(0, 10, str_repeat('?? <<<EOT ', 5_000))],
-        [str_repeat('$a ?: ', 5_000).'getToken() ?? <<<EOT', ...array_fill(0, 10, '[REDACTED]')],
+        fn (int $scale): array => [
+            [str_repeat('$a ?: ', 1_250 * $scale).'getToken() ?? <<<EOT', ...array_fill(0, 10, str_repeat('?? <<<EOT ', 1_250 * $scale))],
+            [str_repeat('$a ?: ', 1_250 * $scale).'getToken() ?? <<<EOT', ...array_fill(0, 10, '[REDACTED]')],
+        ],
     ],
     'heredoc openers after reads that are not sensitive' => [
         'heredoc openers after reads that are not sensitive',
-        array_fill(0, 11, str_repeat('$name ?? ', 5_000).'?? <<<EOT'),
-        array_fill(0, 11, str_repeat('$name ?? ', 5_000).'?? <<<EOT'),
+        fn (int $scale): array => [
+            array_fill(0, 11, str_repeat('$name ?? ', 1_250 * $scale).'?? <<<EOT'),
+            array_fill(0, 11, str_repeat('$name ?? ', 1_250 * $scale).'?? <<<EOT'),
+        ],
     ],
     'an open heredoc' => [
         'an open heredoc',
-        ['$secret = <<<EOT', ...array_fill(0, 10, str_repeat('E', 50_000))],
-        ['$secret = <<<EOT', ...array_fill(0, 10, '[REDACTED]')],
+        fn (int $scale): array => [
+            ['$secret = <<<EOT', ...array_fill(0, 10, str_repeat('E', 12_500 * $scale))],
+            ['$secret = <<<EOT', ...array_fill(0, 10, '[REDACTED]')],
+        ],
     ],
 ]);
 
@@ -1528,162 +1723,217 @@ test('scrubString redacts the whole value when PCRE gives up, and says so in the
         ->toContain('Backtrack limit');
 });
 
-test('scrubString stays linear on the long word runs that used to burn the backtrack limit', function (string $label, string $value, string $expected): void {
+test('scrubString stays linear on the long word runs that used to burn the backtrack limit', function (string $label, Closure $shape): void {
     // These are the shapes the pattern used to be quadratic on: a 50k run of
     // word characters, which cost one full re-scan per start position. PCRE
     // gave up and the whole value was redacted wholesale. The result is now the
     // precise redaction, which is only reachable if the engine never gave up.
-    $started = microtime(true);
+    $scrubber = scrubber();
 
-    $result = scrubber()->scrubString($value);
-
-    expect($result)->toBe($expected)
-        ->and(microtime(true) - $started)->toBeLessThan(1.0, $label);
+    expectScrubStaysLinear($label, $shape, fn (string $value): string => $scrubber->scrubString($value));
 })->with([
     'fragment leading the run' => [
         'fragment leading the run',
-        'token'.str_repeat('a', 50_000).'=x',
-        'token'.str_repeat('a', 50_000).'=[REDACTED]',
+        fn (int $scale): array => [
+            'token'.str_repeat('a', 12_500 * $scale).'=x',
+            'token'.str_repeat('a', 12_500 * $scale).'=[REDACTED]',
+        ],
     ],
     'secret behind the run' => [
         'secret behind the run',
-        str_repeat('a', 50_000).' password=hunter2',
-        str_repeat('a', 50_000).' password=[REDACTED]',
+        fn (int $scale): array => [
+            str_repeat('a', 12_500 * $scale).' password=hunter2',
+            str_repeat('a', 12_500 * $scale).' password=[REDACTED]',
+        ],
     ],
     'run with no secret at all' => [
         'run with no secret at all',
-        str_repeat('a', 50_000),
-        str_repeat('a', 50_000),
+        fn (int $scale): array => [
+            str_repeat('a', 12_500 * $scale),
+            str_repeat('a', 12_500 * $scale),
+        ],
     ],
     'unterminated quoted value' => [
         'unterminated quoted value',
-        '"password":"'.str_repeat('a ', 25_000),
-        '"password":"[REDACTED]',
+        fn (int $scale): array => [
+            '"password":"'.str_repeat('a ', 6_250 * $scale),
+            '"password":"[REDACTED]',
+        ],
     ],
     'quoted value of escaped quotes' => [
         'quoted value of escaped quotes',
-        "'token' => '".str_repeat("\\'", 25_000)."'",
-        "'token' => '[REDACTED]'",
+        fn (int $scale): array => [
+            "'token' => '".str_repeat("\\'", 6_250 * $scale)."'",
+            "'token' => '[REDACTED]'",
+        ],
     ],
     'quoted value of the other quote' => [
         'quoted value of the other quote',
-        "'token' => '".str_repeat('"', 50_000)."'",
-        "'token' => '[REDACTED]'",
+        fn (int $scale): array => [
+            "'token' => '".str_repeat('"', 12_500 * $scale)."'",
+            "'token' => '[REDACTED]'",
+        ],
     ],
     'key, comma, value repeated' => [
         'key, comma, value repeated',
-        str_repeat("'token', ", 10_000),
-        str_repeat("'token', '[REDACTED]', ", 5_000),
+        fn (int $scale): array => [
+            str_repeat("'token', ", 2_500 * $scale),
+            str_repeat("'token', '[REDACTED]', ", 1_250 * $scale),
+        ],
     ],
     'whitespace run after a key' => [
         'whitespace run after a key',
-        'token'.str_repeat(' ', 50_000).'x',
-        'token'.str_repeat(' ', 50_000).'x',
+        fn (int $scale): array => [
+            'token'.str_repeat(' ', 12_500 * $scale).'x',
+            'token'.str_repeat(' ', 12_500 * $scale).'x',
+        ],
     ],
     'many keys without a separator' => [
         'many keys without a separator',
-        str_repeat("'token' ", 10_000),
-        str_repeat("'token' ", 10_000),
+        fn (int $scale): array => [
+            str_repeat("'token' ", 2_500 * $scale),
+            str_repeat("'token' ", 2_500 * $scale),
+        ],
     ],
     'deeply nested code value' => [
         'deeply nested code value',
-        "'password' => ".str_repeat('[', 25_000).str_repeat(']', 25_000).',',
-        "'password' => [REDACTED],",
+        fn (int $scale): array => [
+            "'password' => ".str_repeat('[', 6_250 * $scale).str_repeat(']', 6_250 * $scale).',',
+            "'password' => [REDACTED],",
+        ],
     ],
     'code-shaped value of many calls' => [
         'code-shaped value of many calls',
-        'token=a'.str_repeat("('x')", 25_000).' rest',
-        'token=[REDACTED] rest',
+        fn (int $scale): array => [
+            'token=a'.str_repeat("('x')", 6_250 * $scale).' rest',
+            'token=[REDACTED] rest',
+        ],
     ],
     'code-shaped value left open' => [
         'code-shaped value left open',
-        'token=a'.str_repeat("(('x', ", 20_000),
-        'token=[REDACTED]',
+        fn (int $scale): array => [
+            'token=a'.str_repeat("(('x', ", 5_000 * $scale),
+            'token=[REDACTED]',
+        ],
     ],
     'a long chain of names with no call' => [
         'a long chain of names with no call',
-        'token='.str_repeat('a.', 25_000),
-        'token=[REDACTED]',
+        fn (int $scale): array => [
+            'token='.str_repeat('a.', 6_250 * $scale),
+            'token=[REDACTED]',
+        ],
     ],
     'a sensitive call left open' => [
         'a sensitive call left open',
-        'setToken('.str_repeat("'a', (", 25_000),
-        'setToken('.str_repeat("'[REDACTED]', (", 25_000),
+        fn (int $scale): array => [
+            'setToken('.str_repeat("'a', (", 6_250 * $scale),
+            'setToken('.str_repeat("'[REDACTED]', (", 6_250 * $scale),
+        ],
     ],
     'sensitive calls repeated' => [
         'sensitive calls repeated',
-        str_repeat('getToken()->', 10_000),
-        str_repeat('getToken()->', 10_000),
+        fn (int $scale): array => [
+            str_repeat('getToken()->', 2_500 * $scale),
+            str_repeat('getToken()->', 2_500 * $scale),
+        ],
     ],
     'a long name before a paren' => [
         'a long name before a paren',
-        str_repeat('a', 50_000).'token(',
-        str_repeat('a', 50_000).'token(',
+        fn (int $scale): array => [
+            str_repeat('a', 12_500 * $scale).'token(',
+            str_repeat('a', 12_500 * $scale).'token(',
+        ],
     ],
     'new and a long run of spaces' => [
         'new and a long run of spaces',
-        'new'.str_repeat(' ', 50_000).'PDOX(',
-        'new'.str_repeat(' ', 50_000).'PDOX(',
+        fn (int $scale): array => [
+            'new'.str_repeat(' ', 12_500 * $scale).'PDOX(',
+            'new'.str_repeat(' ', 12_500 * $scale).'PDOX(',
+        ],
     ],
     'credential call names with no paren' => [
         'credential call names with no paren',
-        str_repeat('mysqli_connect ', 5_000).'x',
-        str_repeat('mysqli_connect ', 5_000).'x',
+        fn (int $scale): array => [
+            str_repeat('mysqli_connect ', 1_250 * $scale).'x',
+            str_repeat('mysqli_connect ', 1_250 * $scale).'x',
+        ],
     ],
     'a credential call left open' => [
         'a credential call left open',
-        'new PDO('.str_repeat("'a', (", 25_000),
-        'new PDO('.str_repeat("'[REDACTED]', (", 25_000),
+        fn (int $scale): array => [
+            'new PDO('.str_repeat("'a', (", 6_250 * $scale),
+            'new PDO('.str_repeat("'[REDACTED]', (", 6_250 * $scale),
+        ],
     ],
     'comments in a sensitive call' => [
         'comments in a sensitive call',
-        'setToken('.str_repeat('/* a */ # b ', 5_000)."\n".str_repeat('setToken(/* ', 5_000),
-        'setToken('.str_repeat('/* a */ # b ', 5_000)."\n".str_repeat('setToken(/* ', 5_000),
+        fn (int $scale): array => [
+            'setToken('.str_repeat('/* a */ # b ', 1_250 * $scale)."\n".str_repeat('setToken(/* ', 1_250 * $scale),
+            'setToken('.str_repeat('/* a */ # b ', 1_250 * $scale)."\n".str_repeat('setToken(/* ', 1_250 * $scale),
+        ],
     ],
     'fallbacks repeated' => [
         'fallbacks repeated',
-        str_repeat("'token' ?? ", 10_000).str_repeat('token ?', 10_000),
-        str_repeat("'token' ?? '[REDACTED]' ?? ", 5_000).str_repeat('token ?', 10_000),
+        fn (int $scale): array => [
+            str_repeat("'token' ?? ", 2_500 * $scale).str_repeat('token ?', 2_500 * $scale),
+            str_repeat("'token' ?? '[REDACTED]' ?? ", 1_250 * $scale).str_repeat('token ?', 2_500 * $scale),
+        ],
     ],
     'message keys repeated' => [
         'message keys repeated',
-        str_repeat("'password.required' => 'a', 'password.requiredx' => 'b', ", 5_000),
-        str_repeat("'password.required' => 'a', 'password.requiredx' => '[REDACTED]', ", 5_000),
+        fn (int $scale): array => [
+            str_repeat("'password.required' => 'a', 'password.requiredx' => 'b', ", 1_250 * $scale),
+            str_repeat("'password.required' => 'a', 'password.requiredx' => '[REDACTED]', ", 1_250 * $scale),
+        ],
     ],
     'call keys before long blanks' => [
         'call keys before long blanks',
-        str_repeat("f('token')     ", 10_000)."f('token')".str_repeat(' ', 50_000).'?? x',
-        str_repeat("f('token')     ", 10_000)."f('token')".str_repeat(' ', 50_000).'?? [REDACTED]',
+        fn (int $scale): array => [
+            str_repeat("f('token')     ", 2_500 * $scale)."f('token')".str_repeat(' ', 12_500 * $scale).'?? x',
+            str_repeat("f('token')     ", 2_500 * $scale)."f('token')".str_repeat(' ', 12_500 * $scale).'?? [REDACTED]',
+        ],
     ],
     'call keys with long blanks before the paren' => [
         'call keys with long blanks before the paren',
-        str_repeat("f('token'      x ", 10_000)."f('token'".str_repeat(' ', 50_000).') ?? x',
-        str_repeat("f('token'      x ", 10_000)."f('token'".str_repeat(' ', 50_000).') ?? [REDACTED]',
+        fn (int $scale): array => [
+            str_repeat("f('token'      x ", 2_500 * $scale)."f('token'".str_repeat(' ', 12_500 * $scale).') ?? x',
+            str_repeat("f('token'      x ", 2_500 * $scale)."f('token'".str_repeat(' ', 12_500 * $scale).') ?? [REDACTED]',
+        ],
     ],
     'sensitive calls each with a fallback' => [
         'sensitive calls each with a fallback',
-        str_repeat('getToken() ?? ', 10_000),
-        str_repeat('getToken() ?? [REDACTED] ?? ', 5_000),
+        fn (int $scale): array => [
+            str_repeat('getToken() ?? ', 2_500 * $scale),
+            str_repeat('getToken() ?? [REDACTED] ?? ', 1_250 * $scale),
+        ],
     ],
     'exception calls repeated' => [
         'exception calls repeated',
-        str_repeat("new TokenException('x') ", 5_000),
-        str_repeat("new TokenException('x') ", 5_000),
+        fn (int $scale): array => [
+            str_repeat("new TokenException('x') ", 1_250 * $scale),
+            str_repeat("new TokenException('x') ", 1_250 * $scale),
+        ],
     ],
     'a long name ending in an exception' => [
         'a long name ending in an exception',
-        'setToken'.str_repeat('a', 50_000)."Exception('x')",
-        'setToken'.str_repeat('a', 50_000)."Exception('x')",
+        fn (int $scale): array => [
+            'setToken'.str_repeat('a', 12_500 * $scale)."Exception('x')",
+            'setToken'.str_repeat('a', 12_500 * $scale)."Exception('x')",
+        ],
     ],
     'new before a long run under a key' => [
         'new before a long run under a key',
-        'token=new '.str_repeat('a', 50_000),
-        'token=[REDACTED] '.str_repeat('a', 50_000),
+        fn (int $scale): array => [
+            'token=new '.str_repeat('a', 12_500 * $scale),
+            'token=[REDACTED] '.str_repeat('a', 12_500 * $scale),
+        ],
     ],
     'many code values in a row' => [
         'many code values in a row',
-        str_repeat("'token' => \$x, ", 5_000),
-        str_repeat("'token' => [REDACTED], ", 5_000),
+        fn (int $scale): array => [
+            str_repeat("'token' => \$x, ", 1_250 * $scale),
+            str_repeat("'token' => [REDACTED], ", 1_250 * $scale),
+        ],
     ],
 ]);
 
@@ -1945,21 +2195,51 @@ test('scrub redacts a value under a pwd key and keeps keys that only hold pass o
     ]);
 });
 
-test('the value shapes stay linear on long runs', function (string $label, string $value, string $expected): void {
-    $started = microtime(true);
+test('the value shapes stay linear on long runs', function (string $label, Closure $shape): void {
+    $scrubber = scrubber();
 
-    expect(scrubber()->scrubString($value))->toBe($expected)
-        ->and(scrubber()->scrubSource([$value]))->toBe([$expected])
-        ->and(microtime(true) - $started)->toBeLessThan(1.0, $label);
+    expectScrubStaysLinear($label, $shape, fn (string $value): string => $scrubber->scrubString($value));
+    expectScrubStaysLinear(
+        $label.', read as source',
+        fn (int $scale): array => array_map(fn (string $part): array => [$part], $shape($scale)),
+        fn (array $lines): array => $scrubber->scrubSource($lines),
+    );
 })->with([
-    'a password run with no @' => ['a password run with no @', 'a://u:'.str_repeat('x:', 25_000), 'a://u:'.str_repeat('x:', 25_000)],
-    'a password run of @' => ['a password run of @', 'a://u:'.str_repeat('@', 50_000), 'a://u:[REDACTED]@'],
-    'schemes back to back' => ['schemes back to back', str_repeat('a://', 12_500), str_repeat('a://', 12_500)],
-    'a scheme run' => ['a scheme run', str_repeat('a.', 25_000).'://u', str_repeat('a.', 25_000).'://u'],
-    'jwt heads joined by dashes' => ['jwt heads joined by dashes', str_repeat('eyJa-', 10_000), str_repeat('eyJa-', 10_000)],
-    'jwt heads joined by dots' => ['jwt heads joined by dots', 'eyJ'.str_repeat('a', 50_000).'.eyJ'.str_repeat('a', 50_000), 'eyJ'.str_repeat('a', 50_000).'.eyJ'.str_repeat('a', 50_000)],
-    'slack prefixes back to back' => ['slack prefixes back to back', str_repeat('xoxb-', 10_000), '[REDACTED]'],
-    'a long stripe key' => ['a long stripe key', 'sk_live_'.str_repeat('a', 50_000), '[REDACTED]'],
+    'a password run with no @' => [
+        'a password run with no @',
+        fn (int $scale): array => ['a://u:'.str_repeat('x:', 6_250 * $scale), 'a://u:'.str_repeat('x:', 6_250 * $scale)],
+    ],
+    'a password run of @' => [
+        'a password run of @',
+        fn (int $scale): array => ['a://u:'.str_repeat('@', 12_500 * $scale), 'a://u:[REDACTED]@'],
+    ],
+    'schemes back to back' => [
+        'schemes back to back',
+        fn (int $scale): array => [str_repeat('a://', 3_125 * $scale), str_repeat('a://', 3_125 * $scale)],
+    ],
+    'a scheme run' => [
+        'a scheme run',
+        fn (int $scale): array => [str_repeat('a.', 6_250 * $scale).'://u', str_repeat('a.', 6_250 * $scale).'://u'],
+    ],
+    'jwt heads joined by dashes' => [
+        'jwt heads joined by dashes',
+        fn (int $scale): array => [str_repeat('eyJa-', 2_500 * $scale), str_repeat('eyJa-', 2_500 * $scale)],
+    ],
+    'jwt heads joined by dots' => [
+        'jwt heads joined by dots',
+        fn (int $scale): array => [
+            'eyJ'.str_repeat('a', 12_500 * $scale).'.eyJ'.str_repeat('a', 12_500 * $scale),
+            'eyJ'.str_repeat('a', 12_500 * $scale).'.eyJ'.str_repeat('a', 12_500 * $scale),
+        ],
+    ],
+    'slack prefixes back to back' => [
+        'slack prefixes back to back',
+        fn (int $scale): array => [str_repeat('xoxb-', 2_500 * $scale), '[REDACTED]'],
+    ],
+    'a long stripe key' => [
+        'a long stripe key',
+        fn (int $scale): array => ['sk_live_'.str_repeat('a', 12_500 * $scale), '[REDACTED]'],
+    ],
 ]);
 
 test('scrubDeep redacts a secret that its value gives away under a key that says nothing', function (): void {
