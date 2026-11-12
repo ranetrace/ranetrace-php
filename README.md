@@ -36,7 +36,7 @@ Captured items are buffered locally and drained when the process shuts down. On 
 * * * * * /path/to/app/vendor/bin/ranetrace-flush >/dev/null 2>&1
 ```
 
-Run the cron job as the user your web server runs as: the buffer is for one user. The line discards the command's output, so run `vendor/bin/ranetrace-flush` once by hand as that user to check it. It prints nothing when it can use the buffer, and prints the reason and exits `1` when it cannot.
+Run the cron job as the user your web server runs as: the buffer is for one user. The line discards the command's output, so run `vendor/bin/ranetrace-flush` once by hand as that user to check it. It prints nothing when it has a key and can use the buffer, and prints the reason and exits `1` when it cannot use the buffer or when `RANETRACE_KEY` is not set in its environment. The command reads the environment only: a key your application loads from a `.env` file or sets in its bootstrap does not reach it, so set the key in the cron job's environment. Without it the flush sends nothing.
 
 To check the install, run `vendor/bin/ranetrace-test`. It sends one test error and one test event straight to the API, beside the buffer, and prints what came back, then the state of the buffer:
 

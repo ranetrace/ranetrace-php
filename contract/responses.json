@@ -1,5 +1,6 @@
 {
     "note": "The client's response matrix, transcribed from Worker::handle() in ranetrace/ranetrace-php. Every branch answers three questions: do the items go back on the spool, does the feature or everything pause, and are the items terminal. This is contract, not implementation detail: the server relies on the client behaving this way.",
+    "without_api_key": "A client with no API key sends nothing. It takes no item from the buffer and sets no pause, so it reaches no row of the matrix below. A process without the key cannot speak for a process that has it, and a pause is shared by both: a cron flush that cannot see the key the web process loads must not pause the web process.",
     "pause_seconds_default": 900,
     "rate_limit_floor_seconds": 60,
     "statuses": {
@@ -59,7 +60,7 @@
             "pause_scope": "feature",
             "pause_seconds": 900,
             "drop": false,
-            "note": "No HTTP status was reached: a dead connection, a timeout, a missing API key, or a body that would not encode. The client normalises all of these to status 0 so the raw transport error never escapes into the host application."
+            "note": "No HTTP status was reached: a dead connection, a timeout, or a body that would not encode. The client normalises all of these to status 0 so the raw transport error never escapes into the host application."
         }
     },
     "success_body": {

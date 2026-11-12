@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Ranetrace\Php\Buffer\PauseStore;
 use Ranetrace\Php\Contract\WireContract;
 use Ranetrace\Php\Http\ApiClient;
 use Ranetrace\Php\Http\EndpointTable;
@@ -9,6 +10,7 @@ use Ranetrace\Php\Http\PauseScope;
 use Ranetrace\Php\Http\ResponsePolicy;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\ItemByteBudget;
+use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 use Ranetrace\Php\Tests\Doubles\FakeHttpClient;
 use Ranetrace\Php\Worker\Worker;
 
@@ -89,6 +91,34 @@ test('the response policy decides every contracted status the way the fixture st
             ->and($row['pause_seconds'])->toBe($responses['pause_seconds_default']);
     }
 })->with(['401', '403', '413', '422', '429', 'default', 'network']);
+
+/**
+ * The statement sits outside the matrix because a keyless client never gets a
+ * response to decide on. A worker that reached the `network` row instead would
+ * re-buffer and pause the feature, which is what this pins against.
+ */
+test('the worker without an api key does what the contract states: no request, no item taken, no pause', function (string $key): void {
+    expect(WireContract::responses()['without_api_key'])->toBeString()->not->toBe('');
+
+    $directory = tempDirectory();
+    $config = testConfig(['key' => $key, 'buffer_path' => $directory, 'internal_logging' => ['enabled' => false]]);
+    $http = FakeHttpClient::respondingWith(200);
+    $log = new InternalLogger($config);
+    $buffer = new ArrayBuffer;
+    $pauses = new PauseStore($config);
+    $envelope = ['id' => 'waiting', 'data' => WireContract::item('events')['examples']['minimal'], 'timestamp' => time() - 60];
+    $buffer->items['events'] = [$envelope];
+
+    new Worker($config, $buffer, $pauses, new ApiClient($config, $http, $log), $log)->run();
+
+    expect($http->requests)->toBe([])
+        ->and($buffer->items['events'])->toBe([$envelope])
+        ->and($pauses->featurePause('events'))->toBeNull()
+        ->and($pauses->globalPause())->toBeNull();
+})->with([
+    'no key' => [''],
+    'a key of whitespace' => [' '],
+]);
 
 test('the response policy substitutes the contracted floor for an absent Retry-After', function (mixed $header, ?int $expected): void {
     $responses = WireContract::responses();

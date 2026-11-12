@@ -430,15 +430,103 @@ it('puts a failed batch back ahead of the items deferred from it', function (): 
     expect($harness['buffer']->items['errors'])->toBe($envelopes);
 });
 
-it('does not send when the api key is missing', function (): void {
+/**
+ * A process without the key cannot speak for one that has it, and the pause
+ * store is shared by both: a pause set here would hold the keyed web process
+ * back for fifteen minutes over a key it does have.
+ */
+it('takes nothing, sends nothing and pauses nothing without an api key', function (string $key, ?string $type): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200), ['key' => $key]);
+    $envelopes = seedEnvelopes($harness['buffer'], 'errors', [['message' => 'one'], ['message' => 'two']]);
+
+    $harness['worker']->run($type);
+
+    expect($harness['http']->requests)->toBe([])
+        ->and($harness['buffer']->items['errors'])->toBe($envelopes)
+        ->and($harness['pauses']->featurePause('errors'))->toBeNull()
+        ->and($harness['pauses']->globalPause())->toBeNull()
+        ->and(is_file($harness['directory'].'/pauses.json'))->toBeFalse()
+        ->and($harness['worker']->lastBatchAt('errors'))->toBeNull();
+})->with([
+    'an empty key' => [''],
+    'a space' => [' '],
+    'tabs and newlines' => ["\t\n "],
+])->with([
+    'every type' => [null],
+    'the named type' => ['errors'],
+]);
+
+it('leaves the pauses it finds as they are without an api key', function (): void {
     $harness = workerHarness(FakeHttpClient::respondingWith(200), ['key' => '']);
     seedBuffer($harness['buffer'], 'errors', 1);
+    seedBuffer($harness['buffer'], 'events', 1);
+    $harness['pauses']->pauseGlobal(900, '401');
+    $harness['pauses']->pauseFeature('events', 300, '429');
+    $before = (string) file_get_contents($harness['directory'].'/pauses.json');
 
-    $harness['worker']->run('errors');
+    $harness['worker']->run();
 
     expect($harness['http']->requests)->toBe([])
         ->and($harness['buffer']->count('errors'))->toBe(1)
-        ->and($harness['pauses']->featurePause('errors')['reason'])->toBe('network');
+        ->and($harness['buffer']->count('events'))->toBe(1)
+        ->and((string) file_get_contents($harness['directory'].'/pauses.json'))->toBe($before);
+});
+
+it('logs one warning naming the waiting types when a run has no api key', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200), [
+        'key' => '',
+        'internal_logging' => ['enabled' => true, 'level' => 'debug'],
+    ]);
+    seedBuffer($harness['buffer'], 'errors', 2);
+    seedBuffer($harness['buffer'], 'logs', 1);
+
+    $harness['worker']->run();
+
+    $log = workerLogContents($harness['directory']);
+
+    expect(mb_substr_count($log, "\n"))->toBe(1)
+        ->and($log)->toContain('ranetrace_internal.WARNING: Skipping run, no API key is configured {"types":["errors","logs"]}');
+});
+
+/**
+ * A keyless development site flushes on the shutdown of every request, nearly
+ * always with an empty buffer, and must not get a log line per request.
+ */
+it('logs nothing when a run without an api key finds nothing waiting', function (?string $type): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200), [
+        'key' => '',
+        'internal_logging' => ['enabled' => true, 'level' => 'debug'],
+    ]);
+    seedBuffer($harness['buffer'], 'events', 1);
+    $harness['buffer']->take('events', 1);
+
+    $harness['worker']->run($type);
+
+    expect(workerLogContents($harness['directory']))->toBe('');
+})->with([
+    'every type' => [null],
+    'the named type' => ['errors'],
+]);
+
+it('drains normally on a keyed run after a keyless one', function (): void {
+    $keyless = workerHarness(FakeHttpClient::respondingWith(200), ['key' => '']);
+    seedBuffer($keyless['buffer'], 'errors', 1);
+    seedBuffer($keyless['buffer'], 'events', 1);
+
+    $keyless['worker']->run();
+
+    $config = testConfig(['buffer_path' => $keyless['directory'], 'internal_logging' => ['enabled' => false]]);
+    $http = new FakeHttpClient(new RawResponse(200, '{}'), new RawResponse(200, '{}'));
+    $log = new InternalLogger($config);
+    $pauses = new PauseStore($config);
+
+    new Worker($config, $keyless['buffer'], $pauses, new ApiClient($config, $http, $log), $log)->run();
+
+    expect($http->requests)->toHaveCount(2)
+        ->and($keyless['buffer']->count('errors'))->toBe(0)
+        ->and($keyless['buffer']->count('events'))->toBe(0)
+        ->and($pauses->featurePause('errors'))->toBeNull()
+        ->and($pauses->globalPause())->toBeNull();
 });
 
 it('never throws when the buffer refuses to take items back', function (): void {

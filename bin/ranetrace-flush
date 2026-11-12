@@ -15,15 +15,21 @@ declare(strict_types=1);
  * `RANETRACE_*` variable itself.
  *
  * The command never throws and never prints anything on success, so a cron
- * mailer stays quiet unless something is actually wrong. The buffer is for one
- * user, the one the web server runs as. Run as another user, this process can
- * neither drain nor log, and nothing else would tell the operator, so it says
- * so on stderr.
+ * mailer stays quiet unless something is actually wrong. It prints one line on
+ * stderr for each of two problems nothing else would tell the operator about,
+ * the missing key first. Without `RANETRACE_KEY` it sends nothing: a key the
+ * application loads in its own bootstrap does not reach a cron job, and the
+ * worker then leaves the spool and the pauses to the process that has the key.
+ * A site switched off with `RANETRACE_ENABLED=false` and nothing waiting is
+ * left quiet, since nothing is missed there. The buffer is for one user, the
+ * one the web server runs as: run as another user, this process can neither
+ * drain nor log.
  *
- * Exit codes: 0 drained, or found nothing to drain. 1 could not run, or this
- * process cannot use the buffer (`FileBuffer::accessProblem()`). In that case
- * the flush still runs first, so a spool this process can partly use gives up
- * what it can.
+ * Exit codes: 0 drained, or found nothing to drain. 1 could not run, has no
+ * key (unless the master switch is off and nothing waits), or this process
+ * cannot use the buffer (`FileBuffer::accessProblem()`). In those last two
+ * cases the flush still runs first, so a spool this process can partly use
+ * gives up what it can.
  */
 
 use Ranetrace\Php\Ranetrace;
@@ -105,10 +111,31 @@ use Ranetrace\Php\Ranetrace;
         $problem = $ranetrace->buffer()->accessProblem();
 
         $ranetrace->flush($type);
+
+        $config = $ranetrace->config();
+        $keyMissing = false;
+
+        if ($config->key() === '') {
+            $waiting = array_filter(
+                $ranetrace->buffer()->types(),
+                static fn (string $bufferType): bool => $ranetrace->buffer()->count($bufferType) > 0,
+            );
+
+            $keyMissing = $config->get('enabled') === true || $waiting !== [];
+        }
     } catch (Throwable $failure) {
         fwrite(STDERR, 'ranetrace-flush: '.$failure->getMessage()."\n");
 
         exit(1);
+    }
+
+    if ($keyMissing) {
+        fwrite(
+            STDERR,
+            "ranetrace-flush: RANETRACE_KEY is not set in this command's environment, so nothing is sent. "
+            .'This command reads the environment only: a key your application loads from a .env file or sets in its bootstrap does not reach it. '
+            ."Set it in the cron job's environment.\n",
+        );
     }
 
     if ($problem !== null) {
@@ -129,5 +156,5 @@ use Ranetrace\Php\Ranetrace;
         exit(1);
     }
 
-    exit(0);
+    exit($keyMissing ? 1 : 0);
 })($argv ?? []);

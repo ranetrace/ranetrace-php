@@ -87,6 +87,14 @@ final class Worker
      * operator who turns a feature off should still see what was already
      * captured, and leaving the items spooled would hold back data that was
      * already collected.
+     *
+     * A run without an API key takes nothing and sets no pause. The key is
+     * often loaded by the application's own bootstrap, so the web process has
+     * it while a cron flush that reads only the environment does not. Both
+     * share the pause store, and a pause set by the process that cannot speak
+     * for the key would hold back the one that can. The warning is written only
+     * when something waits, because a keyless development site runs this on
+     * the shutdown of every request with an empty buffer.
      */
     public function run(?string $type = null): void
     {
@@ -94,6 +102,12 @@ final class Worker
             $types = $this->resolveTypes($type);
 
             if ($types === []) {
+                return;
+            }
+
+            if ($this->config->key() === '') {
+                $this->warnAboutMissingKey($types);
+
                 return;
             }
 
@@ -227,6 +241,23 @@ final class Worker
         }
 
         return [$type];
+    }
+
+    /**
+     * @param  list<string>  $types
+     */
+    private function warnAboutMissingKey(array $types): void
+    {
+        $waiting = array_values(array_filter(
+            $types,
+            fn (string $candidate): bool => $this->buffer->count($candidate) > 0,
+        ));
+
+        if ($waiting === []) {
+            return;
+        }
+
+        $this->log->warning('Skipping run, no API key is configured', ['types' => $waiting]);
     }
 
     private function drain(string $type): void

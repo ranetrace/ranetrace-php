@@ -192,3 +192,133 @@ it('leaves the buffer alone on shutdown when the flush is disabled', function ()
     expect($result['status'])->toBe(0)
         ->and(subprocessInternalLog($directory))->not->toContain('Network error during batch send');
 });
+
+function missingKeyLine(): string
+{
+    return "ranetrace-flush: RANETRACE_KEY is not set in this command's environment, so nothing is sent. "
+        .'This command reads the environment only: a key your application loads from a .env file or sets in its bootstrap does not reach it. '
+        ."Set it in the cron job's environment.\n";
+}
+
+/**
+ * The developer's own shell may hold a RANETRACE_KEY, and the subprocess
+ * inherits the environment, so a keyless case passes the key as a blank value
+ * rather than leaving it out.
+ *
+ * @param  array<string, string>  $overrides
+ * @return array<string, string>
+ */
+function keylessFlushEnvironment(string $directory, array $overrides = []): array
+{
+    return array_merge(flushEnvironment($directory), ['RANETRACE_KEY' => ''], $overrides);
+}
+
+it('exits 1 with one line and leaves the spool and the pauses alone when items wait and no key is set', function (string $key): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+    $before = (string) file_get_contents($directory.'/errors.json');
+
+    $result = runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_KEY' => $key]));
+
+    expect($result['status'])->toBe(1)
+        ->and($result['stderr'])->toBe(missingKeyLine())
+        ->and($result['stdout'])->toBe('')
+        ->and((string) file_get_contents($directory.'/errors.json'))->toBe($before)
+        ->and(is_file($directory.'/pauses.json'))->toBeFalse()
+        ->and(subprocessInternalLog($directory))
+        ->toContain('Skipping run, no API key is configured')
+        ->not->toContain('Network error during batch send');
+})->with([
+    'an empty key' => [''],
+    'a key of whitespace' => ["  \t"],
+]);
+
+it('says the key is missing when the master switch is on and nothing waits', function (): void {
+    $result = runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment(tempDirectory()));
+
+    expect($result['status'])->toBe(1)
+        ->and($result['stderr'])->toBe(missingKeyLine());
+});
+
+it('stays quiet without a key when the site is switched off and nothing waits', function (): void {
+    $directory = tempDirectory();
+
+    $result = runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_ENABLED' => 'false']));
+
+    expect($result['status'])->toBe(0)
+        ->and($result['stderr'])->toBe('')
+        ->and(subprocessInternalLog($directory))->toBe('');
+});
+
+it('says the key is missing when the site is switched off but items wait', function (): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+
+    $result = runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_ENABLED' => 'false']));
+
+    expect($result['status'])->toBe(1)
+        ->and($result['stderr'])->toBe(missingKeyLine())
+        ->and(json_decode((string) file_get_contents($directory.'/errors.json'), true))->toHaveCount(1);
+});
+
+it('says the key is missing when items of another type than the one named wait', function (): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+
+    $result = runFlushSubprocess(
+        ['bin/ranetrace-flush', '--type=events'],
+        keylessFlushEnvironment($directory, ['RANETRACE_ENABLED' => 'false']),
+    );
+
+    expect($result['status'])->toBe(1)
+        ->and($result['stderr'])->toBe(missingKeyLine());
+});
+
+it('sends at once on a keyed flush after a keyless one', function (): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+
+    runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment($directory));
+    $result = runFlushSubprocess(['bin/ranetrace-flush'], flushEnvironment($directory));
+
+    expect($result['status'])->toBe(0)
+        ->and($result['stderr'])->toBe('')
+        ->and(subprocessInternalLog($directory))->toContain('Network error during batch send');
+});
+
+it('leaves the spool and the pauses alone on a shutdown flush without a key', function (): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+    $before = (string) file_get_contents($directory.'/errors.json');
+
+    $result = runFlushSubprocess(
+        ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
+        keylessFlushEnvironment($directory),
+    );
+
+    expect($result['status'])->toBe(0)
+        ->and($result['stderr'])->toBe('')
+        ->and((string) file_get_contents($directory.'/errors.json'))->toBe($before)
+        ->and(is_file($directory.'/pauses.json'))->toBeFalse();
+});
+
+it('names the missing key before the buffer it cannot use', function (): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+
+    touch($directory.'/errors.lock');
+    chmod($directory.'/errors.lock', 0444);
+
+    try {
+        $result = runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment($directory));
+    } finally {
+        chmod($directory.'/errors.lock', 0600);
+    }
+
+    $lines = explode("\n", mb_rtrim($result['stderr'], "\n"));
+
+    expect($result['status'])->toBe(1)
+        ->and($lines)->toHaveCount(2)
+        ->and($lines[0]."\n")->toBe(missingKeyLine())
+        ->and($lines[1])->toStartWith("ranetrace-flush: cannot write to the buffer in [{$directory}]");
+})->skip(flushRunsAsRoot(...), 'root ignores file modes');
