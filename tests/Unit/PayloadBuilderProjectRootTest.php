@@ -177,3 +177,194 @@ test('a root strip that cannot run costs the strip, never the error report or it
         ->and($payload['frames'])->not->toBeEmpty()
         ->and(mb_substr_count(frameDiagnostics($root), 'could not take the project root off'))->toBe(1);
 });
+
+/**
+ * A zero-downtime deployment: the release lives in `releases/1` and is reached
+ * through the symlink `current`, the way a cron entry types it. PHP names the
+ * files it loads by their real path, so the project root is the release.
+ *
+ * @return array{root: string, current: string}
+ */
+function symlinkedDeployment(): array
+{
+    $base = frameProject();
+    writeProjectFile($base, 'releases/1/artisan', "<?php\n");
+    symlink($base.'/releases/1', $base.'/current');
+
+    return ['root' => (string) realpath($base.'/releases/1'), 'current' => $base.'/current'];
+}
+
+test('a console command started through a symlinked deployment is sent relative to the release it runs', function (): void {
+    ['root' => $root, 'current' => $current] = symlinkedDeployment();
+
+    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
+        isConsole: true,
+        consoleCommand: "{$current}/artisan schedule:run",
+        consoleArguments: ["{$current}/artisan", 'schedule:run'],
+    ));
+
+    expect($payload['console_command'])->toBe('artisan schedule:run')
+        ->and($payload['console_arguments'])->toBe(['artisan', 'schedule:run']);
+});
+
+test('only the leading script path of the command line is resolved', function (): void {
+    ['root' => $root, 'current' => $current] = symlinkedDeployment();
+
+    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
+        isConsole: true,
+        consoleCommand: "{$current}/artisan import:run {$current}/artisan",
+        consoleArguments: ["{$current}/artisan", 'import:run', "{$current}/artisan"],
+    ));
+
+    expect($payload['console_command'])->toBe("artisan import:run {$current}/artisan")
+        ->and($payload['console_arguments'])->toBe(['artisan', 'import:run', "{$current}/artisan"]);
+});
+
+test('a command line that does not start with the script path keeps it as typed', function (): void {
+    ['root' => $root, 'current' => $current] = symlinkedDeployment();
+
+    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
+        isConsole: true,
+        consoleCommand: "{$current}/artisanx schedule:run",
+        consoleArguments: ["{$current}/artisan", 'schedule:run'],
+    ));
+
+    expect($payload['console_command'])->toBe("{$current}/artisanx schedule:run")
+        ->and($payload['console_arguments'])->toBe(['artisan', 'schedule:run']);
+});
+
+test('a script path that does not exist is sent as typed', function (): void {
+    ['root' => $root, 'current' => $current] = symlinkedDeployment();
+
+    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
+        isConsole: true,
+        consoleCommand: "{$current}/missing schedule:run",
+        consoleArguments: ["{$current}/missing", 'schedule:run'],
+    ));
+
+    expect($payload['console_command'])->toBe("{$current}/missing schedule:run")
+        ->and($payload['console_arguments'])->toBe(["{$current}/missing", 'schedule:run']);
+});
+
+test('a relative script path is sent as typed, since the working directory may have moved since the start', function (): void {
+    ['root' => $root, 'current' => $current] = symlinkedDeployment();
+    $workingDirectory = (string) getcwd();
+
+    // From here `current/artisan` would resolve into the release.
+    chdir(dirname($current));
+
+    try {
+        $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
+            isConsole: true,
+            consoleCommand: 'current/artisan schedule:run',
+            consoleArguments: ['current/artisan', 'schedule:run'],
+        ));
+    } finally {
+        chdir($workingDirectory);
+    }
+
+    expect($payload['console_command'])->toBe('current/artisan schedule:run')
+        ->and($payload['console_arguments'])->toBe(['current/artisan', 'schedule:run']);
+});
+
+test('a web context sends no command line, symlinked or not', function (): void {
+    ['root' => $root, 'current' => $current] = symlinkedDeployment();
+
+    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
+        isConsole: false,
+        consoleCommand: "{$current}/artisan schedule:run",
+        consoleArguments: ["{$current}/artisan", 'schedule:run'],
+    ));
+
+    expect($payload['console_command'])->toBeNull()
+        ->and($payload['console_arguments'])->toBeNull();
+});
+
+test('a script path that open_basedir keeps from being resolved costs nothing on a host whose error handler throws', function (): void {
+    // open_basedir can only be tightened within a process, so the build runs
+    // in one of its own. realpath() warns about a path outside it, and the
+    // handler turns that warning into an exception.
+    $script = <<<'PHP'
+        require 'vendor/autoload.php';
+
+        set_error_handler(static function (int $level, string $message): never {
+            throw new ErrorException($message, 0, $level);
+        });
+
+        $config = new Ranetrace\Php\Config(['key' => 'test-api-key-12345', 'project_root' => getcwd(), 'internal_logging' => ['enabled' => false]]);
+        $log = new Ranetrace\Php\Support\InternalLogger($config);
+        $builder = new Ranetrace\Php\Errors\PayloadBuilder($config, new Ranetrace\Php\Support\SecretScrubber($config, $log), $log);
+
+        $payload = $builder->build(new RuntimeException('boom'), Ranetrace\Php\Errors\ErrorContext::provided(
+            isConsole: true,
+            consoleCommand: PHP_BINARY.' --version',
+            consoleArguments: [PHP_BINARY, '--version'],
+        ));
+
+        echo json_encode([$payload['console_command'], $payload['console_arguments']]);
+        PHP;
+
+    $repository = dirname(__DIR__, 2);
+    $process = proc_open(
+        [PHP_BINARY, '-d', 'open_basedir='.$repository, '-r', $script],
+        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+        $repository,
+    );
+
+    $stdout = (string) stream_get_contents($pipes[1]);
+    $stderr = (string) stream_get_contents($pipes[2]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    $status = proc_close($process);
+
+    expect($status)->toBe(0, $stderr)
+        ->and(json_decode($stdout, true))->toBe([PHP_BINARY.' --version', [PHP_BINARY, '--version']]);
+});
+
+/**
+ * PHP names an anonymous class by its parent, a NUL byte, the absolute path of
+ * the file that declares it and the line: `RuntimeException@anonymous` + NUL +
+ * `/abs/app/Jobs/Import.php:3$0`, where the number after `$` counts the
+ * anonymous classes compiled before it.
+ */
+function anonymousExceptionIn(string $root, string $relative): RuntimeException
+{
+    return require writeProjectFile($root, $relative, <<<'PHP'
+        <?php
+
+        return new class('anonymous') extends RuntimeException {};
+        PHP);
+}
+
+test('an anonymous exception class is typed by its path relative to the project root, without a NUL byte', function (): void {
+    $root = frameProject();
+
+    $payload = framePayload(frameBuilder($root), anonymousExceptionIn($root, 'app/Jobs/Import.php'));
+
+    // The `$` suffix counts the anonymous classes the process has compiled, so
+    // it is `$0` only for the first.
+    expect($payload['type'])->toMatch('#^RuntimeException@anonymous app/Jobs/Import\.php:3\$[0-9a-f]+$#')
+        ->and($payload['type'])->not->toContain("\0")
+        ->and($payload['type'])->not->toContain($root);
+});
+
+test('an anonymous exception class declared under a long path is typed within the contract maximum', function (): void {
+    $root = frameProject();
+    $exception = anonymousExceptionIn($root, str_repeat('deeply-nested-directory/', 12).'Import.php');
+
+    // A root that does not match keeps the whole path, the longest type there is.
+    $payload = framePayload(frameBuilder($root, ['project_root' => '/elsewhere']), $exception);
+
+    expect(mb_strlen($exception::class))->toBeGreaterThan(255)
+        ->and(mb_strlen($payload['type']))->toBe(255)
+        ->and($payload['type'])->toStartWith('RuntimeException@anonymous '.$root.'/deeply-nested-directory/')
+        ->and($payload['type'])->toEndWith('... (truncated)')
+        ->and(DescriptorValidator::violations(WireContract::item('errors')['fields'], $payload, true))->toBe([]);
+});
+
+test('an ordinary exception class is typed exactly as PHP names it', function (): void {
+    $root = frameProject();
+
+    expect(framePayload(frameBuilder($root), new InvalidArgumentException('boom'))['type'])->toBe(InvalidArgumentException::class);
+});

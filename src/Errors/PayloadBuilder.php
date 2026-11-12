@@ -11,6 +11,7 @@ use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\Diagnostics;
 use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\ProjectRootStripper;
+use Ranetrace\Php\Support\Quietly;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
 use Ranetrace\Php\Support\UserResolver;
@@ -62,7 +63,8 @@ use Throwable;
  * server is laid out. A field that is a path is made relative by
  * {@see boundFilePath()}, and every free-form text that can name one (a
  * message, the trace, a source line, the command line, the exception context)
- * passes through {@see ProjectRootStripper}.
+ * passes through {@see ProjectRootStripper}, and so does every class name,
+ * the `type` among them, since an anonymous class is named by its file.
  */
 final class PayloadBuilder
 {
@@ -253,7 +255,7 @@ final class PayloadBuilder
             'message' => $this->truncate($this->freeText($throwable->getMessage()), self::MAX_MESSAGE_LENGTH),
             'file' => $this->boundFilePath($file),
             'line' => $line,
-            'type' => Utf8::repair($throwable::class),
+            'type' => (string) $this->codeName($throwable::class, self::MAX_TYPE_LENGTH),
             'environment' => $this->stringConfig('environment'),
             'trace' => $this->truncate($this->freeText($throwable->getTraceAsString()), self::MAX_TRACE_LENGTH),
             'headers' => $isConsole ? null : $this->headers($context),
@@ -491,11 +493,14 @@ final class PayloadBuilder
     }
 
     /**
-     * A class or function name as a frame carries it, with the absolute paths
-     * PHP embeds in some names made relative to the project root: a closure is
-     * named `{closure:/abs/app/file.php:12}` and an anonymous class
-     * `class@anonymous` + NUL + `/abs/app/file.php:12$0`. The NUL becomes a
-     * space, so the name still reads as the class and where it is declared.
+     * A class or function name as a frame or an exception's `type` carries it,
+     * with the absolute paths PHP embeds in some names made relative to the
+     * project root: a closure is named `{closure:/abs/app/file.php:12}` and an
+     * anonymous class `class@anonymous`, or `RuntimeException@anonymous` for
+     * one that extends it, then a NUL and `/abs/app/file.php:12$0`. The NUL
+     * becomes a space, so the name still
+     * reads as the class and where it is declared. An ordinary class name has
+     * no path and no NUL, and comes out as PHP spells it.
      */
     private function codeName(mixed $name, int $maxLength): ?string
     {
@@ -762,17 +767,29 @@ final class PayloadBuilder
 
     /**
      * The command line the process was started with, scrubbed for `--token=…`
-     * style secrets.
+     * style secrets. A script path it starts with is first replaced by the path
+     * it resolves to: see {@see resolvedScript()}.
      */
     private function consoleCommand(ErrorContext $context): ?string
     {
         $command = $context->consoleCommand;
 
-        return $command === null ? null : $this->freeText($command);
+        if ($command === null) {
+            return null;
+        }
+
+        $script = $this->resolvedScript($context);
+
+        if ($script !== null && ($command === $script['typed'] || str_starts_with($command, $script['typed'].' '))) {
+            $command = $script['resolved'].mb_substr($command, mb_strlen($script['typed'], '8bit'), null, '8bit');
+        }
+
+        return $this->freeText($command);
     }
 
     /**
-     * The same command line as an array, count- and length-bounded.
+     * The same command line as an array, count- and length-bounded, with the
+     * script path, the first argument, resolved: see {@see resolvedScript()}.
      *
      * @return array<int, string>|null
      */
@@ -782,6 +799,12 @@ final class PayloadBuilder
 
         if ($arguments === null) {
             return null;
+        }
+
+        $script = $this->resolvedScript($context);
+
+        if ($script !== null) {
+            $arguments[array_key_first($arguments)] = $script['resolved'];
         }
 
         $strings = [];
@@ -799,6 +822,43 @@ final class PayloadBuilder
             ),
             array_slice($strings, 0, self::MAX_CONSOLE_ARGV_COUNT)
         );
+    }
+
+    /**
+     * The script path, the first console argument, as typed and as it
+     * resolves, or null when resolving it changes nothing.
+     *
+     * PHP names the files it loads by their real path, so `project_root` and
+     * every frame name a deployment's release directory. The script path is
+     * the exception: it is the path as the cron entry or the shell typed it, so
+     * on a deployment reached through a symlink (`/home/forge/site/current`
+     * pointing at `releases/123`) it is not under the root and would keep the
+     * server's layout through the root strip. Resolving it first lets the strip
+     * find it. This lives here rather than in `ErrorContext::fromServer()`
+     * because a framework SDK builds its own context with `provided()`.
+     *
+     * Only an absolute path is resolved: a relative one would be resolved
+     * against the working directory, which may have changed since the process
+     * started. `realpath()` warns under `open_basedir`, so it runs quietly.
+     *
+     * @return array{typed: string, resolved: string}|null
+     */
+    private function resolvedScript(ErrorContext $context): ?array
+    {
+        $arguments = $context->consoleArguments;
+        $typed = $arguments === null || $arguments === [] ? null : $arguments[array_key_first($arguments)];
+
+        if (! is_string($typed) || preg_match('#^(?:/|[A-Za-z]:[/\\\\])#', $typed) !== 1) {
+            return null;
+        }
+
+        $resolved = Quietly::call(static fn (): string|false => realpath($typed));
+
+        if (! is_string($resolved) || $resolved === $typed) {
+            return null;
+        }
+
+        return ['typed' => $typed, 'resolved' => $resolved];
     }
 
     /**

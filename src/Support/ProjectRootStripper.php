@@ -35,10 +35,16 @@ use Throwable;
  * on every attempt, which a host whose error handler throws on warnings turns
  * into an exception.
  *
- * Two things it cannot tell. A deployment that serves the project through a
- * symlink can name a second path for the same directory. And a URL path that
- * happens to start with the root (`GET /app/users` on a host whose root is
- * `/app`) reads as a file under it.
+ * Three things it cannot tell. A deployment that serves the project through a
+ * symlink can name a second path for the same directory. The known place this
+ * happens is the console script path, which is the path as it was typed:
+ * `Errors\PayloadBuilder` resolves that one before the strip, and any other
+ * text naming the symlinked path is sent as written. A URL path that happens
+ * to start with the root (`GET /app/users` on a host whose root is `/app`)
+ * reads as a file under it. And with `zend.exception_ignore_args` off, a frame
+ * line of `getTraceAsString()` holds the call's string arguments cut to 15
+ * characters, so a root passed as one reads `('/home/forge/sit...')`, a start
+ * of the root that matches no path.
  */
 final class ProjectRootStripper
 {
