@@ -9,7 +9,7 @@ declare(strict_types=1);
  *     * * * * * /path/to/vendor/bin/ranetrace-flush >/dev/null 2>&1
  *
  * A minute is the right cadence: the API allows 60 requests per minute per
- * endpoint per key, and one run sends at most one batch per type. Configuration
+ * endpoint for each website, and one run sends at most one batch per type. Configuration
  * comes entirely from the environment, because a cron entry has no application
  * bootstrap to read a config array from; `Ranetrace\Php\Config` resolves every
  * `RANETRACE_*` variable itself.
