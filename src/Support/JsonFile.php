@@ -17,6 +17,13 @@ namespace Ranetrace\Php\Support;
 final class JsonFile
 {
     /**
+     * The mode the SDK asks for when it creates the buffer directory. Both
+     * writers that can get there first, `ensureDirectory()` and the internal
+     * log, use it, so the directory's mode does not depend on which one did.
+     */
+    public const int DIRECTORY_MODE = 0770;
+
+    /**
      * Encode a value and write it atomically.
      *
      * False covers both halves: a value that cannot be encoded and a write that
@@ -68,9 +75,13 @@ final class JsonFile
      * Create the directory when it is missing, and report whether it is there
      * afterwards.
      *
-     * 0770: these files hold captured payloads, which can contain request data.
-     * Group-readable so a web process and a cron worker running as different
-     * members of one group can share the spool; never world-readable.
+     * The directory is asked for as `DIRECTORY_MODE` and gets what the process
+     * umask leaves of it: `0750` under the common `022`, `0700` under `077`.
+     * The files in it get the umask's mode for a new file (`0644` under `022`),
+     * so it is the directory that keeps the captured payloads, which can hold
+     * request data, from other users. The spool is for one user: the web
+     * process and the flush run as the same user. Nothing here forces a mode
+     * against the umask.
      *
      * The result is read back with `is_dir` rather than taken from `mkdir`,
      * because a concurrent process creating the same directory first makes
@@ -82,7 +93,7 @@ final class JsonFile
             return true;
         }
 
-        Quietly::call(static fn (): bool => mkdir($directory, 0770, true));
+        Quietly::call(static fn (): bool => mkdir($directory, self::DIRECTORY_MODE, true));
 
         return is_dir($directory);
     }

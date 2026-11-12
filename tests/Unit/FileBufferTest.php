@@ -388,3 +388,95 @@ it('clears a type on request', function (): void {
 
     expect($buffer->count('errors'))->toBe(0);
 });
+
+/**
+ * Emulates a buffer that another user created: this process loses access by
+ * mode, which root ignores.
+ */
+function runsAsRoot(): bool
+{
+    return ! function_exists('posix_geteuid') || posix_geteuid() === 0;
+}
+
+it('sees no access problem in a buffer directory that does not exist yet, and creates nothing', function (): void {
+    $directory = tempDirectory().'/absent';
+
+    expect(fileBuffer($directory)->accessProblem())->toBeNull()
+        ->and(file_exists($directory))->toBeFalse();
+});
+
+it('sees no access problem in an empty buffer directory', function (): void {
+    expect(fileBuffer(tempDirectory())->accessProblem())->toBeNull();
+});
+
+it('sees no access problem in a spool this process wrote', function (): void {
+    $buffer = fileBuffer(tempDirectory());
+    $buffer->addItem('errors', ['message' => 'boom']);
+
+    expect($buffer->accessProblem())->toBeNull();
+});
+
+it('sees no access problem while another process holds a lock', function (): void {
+    $directory = tempDirectory();
+    $buffer = fileBuffer($directory);
+    $buffer->addItem('errors', ['message' => 'boom']);
+
+    $contender = fopen($directory.'/errors.lock', 'c');
+    flock($contender, LOCK_EX);
+
+    try {
+        expect($buffer->accessProblem())->toBeNull();
+    } finally {
+        flock($contender, LOCK_UN);
+        fclose($contender);
+    }
+});
+
+it('reports a buffer path that is not a directory', function (): void {
+    $path = tempDirectory().'/not-a-directory';
+    file_put_contents($path, 'x');
+
+    expect(fileBuffer($path)->accessProblem())->toBe('the buffer path is not a directory this user can write to');
+});
+
+it('reports a buffer directory this process cannot write to', function (): void {
+    $directory = tempDirectory();
+    $buffer = fileBuffer($directory, ['internal_logging' => ['stderr_fallback' => false]]);
+    $buffer->addItem('errors', ['message' => 'boom']);
+
+    chmod($directory, 0550);
+
+    try {
+        expect($buffer->accessProblem())->toBe('the buffer path is not a directory this user can write to');
+    } finally {
+        chmod($directory, 0700);
+    }
+})->skip(runsAsRoot(...), 'root ignores file modes');
+
+it('reports a lock file this process cannot open for writing', function (): void {
+    $directory = tempDirectory();
+    $buffer = fileBuffer($directory);
+    $buffer->addItem('errors', ['message' => 'boom']);
+
+    chmod($directory.'/errors.lock', 0444);
+
+    try {
+        expect($buffer->accessProblem())->toBe('the lock file errors.lock is not writable');
+    } finally {
+        chmod($directory.'/errors.lock', 0600);
+    }
+})->skip(runsAsRoot(...), 'root ignores file modes');
+
+it('reports a buffer file this process cannot read', function (): void {
+    $directory = tempDirectory();
+    $buffer = fileBuffer($directory);
+    $buffer->addItem('events', ['event_name' => 'signup']);
+
+    chmod($directory.'/events.json', 0200);
+
+    try {
+        expect($buffer->accessProblem())->toBe('the buffer file events.json is not readable');
+    } finally {
+        chmod($directory.'/events.json', 0600);
+    }
+})->skip(runsAsRoot(...), 'root ignores file modes');

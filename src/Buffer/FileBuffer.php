@@ -242,6 +242,50 @@ final class FileBuffer implements BufferInterface
     }
 
     /**
+     * Why this process cannot use the spool, or null when nothing stands in its
+     * way. The spool is for one user, so a process running as another user,
+     * such as a cron flush set up for the wrong account, finds a directory or
+     * files it may not touch, and every capture or drain then fails quietly.
+     * This lets that process say so.
+     *
+     * It only inspects: nothing is created, and no lock is taken, so a lock
+     * another process holds is not a problem. A buffer path that does not exist
+     * is not one either: as far as this process can see, nothing was captured.
+     *
+     * @return string|null A reason in lower case, without a closing full stop.
+     */
+    public function accessProblem(): ?string
+    {
+        $directory = $this->directory();
+
+        clearstatcache();
+
+        if (! file_exists($directory)) {
+            return null;
+        }
+
+        if (! is_dir($directory) || ! is_writable($directory) || ! is_executable($directory)) {
+            return 'the buffer path is not a directory this user can write to';
+        }
+
+        foreach (self::TYPES as $type) {
+            $lockFile = $this->lockFile($type);
+
+            if (file_exists($lockFile) && ! is_writable($lockFile)) {
+                return 'the lock file '.basename($lockFile).' is not writable';
+            }
+
+            $file = $this->file($type);
+
+            if (file_exists($file) && ! is_readable($file)) {
+                return 'the buffer file '.basename($file).' is not readable';
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * A random version-4 UUID. The envelope id only has to be unique, so this
      * avoids a dependency on `ramsey/uuid` for one string.
      */

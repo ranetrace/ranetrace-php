@@ -56,16 +56,18 @@ it('reports a write it could not place and cleans up after itself', function ():
         ->and(is_dir($directory))->toBeFalse();
 });
 
-it('creates a missing directory group readable but never world readable', function (): void {
-    $directory = tempDirectory().'/nested/spool';
+it('creates a missing directory with what the umask leaves of 0770', function (): void {
+    $previous = umask(022);
 
-    expect(JsonFile::ensureDirectory($directory))->toBeTrue()
-        ->and(is_dir($directory))->toBeTrue();
+    try {
+        $directory = tempDirectory().'/nested/spool';
 
-    // 0770 is requested; the process umask can only take bits away, so assert
-    // the invariant that matters: the group keeps access where the umask allows
-    // it, and the world never gets any.
-    expect(fileperms($directory) & 0777)->toBe(0770 & ~umask());
+        expect(JsonFile::ensureDirectory($directory))->toBeTrue()
+            ->and(is_dir($directory))->toBeTrue()
+            ->and(fileperms($directory) & 0777)->toBe(0750);
+    } finally {
+        umask($previous);
+    }
 });
 
 it('accepts a directory that already exists', function (): void {

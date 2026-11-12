@@ -163,3 +163,20 @@ test('currentLogFile names the day file inside the buffer directory', function (
     expect(loggerIn($directory)->currentLogFile(new DateTimeImmutable('2026-08-06 12:00:00')))
         ->toBe($directory.'/internal-2026-08-06.log');
 });
+
+test('it creates the buffer directory with the mode the buffer itself uses', function (): void {
+    $previous = umask(022);
+
+    try {
+        $byBuffer = tempDirectory().'/spool';
+        Ranetrace\Php\Support\JsonFile::ensureDirectory($byBuffer);
+
+        $byLogger = tempDirectory().'/spool';
+        loggerIn($byLogger, ['internal_logging' => ['stderr_fallback' => false]])->info('first');
+
+        expect(fileperms($byLogger) & 0777)->toBe(fileperms($byBuffer) & 0777)
+            ->and(fileperms($byLogger) & 0777)->toBe(0750);
+    } finally {
+        umask($previous);
+    }
+});

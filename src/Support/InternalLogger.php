@@ -176,7 +176,7 @@ final class InternalLogger implements Diagnostics
     {
         $directory = $this->directory();
 
-        if (! is_dir($directory) && ! $this->quietly(fn (): bool => mkdir($directory, 0775, true)) && ! is_dir($directory)) {
+        if (! is_dir($directory) && ! $this->quietly(fn (): bool => mkdir($directory, JsonFile::DIRECTORY_MODE, true)) && ! is_dir($directory)) {
             return false;
         }
 

@@ -89,6 +89,7 @@ it('drains only the type it is given', function (): void {
 
     // Events are empty, so nothing is sent and the spooled error is untouched.
     expect($result['status'])->toBe(0)
+        ->and($result['stderr'])->toBe('')
         ->and(subprocessInternalLog($directory))->not->toContain('Network error during batch send')
         ->and(json_decode((string) file_get_contents($directory.'/errors.json'), true))->toHaveCount(1);
 });
@@ -113,6 +114,58 @@ it('prints usage on help', function (): void {
     expect($result['status'])->toBe(0)
         ->and($result['stdout'])->toContain('Usage: ranetrace-flush');
 });
+
+/**
+ * A second user is emulated by taking this process's access away by mode,
+ * which root ignores.
+ */
+function flushRunsAsRoot(): bool
+{
+    return ! function_exists('posix_geteuid') || posix_geteuid() === 0;
+}
+
+it('exits 1 and names the directory when the buffer belongs to another user', function (): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+    $before = (string) file_get_contents($directory.'/errors.json');
+
+    chmod($directory.'/errors.json', 0444);
+    chmod($directory, 0550);
+
+    try {
+        $result = runFlushSubprocess(['bin/ranetrace-flush'], flushEnvironment($directory));
+        $after = (string) file_get_contents($directory.'/errors.json');
+    } finally {
+        chmod($directory, 0700);
+        chmod($directory.'/errors.json', 0600);
+    }
+
+    expect($result['status'])->toBe(1)
+        ->and($result['stderr'])->toStartWith("ranetrace-flush: cannot write to the buffer in [{$directory}]")
+        ->and($result['stderr'])->toContain('Run this command as the user your web server runs as.')
+        ->and(mb_substr_count($result['stderr'], "\n"))->toBe(1)
+        ->and($after)->toBe($before);
+})->skip(flushRunsAsRoot(...), 'root ignores file modes');
+
+it('exits 1 when only a lock file belongs to another user', function (): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+    $before = (string) file_get_contents($directory.'/errors.json');
+
+    touch($directory.'/errors.lock');
+    chmod($directory.'/errors.lock', 0444);
+
+    try {
+        $result = runFlushSubprocess(['bin/ranetrace-flush'], flushEnvironment($directory));
+    } finally {
+        chmod($directory.'/errors.lock', 0600);
+    }
+
+    expect($result['status'])->toBe(1)
+        ->and($result['stderr'])->toContain("[{$directory}]")
+        ->and($result['stderr'])->toContain('errors.lock')
+        ->and((string) file_get_contents($directory.'/errors.json'))->toBe($before);
+})->skip(flushRunsAsRoot(...), 'root ignores file modes');
 
 it('drains on shutdown by default', function (): void {
     $directory = tempDirectory();
