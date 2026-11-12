@@ -71,7 +71,7 @@ Event names must be snake_case, 3 to 50 characters, starting with a letter: `/^[
 | `RANETRACE_FRAMEWORK_VERSION` | `framework_version` | `null` |
 | `RANETRACE_FINGERPRINT_SALT` | `fingerprint_salt` | falls back to the API key |
 | `RANETRACE_FLUSH_ON_SHUTDOWN` | `flush_on_shutdown` | `true` |
-| (config only) | `user_resolver` | `null`, must be callable returning `?array{id, email}` |
+| (config only) | `user_resolver` | `null`, must be callable returning `?array{id, email}`. A resolver that throws costs the item its user, never the item |
 | `RANETRACE_ERRORS_ENABLED` | `errors.enabled` | `true` |
 | `RANETRACE_ERRORS_TIMEOUT` | `errors.timeout` | `10` |
 | `RANETRACE_ERRORS_CAPTURE_USER_EMAIL` | `errors.capture_user_email` | `false` |

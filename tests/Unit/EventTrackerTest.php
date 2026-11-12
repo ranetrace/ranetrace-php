@@ -150,6 +150,31 @@ test('the user is null when nothing resolves one', function (): void {
     expect(firstEvent($other)['user'])->toBeNull();
 });
 
+test('a resolver that throws costs the event its user, never the event', function (Throwable $failure): void {
+    $directory = tempDirectory();
+    $buffer = new ArrayBuffer;
+
+    eventTracker($buffer, [
+        'buffer_path' => $directory,
+        'internal_logging' => ['enabled' => true, 'level' => 'debug', 'stderr_fallback' => false],
+        'user_resolver' => static fn (): array => throw $failure,
+    ])->track('page_view');
+
+    $log = implode('', array_map(
+        static fn (string $file): string => (string) file_get_contents($file),
+        glob($directory.'/internal-*.log') ?: [],
+    ));
+
+    expect($buffer->count('events'))->toBe(1)
+        ->and(firstEvent($buffer)['user'])->toBeNull()
+        ->and(mb_substr_count($log, 'Ranetrace user resolver failed'))->toBe(1)
+        ->and($log)->toContain('"exception":"No session store"')
+        ->and($log)->not->toContain('Failed to track event');
+})->with([
+    'exception' => [new RuntimeException('No session store')],
+    'error' => [new Error('No session store')],
+]);
+
 test('the url is null under cli because a console process has no url', function (): void {
     $buffer = new ArrayBuffer;
 
@@ -299,14 +324,16 @@ test('a rejected buffer write is a silent drop, never an exception into the host
     expect($buffer->count('events'))->toBe(0);
 });
 
-test('a failure while building the payload is swallowed', function (): void {
-    $buffer = new ArrayBuffer;
+test('a failure inside the capture work is swallowed', function (): void {
+    $buffer = new class extends ArrayBuffer
+    {
+        public function addItems(string $type, array $items): bool
+        {
+            throw new RuntimeException('buffer exploded');
+        }
+    };
 
-    eventTracker($buffer, [
-        'user_resolver' => function (): array {
-            throw new RuntimeException('resolver exploded');
-        },
-    ])->track('page_view');
+    eventTracker($buffer)->track('page_view');
 
     expect($buffer->count('events'))->toBe(0);
 });

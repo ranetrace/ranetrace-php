@@ -615,13 +615,15 @@ test('a rejected buffer write is acknowledged, because the browser cannot fix it
 });
 
 test('an unexpected failure becomes a 500 body rather than an exception into the host', function (): void {
-    $buffer = new ArrayBuffer;
+    $buffer = new class extends ArrayBuffer
+    {
+        public function addItems(string $type, array $items): bool
+        {
+            throw new RuntimeException('buffer exploded');
+        }
+    };
 
-    $response = relay($buffer, [], [
-        'user_resolver' => function (): array {
-            throw new RuntimeException('resolver exploded');
-        },
-    ])->handleRequest(relayServer(), relayPayload());
+    $response = relay($buffer)->handleRequest(relayServer(), relayPayload());
 
     expect($response->status)->toBe(500)
         ->and($response->body)->toBe(['success' => false, 'message' => 'Failed to process error'])
@@ -684,6 +686,34 @@ test('the user id is null when the resolver reports a string the backend would r
 
     expect(firstJavascriptError($buffer)['user_id'])->toBeNull();
 });
+
+test('a resolver that throws costs the browser error its user id, never the error', function (Throwable $failure): void {
+    $directory = tempDirectory();
+    $buffer = new ArrayBuffer;
+
+    $response = relay($buffer, [], [
+        'buffer_path' => $directory,
+        'internal_logging' => ['enabled' => true, 'level' => 'debug', 'stderr_fallback' => false],
+        'user_resolver' => static fn (): array => throw $failure,
+    ])->handleRequest(relayServer(), relayPayload());
+
+    $log = implode('', array_map(
+        static fn (string $file): string => (string) file_get_contents($file),
+        glob($directory.'/internal-*.log') ?: [],
+    ));
+
+    expect($response->status)->toBe(200)
+        ->and($response->body)->toBe(['success' => true, 'message' => 'Error received'])
+        ->and($buffer->count('javascript_errors'))->toBe(1)
+        ->and(firstJavascriptError($buffer)['user_id'])->toBeNull()
+        ->and(firstJavascriptError($buffer)['message'])->toBe('Cannot read properties of undefined')
+        ->and(mb_substr_count($log, 'Ranetrace user resolver failed'))->toBe(1)
+        ->and($log)->toContain('"exception":"No session store"')
+        ->and($log)->not->toContain('Failed to process JavaScript error');
+})->with([
+    'exception' => [new RuntimeException('No session store')],
+    'error' => [new Error('No session store')],
+]);
 
 test('a rejected buffer write logs the message as it was built, invalid bytes repaired', function (): void {
     $directory = tempDirectory();

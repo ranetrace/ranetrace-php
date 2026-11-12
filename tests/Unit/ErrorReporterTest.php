@@ -511,13 +511,24 @@ test('it sends an id and an email at the backend bound of 255 characters as they
 });
 
 test('it still reports the error when the host user resolver throws', function (): void {
+    $directory = tempDirectory();
+
     $payload = reportedPayload(new RuntimeException('Something broke'), [
+        'buffer_path' => $directory,
+        'internal_logging' => ['enabled' => true, 'level' => 'debug', 'stderr_fallback' => false],
         'user_resolver' => static fn (): array => throw new LogicException('No auth here'),
     ]);
 
+    $log = implode('', array_map(
+        static fn (string $file): string => (string) file_get_contents($file),
+        glob($directory.'/internal-*.log') ?: [],
+    ));
+
     expect($payload)->not->toBeEmpty()
         ->and($payload['user'])->toBeNull()
-        ->and($payload['message'])->toBe('Something broke');
+        ->and($payload['message'])->toBe('Something broke')
+        ->and(mb_substr_count($log, 'Ranetrace user resolver failed'))->toBe(1)
+        ->and($log)->toContain('"exception":"No auth here"');
 });
 
 test('it never reports a throwable this SDK itself threw', function (): void {

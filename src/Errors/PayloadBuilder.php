@@ -13,6 +13,7 @@ use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\ProjectRootStripper;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
+use Ranetrace\Php\Support\UserResolver;
 use Ranetrace\Php\Support\Utf8;
 use ReflectionMethod;
 use Throwable;
@@ -804,9 +805,9 @@ final class PayloadBuilder
      * The current user, as the host's resolver reports them.
      *
      * The email is PII, so it only travels when `errors.capture_user_email` is
-     * on; the key is always present because the field set is strict. The
-     * resolver is host code called from inside the capture path, so its failure
-     * is contained here rather than costing the whole error report.
+     * on; the key is always present because the field set is strict. A
+     * resolver that throws costs the error its user, never the report: see
+     * {@see UserResolver}.
      *
      * The backend takes the id only as an int or a string of at most 255
      * characters and the email only as a string of at most 255 characters, and
@@ -817,21 +818,7 @@ final class PayloadBuilder
      */
     private function user(): ?array
     {
-        $resolver = $this->config->get('user_resolver');
-
-        if (! is_callable($resolver)) {
-            return null;
-        }
-
-        try {
-            $resolved = $resolver();
-        } catch (Throwable $failure) {
-            $this->log->warning('Ranetrace user resolver failed', [
-                'exception' => $failure->getMessage(),
-            ]);
-
-            return null;
-        }
+        $resolved = UserResolver::resolve($this->config, $this->log);
 
         if (! is_array($resolved)) {
             return null;

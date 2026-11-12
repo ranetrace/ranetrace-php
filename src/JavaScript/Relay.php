@@ -10,6 +10,7 @@ use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
+use Ranetrace\Php\Support\UserResolver;
 use Throwable;
 
 /**
@@ -524,15 +525,15 @@ final class Relay
         return $rate < 1.0 && mt_rand() / mt_getrandmax() > $rate;
     }
 
+    /**
+     * The id the configured resolver reports, or null. A resolver that throws
+     * costs the error its `user_id`, not the error: the browser is still
+     * answered 200, the error is buffered without a user and the internal log
+     * holds the warning (see {@see UserResolver}).
+     */
     private function resolveUserId(): int|string|null
     {
-        $resolver = $this->config->get('user_resolver');
-
-        if (! is_callable($resolver)) {
-            return null;
-        }
-
-        $resolved = $resolver();
+        $resolved = UserResolver::resolve($this->config, $this->log);
 
         if (! is_array($resolved) || ! isset($resolved['id'])) {
             return null;

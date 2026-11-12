@@ -12,6 +12,7 @@ use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
+use Ranetrace\Php\Support\UserResolver;
 use Throwable;
 
 /**
@@ -312,6 +313,10 @@ final class EventTracker
      * configured resolver reports, else null. Only the id travels; events carry
      * no email.
      *
+     * A resolver that throws costs the event its user, not the event: it is
+     * buffered with a null `user` and the internal log holds the warning (see
+     * {@see UserResolver}), so the catch in {@see track()} never sees it.
+     *
      * @return array{id: int|string}|null
      */
     private function resolveUser(int|string|null $userId): ?array
@@ -320,13 +325,7 @@ final class EventTracker
             return ['id' => $userId];
         }
 
-        $resolver = $this->config->get('user_resolver');
-
-        if (! is_callable($resolver)) {
-            return null;
-        }
-
-        $resolved = $resolver();
+        $resolved = UserResolver::resolve($this->config, $this->log);
 
         if (! is_array($resolved) || ! isset($resolved['id'])) {
             return null;
