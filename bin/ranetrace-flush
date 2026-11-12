@@ -143,7 +143,7 @@ use Ranetrace\Php\Ranetrace;
 
         if (function_exists('posix_geteuid') && function_exists('posix_getpwuid')) {
             $entry = posix_getpwuid(posix_geteuid());
-            $user = is_array($entry) && is_string($entry['name'] ?? null) ? sprintf(' as user [%s]', $entry['name']) : '';
+            $user = is_array($entry) ? sprintf(' as user [%s]', $entry['name']) : '';
         }
 
         fwrite(STDERR, sprintf(

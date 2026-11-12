@@ -2,4 +2,7 @@ parameters:
     level: 6
     paths:
         - src
+        - bin/build-capture-script
+        - bin/ranetrace-flush
+        - bin/ranetrace-test
     treatPhpDocTypesAsCertain: false
