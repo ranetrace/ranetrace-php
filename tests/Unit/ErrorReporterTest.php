@@ -18,6 +18,7 @@ use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 function errorPayloadKeys(): array
 {
     return [
+        'id',
         'message',
         'file',
         'line',
@@ -43,6 +44,11 @@ function errorPayloadKeys(): array
         'previous',
     ];
 }
+
+/**
+ * What the errors endpoint's `uuid` rule accepts for the item's `id`.
+ */
+const ERROR_ID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D';
 
 /**
  * @param  array<string, mixed>  $overrides
@@ -103,10 +109,32 @@ function reportedPayload(Throwable $throwable, array $overrides = [], ?array $se
     return $buffer->payloads('errors')[0] ?? [];
 }
 
-test('it buffers exactly the twenty-three keys the API accepts', function (): void {
+test('it buffers exactly the twenty-four keys the API accepts', function (): void {
     $payload = reportedPayload(new RuntimeException('Something broke'));
 
-    expect(array_keys($payload))->toEqualCanonicalizing(errorPayloadKeys());
+    expect(array_keys($payload))->toBe(errorPayloadKeys());
+});
+
+/**
+ * The API reads two error items with one id as one report sent twice, and
+ * counts two occurrences only when their ids differ. The same throwable
+ * reported twice is alike in every other field, so the id is all that keeps
+ * the second occurrence.
+ */
+test('two errors reported alike in every field each carry their own uuid', function (): void {
+    $buffer = new ArrayBuffer;
+    $reporter = errorReporter($buffer);
+    $reporter->setServerContext([], true);
+    $throwable = new RuntimeException('Something broke');
+
+    $reporter->report($throwable);
+    $reporter->report($throwable);
+
+    [$first, $second] = $buffer->payloads('errors');
+
+    expect($first['id'])->toMatch(ERROR_ID_PATTERN)
+        ->and($second['id'])->toMatch(ERROR_ID_PATTERN)
+        ->and($second['id'])->not->toBe($first['id']);
 });
 
 test('it forwards the context the throwable carries, read by the shared builder', function (): void {

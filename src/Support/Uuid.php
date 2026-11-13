@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Ranetrace\Php\Support;
 
 /**
- * Makes the SDK's identifiers: the `id` an event and a JavaScript error item
- * carry to the API, and the spool envelope's own id.
+ * Makes the SDK's identifiers: the `id` an error item, an event and a
+ * JavaScript error item carry to the API, and the spool envelope's own id.
  *
  * It is one function rather than a dependency on `ramsey/uuid`, because all
  * either id has to be is unique.

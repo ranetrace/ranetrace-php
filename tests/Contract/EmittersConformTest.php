@@ -158,12 +158,23 @@ test('the emitted event satisfies the field spec, its id included', function ():
         ->and(DescriptorValidator::violations(WireContract::item('events')['fields'], $payload))->toBe([]);
 });
 
+/**
+ * The errors endpoint allow-lists its fields, so the error item's `id` is held
+ * to the fixture's strict field set as well as to its rule for the form.
+ */
+test('the emitted error satisfies the strict field spec, its id included', function (): void {
+    $payload = contractEmittedPayloads()['errors'];
+
+    expect($payload)->toHaveKey('id')
+        ->and(DescriptorValidator::violations(WireContract::item('errors')['fields'], $payload, true, []))->toBe([]);
+});
+
 test('the fixtures refuse an id that is not a uuid', function (string $type): void {
     $spec = WireContract::item($type);
     $example = [...$spec['examples']['full'], 'id' => 'not-a-uuid'];
 
     expect(DescriptorValidator::violations($spec['fields'], $example))->toHaveCount(1);
-})->with(['events', 'javascript_errors']);
+})->with(['events', 'javascript_errors', 'errors']);
 
 /**
  * The context a throwable carries is the error item's one free-shape field, so

@@ -16,6 +16,7 @@ use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
 use Ranetrace\Php\Support\UserResolver;
 use Ranetrace\Php\Support\Utf8;
+use Ranetrace\Php\Support\Uuid;
 use ReflectionMethod;
 use Throwable;
 
@@ -35,9 +36,18 @@ use Throwable;
  * observes per capture, it answers through {@see ErrorContext}. Nothing here
  * reaches for a superglobal or a framework.
  *
- * The item is 23 keys, all always present. The framework identity is a pair,
+ * The item is 24 keys, all always present. The framework identity is a pair,
  * `framework` and `framework_version`, both nullable. The Laravel-only
  * `laravel_version` key is retired and never sent.
+ *
+ * The `id` is made here, once, when the error is captured. The API holds it
+ * for thirty minutes and counts an error item whose id it has already handled
+ * as ignored, so a batch that is sent again after its answer was lost does not
+ * count its errors a second time, while the same throwable reported twice is
+ * two occurrences. That only works when the id belongs to the capture and not
+ * to an attempt: it is part of the item, so it stays the same through a queue
+ * job that runs twice, a put-back into the spool and every later send. A
+ * previous exception is part of its item and carries no id of its own.
  *
  * `frames` is the trace as structured frames, `previous` the chain of previous
  * exceptions, nearest first. A frame never carries `args`: the trace's `args`
@@ -202,9 +212,10 @@ final class PayloadBuilder
     }
 
     /**
-     * Build the 23-key error item.
+     * Build the 24-key error item.
      *
      * @return array{
+     *     id: string,
      *     message: string,
      *     file: string,
      *     line: int,
@@ -261,6 +272,7 @@ final class PayloadBuilder
         // strings, "invalid api_key=…"), and getTraceAsString() can carry them
         // in argument values.
         return [
+            'id' => Uuid::v4(),
             'message' => $this->truncate($this->freeText($throwable->getMessage()), self::MAX_MESSAGE_LENGTH),
             'file' => $this->boundFilePath($file),
             'line' => $line,

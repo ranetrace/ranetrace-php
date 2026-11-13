@@ -6,6 +6,9 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Added
+- **Every error report carries an id of its own, so a batch that is sent again does not count an occurrence twice.** A batch whose answer is lost on the way is kept and sent again 60 to 900 seconds later. The API counts an error report as an occurrence even when it does not store it, so it has to recognise a report it has already handled, and it can only do that when the report carries an id. `Errors\PayloadBuilder::build()` now adds `id`, a random version 4 UUID made once when the error is captured, as the first of the item's twenty-four keys. It is part of the item, so it stays the same through a put-back into the spool and every later send. The API holds the id for 30 minutes: the same id again is one report sent twice and is ignored, and the same throwable reported twice is two occurrences. A previous exception inside the item carries no id. **This release must wait for the backend.** The errors endpoint allow-lists its fields, so until it accepts `id` it refuses every error item that carries the key, and a refused item is not sent again. `contract/items/errors.json` describes the field and carries it in its `full` example, and `contract/CHANGELOG.md` holds its status
+
 ## [1.4.0] - 2026-11-13
 
 ### Added
