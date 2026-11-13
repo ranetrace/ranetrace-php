@@ -4,7 +4,8 @@
     "strict_fields": false,
     "notes": [
         "Transcribed from the backend app's EventsBatchController, verified 2026-08-19.",
-        "There is no allow-list here: a key outside `fields` is dropped by the validator rather than rejecting the item. Both SDKs still send exactly the seven keys in `fields`, because the shape is what the dashboard reads.",
+        "There is no allow-list here: a key outside `fields` is dropped by the validator rather than rejecting the item. Both SDKs still send exactly the eight keys in `fields`, because the shape is what the dashboard reads.",
+        "`id` is the SDK's own identifier for the event, a UUID made once when the event is captured and kept through every attempt to send it. The backend does not store it. It holds the id per website for 30 minutes and counts an event whose id it has already stored as `ignored`, so a batch sent again after its answer was lost is not stored twice, while two events alike in every other field, each with its own id, are both stored. An event without an id, from an SDK older than the field, is the same event only when every field it carries is the same, so two such events alike in every field within one second are read as one. A value that is not a UUID refuses the item.",
         "`additional_checks` are enforced after the field rules and refuse the item just as hard. An example that satisfies `fields` but trips one of them is not a valid example.",
         "The endpoint also applies burst protection per IP, per session hash and per website before validation. That is a 429 on the request, not an item rule, so it is described in responses.json rather than here.",
         "`user` is null or an object with only the key `id`: events carry no email, and an `email` or any other key refuses the item, although the endpoint drops unknown top-level keys. `user.id` is required whenever `user` is not null, as an integer or a string of at most 255 characters.",
@@ -12,6 +13,7 @@
         "`session_id_hash` is null for an event tracked from a console process: a command, a scheduled task or a queued job. There is no visitor there, and a hash of the date alone would be one value for every console event of the day. An event tracked in a request always carries the hash."
     ],
     "fields": {
+        "id": {"required": false, "type": "string", "pattern": "/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/D"},
         "event_name": {"required": true, "type": "string", "min": 3, "max": 50, "pattern": "/^[a-z][a-z0-9_]*$/"},
         "timestamp": {"required": true, "type": "date"},
         "properties": {"required": false, "type": "array"},
@@ -50,6 +52,7 @@
             "timestamp": "2026-08-19T09:30:45+00:00"
         },
         "full": {
+            "id": "5f0c2a9e-7d41-4b83-a6e2-0c9d3f1b8a57",
             "event_name": "checkout_completed",
             "timestamp": "2026-08-19T09:30:45+00:00",
             "properties": {

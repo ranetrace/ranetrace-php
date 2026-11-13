@@ -8,14 +8,23 @@ use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
 use Ranetrace\Php\Support\Utf8;
+use Ranetrace\Php\Support\Uuid;
 
 /**
- * Shapes one tracked event into the seven-key event item the Ranetrace API
+ * Shapes one tracked event into the eight-key event item the Ranetrace API
  * accepts.
  *
- * Shared with `ranetrace/ranetrace-laravel`. The API does strict field-set
- * matching, so an added or dropped key refuses every event; the key set is
- * exactly these seven and the tests assert it rather than only the values.
+ * Shared with `ranetrace/ranetrace-laravel`. The key set is exactly these
+ * eight, the ones `contract/items/events.json` declares, and the tests assert
+ * the set rather than only the values.
+ *
+ * The `id` is made here, once, when the event is captured. The API holds it
+ * for thirty minutes and ignores an event whose id it has stored, so a batch
+ * that is sent again after its answer was lost is not stored twice, while two
+ * events alike in every other field are both stored. That only works when the
+ * id belongs to the capture and not to an attempt: it is part of the item, so
+ * it stays the same through a queue job that runs twice, a put-back into the
+ * spool and every later send.
  *
  * The fingerprints arrive already hashed, by {@see \Ranetrace\Php\Support\FingerprintGenerator}
  * in both SDKs. They are not computed here because the builder is handed a
@@ -37,6 +46,7 @@ final class EventItemBuilder
      * @param  string|null  $sessionIdHash  Null for a console process, which has no visitor to tell apart from another.
      * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues  Path segment values to redact from $url and from any URL hiding in $properties: a fixed list, or a per-URL resolver for a host with a router. Null means query-only scrubbing.
      * @return array{
+     *     id: string,
      *     event_name: string,
      *     properties: mixed,
      *     user: array{id: int|string}|null,
@@ -59,6 +69,7 @@ final class EventItemBuilder
         $userId = UserId::accepted($user['id'] ?? null);
 
         return [
+            'id' => Uuid::v4(),
             'event_name' => Utf8::repair($name),
             // The host's declared path secrets are passed through, so a URL
             // property loses its `{token}` segment the same way the event's own

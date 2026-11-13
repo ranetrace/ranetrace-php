@@ -15,6 +15,7 @@ use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
  * @var array<int, string>
  */
 const JAVASCRIPT_ERROR_KEYS = [
+    'id',
     'message',
     'stack',
     'type',
@@ -31,6 +32,11 @@ const JAVASCRIPT_ERROR_KEYS = [
     'context',
     'browser_info',
 ];
+
+/**
+ * What the javascript-errors endpoint's `uuid` rule accepts for the item's `id`.
+ */
+const JAVASCRIPT_ERROR_ID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D';
 
 /**
  * @param  array<string, mixed>  $overrides  Merged into `javascript_errors`.
@@ -317,13 +323,45 @@ test('a sampled out report is acknowledged and dropped', function (): void {
         ->and($buffer->count('javascript_errors'))->toBe(0);
 });
 
-test('it buffers exactly the fifteen wire keys, in order', function (): void {
+test('it buffers exactly the sixteen wire keys, in order', function (): void {
     $buffer = new ArrayBuffer;
 
     relay($buffer)->handleRequest(relayServer(), relayPayload());
 
     expect($buffer->count('javascript_errors'))->toBe(1)
         ->and(array_keys(firstJavascriptError($buffer)))->toBe(JAVASCRIPT_ERROR_KEYS);
+});
+
+/**
+ * The API reads two items with one id as one report sent twice, and counts
+ * two occurrences only when their ids differ.
+ */
+test('two reports alike in every field each carry their own uuid', function (): void {
+    $buffer = new ArrayBuffer;
+    $relay = relay($buffer);
+
+    $relay->handleRequest(relayServer(), relayPayload());
+    $relay->handleRequest(relayServer(), relayPayload());
+
+    [$first, $second] = $buffer->payloads('javascript_errors');
+
+    expect($first['id'])->toMatch(JAVASCRIPT_ERROR_ID_PATTERN)
+        ->and($second['id'])->toMatch(JAVASCRIPT_ERROR_ID_PATTERN)
+        ->and($second['id'])->not->toBe($first['id']);
+});
+
+/**
+ * A browser that chose the id could send the id of a report it wants ignored
+ * before that report arrives.
+ */
+test('it never takes the id from the browser payload', function (): void {
+    $buffer = new ArrayBuffer;
+    $claimed = '5f0c2a9e-7d41-4b83-a6e2-0c9d3f1b8a57';
+
+    relay($buffer)->handleRequest(relayServer(), relayPayload(['id' => $claimed]));
+
+    expect(firstJavascriptError($buffer)['id'])->toMatch(JAVASCRIPT_ERROR_ID_PATTERN)
+        ->not->toBe($claimed);
 });
 
 test('it keeps the browser reported fields and adds the server side ones', function (): void {

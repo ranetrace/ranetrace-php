@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 use Ranetrace\Php\Buffer\PauseStore;
 use Ranetrace\Php\Config;
+use Ranetrace\Php\Events\EventTracker;
 use Ranetrace\Php\Http\ApiClient;
 use Ranetrace\Php\Http\RawResponse;
+use Ranetrace\Php\JavaScript\Relay;
+use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Support\SecretScrubber;
 use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 use Ranetrace\Php\Tests\Doubles\FakeHttpClient;
 use Ranetrace\Php\Worker\Worker;
@@ -382,6 +386,45 @@ function seedEnvelopes(ArrayBuffer $buffer, string $type, array $payloads): arra
 
     return $envelopes;
 }
+
+/**
+ * The API tells a batch sent again from a second capture by the item's own id,
+ * so the id on the wire has to be the one made at capture, on every attempt.
+ */
+it('sends a captured item again with the id it was captured with', function (string $type, array $capture): void {
+    $harness = workerHarness(new FakeHttpClient(
+        new RawResponse(500, '{"success":false}'),
+        new RawResponse(200, '{"success":true}'),
+    ), ['javascript_errors' => ['enabled' => true]]);
+
+    $capture[0]($harness['config'], $harness['buffer']);
+
+    $captured = $harness['buffer']->payloads($type)[0]['id'];
+
+    $harness['worker']->run($type);
+    $harness['pauses']->clearFeaturePause($type);
+    $harness['worker']->run($type);
+
+    expect($harness['http']->requests)->toHaveCount(2)
+        ->and($harness['http']->payload(0)[$type][0]['id'])->toBe($captured)
+        ->and($harness['http']->payload(1)[$type][0]['id'])->toBe($captured)
+        ->and($harness['buffer']->count($type))->toBe(0);
+})->with([
+    'an event' => ['events', [static function (Config $config, ArrayBuffer $buffer): void {
+        $log = new InternalLogger($config);
+
+        (new EventTracker($config, $buffer, new SecretScrubber($config, $log), new FingerprintGenerator($config), $log))
+            ->track('order_shipped');
+    }]],
+    'a javascript error' => ['javascript_errors', [static function (Config $config, ArrayBuffer $buffer): void {
+        $log = new InternalLogger($config);
+
+        (new Relay($config, $buffer, new SecretScrubber($config, $log), new FingerprintGenerator($config), $log))->handleRequest(
+            ['HTTP_HOST' => 'app.test', 'HTTP_ORIGIN' => 'https://app.test', 'HTTP_USER_AGENT' => 'Test Browser'],
+            ['message' => 'boom', 'url' => 'https://app.test/cart', 'timestamp' => '2026-08-06T10:00:00+00:00'],
+        );
+    }]],
+]);
 
 it('puts a failed batch back with its ids and capture times', function (): void {
     $harness = workerHarness(FakeHttpClient::respondingWith(500));

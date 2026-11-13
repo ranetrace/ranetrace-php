@@ -12,14 +12,14 @@ use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
 use Ranetrace\Php\Support\Utf8;
+use Ranetrace\Php\Support\Uuid;
 
 /**
- * Shapes one browser error report into the fifteen-key JavaScript error item
+ * Shapes one browser error report into the sixteen-key JavaScript error item
  * the Ranetrace API accepts.
  *
- * Shared with `ranetrace/ranetrace-laravel`. Every key is always present and the
- * set is exact: the API does strict field-set matching, so one extra or missing
- * key refuses the item, and with it every item this builder makes.
+ * Shared with `ranetrace/ranetrace-laravel`. Every key is always present and
+ * the set is exactly the one `contract/items/javascript_errors.json` declares.
  *
  * The payload is entirely untrusted, so the item is REBUILT from it rather than
  * filtered: an unknown key from a tampered payload is dropped by construction
@@ -28,6 +28,14 @@ use Ranetrace\Php\Support\Utf8;
  * anything; the host observes them and passes them in. For the same reason the
  * browser's `name` and `version` in `browser_info` are derived from that
  * host-observed user agent, never read from the payload.
+ *
+ * The `id` is made here, once, when the report is received. The API holds it
+ * for thirty minutes and ignores an item whose id it has stored, so a batch
+ * that is sent again after its answer was lost does not count an occurrence
+ * twice. It is part of the item, so it stays the same through a queue job that
+ * runs twice, a put-back into the spool and every later send. It never comes
+ * from the payload: a browser that chose the id could have another visitor's
+ * report ignored by sending that id first.
  *
  * Every string, array keys included, passes through {@see Utf8} before it is
  * scrubbed or capped. A JSON body cannot carry an invalid byte, but a payload a
@@ -92,6 +100,7 @@ final class ErrorItemBuilder
         $url = isset($payload['url']) && is_scalar($payload['url']) ? (string) $payload['url'] : '';
 
         return [
+            'id' => Uuid::v4(),
             'message' => $this->scrubber->scrubString(Utf8::repair($message)),
             'stack' => is_string($stack) ? $this->scrubber->scrubString(Utf8::repair($stack)) : null,
             'type' => isset($payload['type']) && is_string($payload['type']) ? Utf8::repair($payload['type']) : 'Error',

@@ -9,6 +9,7 @@ use Ranetrace\Php\Support\FileLock;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\JsonFile;
 use Ranetrace\Php\Support\Quietly;
+use Ranetrace\Php\Support\Uuid;
 
 /**
  * The default spool: one JSON file per buffer type, guarded by `flock`.
@@ -91,7 +92,7 @@ final class FileBuffer implements BufferInterface
 
             foreach ($items as $data) {
                 $buffer[] = [
-                    'id' => self::uuid(),
+                    'id' => Uuid::v4(),
                     'data' => $data,
                     'timestamp' => time(),
                 ];
@@ -283,28 +284,6 @@ final class FileBuffer implements BufferInterface
         }
 
         return null;
-    }
-
-    /**
-     * A random version-4 UUID. The envelope id only has to be unique, so this
-     * avoids a dependency on `ramsey/uuid` for one string.
-     */
-    private static function uuid(): string
-    {
-        $bytes = random_bytes(16);
-        $bytes[6] = chr((ord($bytes[6]) & 0x0F) | 0x40);
-        $bytes[8] = chr((ord($bytes[8]) & 0x3F) | 0x80);
-
-        $hex = bin2hex($bytes);
-
-        return sprintf(
-            '%s-%s-%s-%s-%s',
-            mb_substr($hex, 0, 8),
-            mb_substr($hex, 8, 4),
-            mb_substr($hex, 12, 4),
-            mb_substr($hex, 16, 4),
-            mb_substr($hex, 20, 12),
-        );
     }
 
     private static function isEnvelope(mixed $candidate): bool

@@ -17,6 +17,7 @@ use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
  * @var array<int, string>
  */
 const EVENT_KEYS = [
+    'id',
     'event_name',
     'properties',
     'user',
@@ -25,6 +26,11 @@ const EVENT_KEYS = [
     'user_agent_hash',
     'session_id_hash',
 ];
+
+/**
+ * What the events endpoint's `uuid` rule accepts for the item's `id`.
+ */
+const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D';
 
 /**
  * @param  array<string, mixed>  $overrides
@@ -52,13 +58,41 @@ function firstEvent(ArrayBuffer $buffer): array
     return $buffer->payloads('events')[0];
 }
 
-test('it buffers an event under the events type with exactly the seven wire keys', function (): void {
+test('it buffers an event under the events type with exactly the eight wire keys', function (): void {
     $buffer = new ArrayBuffer;
 
     eventTracker($buffer)->track('checkout_started', ['plan' => 'pro']);
 
     expect($buffer->count('events'))->toBe(1)
         ->and(array_keys(firstEvent($buffer)))->toBe(EVENT_KEYS);
+});
+
+/**
+ * The API reads two events with one id as one event sent twice, and keeps
+ * both only when their ids differ. A counter tracked twice in a loop is alike
+ * in every other field, so the id is all that keeps the second one.
+ */
+test('two events tracked alike in every field each carry their own uuid', function (): void {
+    $buffer = new ArrayBuffer;
+    $tracker = eventTracker($buffer);
+
+    $tracker->track('order_shipped');
+    $tracker->track('order_shipped');
+
+    [$first, $second] = $buffer->payloads('events');
+
+    expect($first['id'])->toMatch(UUID_PATTERN)
+        ->and($second['id'])->toMatch(UUID_PATTERN)
+        ->and($second['id'])->not->toBe($first['id']);
+});
+
+test('a property named id does not replace the id of the event', function (): void {
+    $buffer = new ArrayBuffer;
+
+    eventTracker($buffer)->track('order_shipped', ['id' => 'ORD-4821']);
+
+    expect(firstEvent($buffer)['id'])->toMatch(UUID_PATTERN)
+        ->and(firstEvent($buffer)['properties'])->toBe(['id' => 'ORD-4821']);
 });
 
 test('it records the event name and an iso 8601 timestamp', function (): void {

@@ -136,15 +136,34 @@ test('the emitted browser info keys are exactly the ones the fixture declares', 
         ->toBe([...ErrorItemBuilder::BROWSER_INFO_KEYS, 'name', 'version']);
 });
 
-test('the emitted javascript error satisfies the field spec, browser name and version included', function (): void {
+test('the emitted javascript error satisfies the field spec, its id and the browser name and version included', function (): void {
     $payload = contractEmittedPayloads()['javascript_errors'];
     $spec = WireContract::item('javascript_errors');
 
-    expect($payload['browser_info'])
+    expect($payload)->toHaveKey('id')
+        ->and($payload['browser_info'])
         ->name->toBe('Chrome')
         ->version->toBe('140')
         ->and(DescriptorValidator::violations($spec['fields'], $payload, false, []))->toBe([]);
 });
+
+/**
+ * The event's `id` is the one field the backend checks for its form alone, so
+ * the id the builder makes is held to the fixture's rule for it.
+ */
+test('the emitted event satisfies the field spec, its id included', function (): void {
+    $payload = contractEmittedPayloads()['events'];
+
+    expect($payload)->toHaveKey('id')
+        ->and(DescriptorValidator::violations(WireContract::item('events')['fields'], $payload))->toBe([]);
+});
+
+test('the fixtures refuse an id that is not a uuid', function (string $type): void {
+    $spec = WireContract::item($type);
+    $example = [...$spec['examples']['full'], 'id' => 'not-a-uuid'];
+
+    expect(DescriptorValidator::violations($spec['fields'], $example))->toHaveCount(1);
+})->with(['events', 'javascript_errors']);
 
 /**
  * The context a throwable carries is the error item's one free-shape field, so
