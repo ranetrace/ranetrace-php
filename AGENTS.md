@@ -101,6 +101,8 @@ Event names must be snake_case, 3 to 50 characters, starting with a letter: `/^[
 
 `enabled()` requires all three: the master switch, the feature's own switch, and a key that is not blank (the key is trimmed where `Config` reads it).
 
+Keep each `*_TIMEOUT` at 8 seconds or more. The server takes up to 8 seconds over a batch, and a client that gives up sooner sends a batch again that the server already stored.
+
 ## Required wiring
 
 Two things are not automatic. Without either, the SDK captures or delivers nothing.

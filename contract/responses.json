@@ -9,7 +9,8 @@
             "pause_scope": null,
             "pause_seconds": null,
             "drop": false,
-            "note": "The server validates the items one by one and processes the valid ones. An invalid item is refused on its own: it is not stored and is counted as failed, and the items around it are processed as usual. Items named by unprocessed_indexes are re-buffered for the next run; items counted as failed are terminal, whether refused by validation or failed while being stored, because the server would fail them again. The run stamps the last-successful-batch time for this type."
+            "note": "The server validates the items one by one and processes the valid ones. An invalid item is refused on its own: it is not stored and is counted as failed, and the items around it are processed as usual. Items named by unprocessed_indexes are re-buffered for the next run; items counted as failed are terminal, whether refused by validation or failed while being stored, because the server would fail them again. The run stamps the last-successful-batch time for this type.",
+            "deadline_note": "The server stops storing a batch 8 seconds after the request reached it and names the rest in unprocessed_indexes. The 8 seconds stay under the SDKs' default timeout of 10 seconds. A client that raises its timeout is safe. One that lowers it below 8 seconds would see a timeout for a batch the server goes on to store whole, and would send it again."
         },
         "401": {
             "rebuffer": true,

@@ -13,6 +13,7 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ### Changed
 - **The internal log names the server's message when a batch is rate limited.** Every answer that is not a 200 carries `{"success": false, "error": {"message": ...}}`, and the log line of each status held that message except the 429's, which gave only the type and the pause length. It now carries `message` as well, so "Rate limit exceeded" says which limit refused the batch
+- **The contract records how long the server takes over a batch.** It stops storing a batch 8 seconds after the request reached it and names the rest in `unprocessed_indexes`, which stays under the default request timeout of 10 seconds. `contract/responses.json` says so under `statuses.200`, and `AGENTS.md` says to keep each `*_TIMEOUT` at 8 seconds or more: a client that gives up sooner sends a batch again that the server already stored
 
 ## [1.3.0] - 2026-11-13
 

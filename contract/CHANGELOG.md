@@ -59,6 +59,14 @@ The backend validates `id` as `nullable|uuid` on both endpoints and does not sto
 
 `items/events.json` and `items/javascript_errors.json` declare the field, describe it in their notes and carry it in their `full` example; the `minimal` examples stay without it, as an older SDK sends them. The event item goes from seven keys to eight and the JavaScript error item from fifteen to sixteen. Log items get no id: at log volume a cache key per record for 30 minutes is real memory, and a lost answer is rare. That is open to change when doubled log records are reported.
 
+### 2026-11-10, a page visit's `url` is optional, and the Laravel SDK stops sending it
+
+Status: **APPLIED on the backend, deployed 2026-11-10. `ranetrace/ranetrace-laravel`: on its main branch, PENDING release in 1.5.0. Nothing to do for this package, which sends no page visits.** The backend required `url` on a page visit and then dropped it, because a visit keeps its `path` and has no column for a URL. The rule is `nullable` now, so the Laravel SDK sends a visit without the key. The page visit item has no fixture here, because only the Laravel SDK emits it.
+
+### 2026-11-10, the backend stops storing a batch after 8 seconds
+
+Status: **APPLIED on the backend, deployed 2026-11-10. No SDK change needed.** The backend stops storing a batch 8 seconds after the request reached it, where it took up to 60, and names the items it did not reach in `unprocessed_indexes`, which both SDKs already put back for the next run. The 8 seconds are tied to the SDKs' default request timeout of 10 seconds and must stay under it: a client that gives up on a batch the server is still storing keeps the whole batch and sends it again, and everything stored meanwhile lands twice. `responses.json` records the deadline under `statuses.200`, and the SDKs' documentation says to keep a timeout at 8 seconds or more. The same deploy made every non-200 of the API answer with the `error_body` shape, the 401 of a rejected key and the 429 of the route throttle included, which `responses.json` already stated; both SDKs now write that message to their internal log for a 429 as they did for the other statuses.
+
 ### 2026-11-13, an event from a console process sends `session_id_hash` and `user_agent_hash` as null
 
 Status: **APPLIED, released in `ranetrace/ranetrace-php` 1.3.0. `ranetrace/ranetrace-laravel` sends it from 1.4.0, which requires that release. Nothing to do for the backend.** No rule moved: `items/events.json` gives both fields as optional and, when present, a string of 64 characters, which is the backend's `nullable|string|size:64`. What moved is the emitters, for an event tracked from a command, a scheduled task or a queued job.
