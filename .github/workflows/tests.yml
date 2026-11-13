@@ -49,6 +49,10 @@ jobs:
         run: |
           php -r 'echo "PCRE ", PCRE_VERSION, PHP_EOL; exit(version_compare(strtok(PCRE_VERSION, " "), "10.43", "<") ? 0 : 1);'
 
+      - name: Show the PCRE2 version
+        # A pattern can match on one PCRE2 and miss on another, so each leg says which one its results are for.
+        run: php -r 'echo "PCRE ", PCRE_VERSION, PHP_EOL;'
+
       - name: Install dependencies
         run: composer update --prefer-dist --with-all-dependencies --no-interaction --no-scripts
 
