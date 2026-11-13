@@ -165,7 +165,8 @@ final class ErrorItemBuilder
     /**
      * Keep the LAST N breadcrumbs (the ones nearest the error are the
      * diagnostic ones) and rebuild each as exactly the four wire keys, so a
-     * browser cannot smuggle a fifth.
+     * browser cannot smuggle a fifth. A breadcrumb's message is free text the
+     * page wrote, so it is scrubbed as the error's own message is.
      *
      * @param  mixed  $breadcrumbs  Validated to be an array or absent by this point.
      * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues
@@ -190,7 +191,7 @@ final class ErrorItemBuilder
             return [
                 'timestamp' => Utf8::repairDeep($breadcrumb['timestamp'] ?? null),
                 'category' => is_string($category) ? $this->cutName($category, self::MAX_BREADCRUMB_CATEGORY_LENGTH) : $category,
-                'message' => is_string($message) ? $this->truncate($message, self::MAX_BREADCRUMB_MESSAGE_LENGTH) : $message,
+                'message' => is_string($message) ? $this->truncate($this->scrubber->scrubString($message), self::MAX_BREADCRUMB_MESSAGE_LENGTH) : $message,
                 'data' => PayloadSizer::capBytes(
                     $this->scrubbedArray($breadcrumb['data'] ?? [], $sensitivePathValues),
                     self::MAX_BREADCRUMB_DATA_BYTES,

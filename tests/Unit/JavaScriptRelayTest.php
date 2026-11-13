@@ -476,6 +476,29 @@ test('it redacts host declared sensitive path segments from breadcrumb and conte
         ->and($item['breadcrumbs'][0]['data']['url'])->toBe('/reset/[REDACTED]?next=/account');
 });
 
+test('it redacts the secrets in a breadcrumb message, as it does in the error message', function (string $message, string $expected): void {
+    // A breadcrumb message is free text the page wrote: its own call to
+    // Ranetrace.addBreadcrumb(), or whatever it logged. Its data was scrubbed
+    // and its message was not, so the same secret left in one and not the other.
+    $buffer = new ArrayBuffer;
+
+    relay($buffer)->handleRequest(relayServer(), relayPayload([
+        'breadcrumbs' => [[
+            'timestamp' => '2026-08-06T10:00:00+00:00',
+            'category' => 'auth',
+            'message' => $message,
+            'data' => [],
+        ]],
+    ]));
+
+    expect(firstJavascriptError($buffer)['breadcrumbs'][0]['message'])->toBe($expected);
+})->with([
+    'a pair under a sensitive key' => ['signed in with token=abc123 from the popup', 'signed in with token=[REDACTED] from the popup'],
+    'a url with a sensitive query' => ['GET /api/me?api_key=abc123&page=2', 'GET /api/me?api_key=[REDACTED]&page=2'],
+    'the password of a url' => ['connecting to wss://app:hunter2@realtime.test', 'connecting to wss://app:[REDACTED]@realtime.test'],
+    'a message with no secret' => ['Form submitted', 'Form submitted'],
+]);
+
 test('it keeps only the last breadcrumbs and rebuilds each as the four wire keys', function (): void {
     $buffer = new ArrayBuffer;
 
