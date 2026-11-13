@@ -6,13 +6,13 @@ use Ranetrace\Php\Logging\LogItemBuilder;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\SecretScrubber;
 
-function logItem(array $context = [], array $extra = [], array|callable|null $sensitivePathValues = null): array
+function logItem(array $context = [], array $extra = [], array|callable|null $sensitivePathValues = null, string $message = 'Reset mail sent'): array
 {
     $config = testConfig();
 
     return (new LogItemBuilder($config, new SecretScrubber($config, new InternalLogger($config))))->build(
         'error',
-        'Reset mail sent',
+        $message,
         $context,
         'stack',
         '2026-08-19T10:00:00+00:00',
@@ -55,6 +55,29 @@ test('a host that can name them has them redacted, per url, in context and in ex
 test('a fixed list of sensitive values applies to every url in the record', function (): void {
     expect(logItem(['link' => 'https://api.test/reset-password/live-token'], [], ['live-token'])['context'])
         ->toBe(['link' => 'https://api.test/reset-password/[REDACTED]']);
+});
+
+/**
+ * A failed job is logged with its exception, and the string form of an
+ * exception holds its message, its trace and those of every exception before
+ * it.
+ */
+test('a logged exception whose message holds a telegram api url loses the bot token everywhere', function (): void {
+    $secret = implode('', ['AAF4k3T0ken', 'F4k3T0kenF4k3T0ken_F4k-3']);
+    $url = 'https://api.telegram.org/bot123456789:'.$secret.'/sendMessage';
+    $exception = new RuntimeException('The communication with Telegram failed. `POST '.$url.'`', 0, new LogicException('cURL error 28 for '.$url));
+
+    $item = logItem(
+        ['exception' => (string) $exception, 'request' => ['url' => $url]],
+        ['previous' => $exception->getPrevious()->getMessage()],
+        message: $exception->getMessage(),
+    );
+
+    expect($item['message'])->toBe('The communication with Telegram failed. `POST https://api.telegram.org/bot[REDACTED]/sendMessage`')
+        ->and($item['context']['request']['url'])->toBe('https://api.telegram.org/bot[REDACTED]/sendMessage')
+        ->and($item['context']['exception'])->toContain('cURL error 28 for https://api.telegram.org/bot[REDACTED]/sendMessage')
+        ->and($item['extra']['previous'])->toBe('cURL error 28 for https://api.telegram.org/bot[REDACTED]/sendMessage')
+        ->and((string) json_encode($item))->not->toContain($secret);
 });
 
 test('a log record names a file under the project root by its relative path, in its message, context and extra', function (): void {

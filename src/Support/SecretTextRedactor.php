@@ -22,10 +22,11 @@ use UnexpectedValueException;
  * pattern stays linear.
  *
  * A few secrets are caught by their value alone, wherever they stand: the
- * password of a URL (`pgsql://app:[REDACTED]@db`, user name and host kept)
- * and a token on a short list of prefixes that say what it is, such as
- * `sk_live_` or `AKIA`, see {@see redactSecretValues()}. Any other secret
- * under a name the fragment list does not hold is not.
+ * password of a URL (`pgsql://app:[REDACTED]@db`, user name and host kept),
+ * a token on a short list of prefixes that say what it is, such as
+ * `sk_live_` or `AKIA`, and a Telegram bot token, see
+ * {@see redactSecretValues()}. Any other secret under a name the fragment
+ * list does not hold is not.
  *
  * The value after an anchor takes one of these shapes:
  *
@@ -235,6 +236,34 @@ final class SecretTextRedactor
         .')(?![\w$])~';
 
     /**
+     * A Telegram bot token, `<bot id>:<secret>`. It is a segment of the path
+     * of every Bot API URL, `https://api.telegram.org/bot<token>/sendMessage`,
+     * so the message of a failed request carries it, and no key or prefix
+     * marks it. Three shapes, with what stays readable in group 1 or 2:
+     *
+     * - Whatever follows `bot` on the API host, up to the next `/`, also
+     *   under `/file/`. The host says what the segment is, so its shape is
+     *   not asked: a token cut short or pasted with its quotes is redacted
+     *   too.
+     * - A `/bot<digits>:<30 or more token characters>` segment on any other
+     *   host: a self-hosted Bot API server or a proxy.
+     * - The token on its own, in prose or under a key nobody listed: 5 to 16
+     *   digits, `:` and exactly 35 token characters, the first an `A`, which
+     *   is what BotFather issues. Exact, and bounded like a prefixed token,
+     *   because a number and a colon before a long word are common: the
+     *   cache key `user:12345678:<hash>` stays readable.
+     *
+     * The `:` can be written `%3A`, and a `/` as the `\/` of a JSON-encoded
+     * URL. Every repeat is possessive and none of the three can start inside
+     * the run another attempt walked, so the scan stays linear.
+     */
+    private const string TELEGRAM_BOT_TOKEN = '~'
+        .'((?i:api\.telegram\.org)(?:/|\\\\/)(?:file(?:/|\\\\/))?+bot)[^\s/\\\\?#\'"`<>]++'
+        .'|((?:/|\\\\/)bot)\d{5,16}+(?::|%3[Aa])[\w\-]{30,}+'
+        .'|(?<![\w$.\-])\d{5,16}+(?::|%3[Aa])A[\w\-]{34}(?![\w\-])'
+        .'~';
+
+    /**
      * {@see anchorPattern()}, built once per instance for each value of
      * {@see $readsCredentialSubclass}.
      *
@@ -345,9 +374,10 @@ final class SecretTextRedactor
 
     /**
      * $text with every secret that its value alone gives away redacted: the
-     * password of a URL ({@see URL_PASSWORD}) and a token with a known prefix
-     * ({@see PREFIXED_TOKEN}). It runs after the key pass, on its output, so
-     * it reaches what that pass keeps: a literal under a name nobody listed
+     * password of a URL ({@see URL_PASSWORD}), a token with a known prefix
+     * ({@see PREFIXED_TOKEN}) and a Telegram bot token
+     * ({@see TELEGRAM_BOT_TOKEN}). It runs after the key pass, on its output,
+     * so it reaches what that pass keeps: a literal under a name nobody listed
      * (`$dsn = 'pgsql://app:secret@db'`), a positional argument and prose.
      * A shape inside a placeholder the key pass left cannot match, since
      * `[REDACTED]` holds none. {@see SecretScrubber::scrubDeep()} runs it on
@@ -359,8 +389,8 @@ final class SecretTextRedactor
     public function redactSecretValues(string $text): string
     {
         $redacted = preg_replace(
-            [self::URL_PASSWORD, self::PREFIXED_TOKEN],
-            ['${1}'.SecretScrubber::REDACTION.'@', SecretScrubber::REDACTION],
+            [self::URL_PASSWORD, self::PREFIXED_TOKEN, self::TELEGRAM_BOT_TOKEN],
+            ['${1}'.SecretScrubber::REDACTION.'@', SecretScrubber::REDACTION, '${1}${2}'.SecretScrubber::REDACTION],
             $text,
         );
 

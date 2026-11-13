@@ -146,8 +146,9 @@ final class SecretScrubber implements Scrubber
      * `pgsql://app:secret@db`.
      *
      * Every string value gets the value pass of
-     * {@see SecretTextRedactor::redactSecretValues()}: the password of a URL
-     * and a token with a known prefix. It lives here rather than in
+     * {@see SecretTextRedactor::redactSecretValues()}: the password of a URL,
+     * a token with a known prefix and a Telegram bot token. It lives here
+     * rather than in
      * {@see scrub()}, which stays the key primitive, because every capture
      * path (log context and extra, event properties, breadcrumbs, an
      * exception's context()) comes through this method. It costs two linear

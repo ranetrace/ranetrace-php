@@ -372,6 +372,44 @@ test('a previous exception message is scrubbed and capped like the item message'
         ->and($message)->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX);
 });
 
+/**
+ * A notification channel wraps the exception of its HTTP client, whose
+ * message holds the request URL, and the path of a Telegram Bot API URL
+ * holds the bot token. With `zend.exception_ignore_args` off the URL is an
+ * argument in the text trace as well, cut to its first characters.
+ */
+test('a telegram bot token in a request url reaches no part of the report', function (): void {
+    $previous = ini_set('zend.exception_ignore_args', '0');
+
+    try {
+        $root = frameProject();
+        $secret = implode('', ['AAF4k3T0ken', 'F4k3T0kenF4k3T0ken_F4k-3']);
+        $send = require writeProjectFile($root, 'app/Notify.php', <<<'PHP'
+            <?php
+
+            return static function (string $url): void {
+                $clientError = new LogicException('cURL error 28: Operation timed out for '.$url);
+
+                throw new RuntimeException('The communication with Telegram failed. `Client error: `POST '.$url.'` resulted in a `401 Unauthorized` response`', 0, $clientError);
+            };
+
+            PHP);
+
+        try {
+            $send('https://api.telegram.org/bot123456789:'.$secret.'/sendMessage');
+        } catch (RuntimeException $exception) {
+            $payload = framePayload(frameBuilder($root), $exception);
+        }
+
+        expect($payload['message'])->toBe('The communication with Telegram failed. `Client error: `POST https://api.telegram.org/bot[REDACTED]/sendMessage` resulted in a `401 Unauthorized` response`')
+            ->and($payload['previous'][0]['message'])->toBe('cURL error 28: Operation timed out for https://api.telegram.org/bot[REDACTED]/sendMessage')
+            ->and($payload['trace'])->toContain("('https://api.tel...')")
+            ->and((string) json_encode($payload))->not->toContain($secret);
+    } finally {
+        ini_set('zend.exception_ignore_args', (string) $previous);
+    }
+});
+
 test('a secret on a source line is scrubbed in the frame source and in the context', function (): void {
     $root = frameProject();
     $configure = require writeProjectFile($root, 'app/Configure.php', <<<'PHP'

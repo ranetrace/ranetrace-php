@@ -2218,6 +2218,92 @@ test('it leaves a look-alike of an encoded prefixed token readable', function (s
     'a word that ends in a prefix after an encoded dash' => ['/x/my%2Dghp_1234567890abcdefABCDEF1234567890abcd'],
 ]);
 
+/**
+ * A Telegram bot token as BotFather issues them, with made-up digits and
+ * letters: the bot id, a colon and 35 characters that start with an A.
+ */
+const TELEGRAM_BOT_TOKEN = '123456789:AAF4k3T0kenF4k3T0kenF4k3T0ken_F4k-3';
+
+test('scrubString redacts the bot token of a telegram api url and keeps the rest of the url', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected);
+})->with([
+    'a guzzle client error' => [
+        'Client error: `POST https://api.telegram.org/bot'.TELEGRAM_BOT_TOKEN.'/sendMessage` resulted in a `401 Unauthorized` response',
+        'Client error: `POST https://api.telegram.org/bot[REDACTED]/sendMessage` resulted in a `401 Unauthorized` response',
+    ],
+    'a curl error' => [
+        'cURL error 28: Operation timed out (see https://curl.se/libcurl/c/libcurl-errors.html) for https://api.telegram.org/bot'.TELEGRAM_BOT_TOKEN.'/sendMessage',
+        'cURL error 28: Operation timed out (see https://curl.se/libcurl/c/libcurl-errors.html) for https://api.telegram.org/bot[REDACTED]/sendMessage',
+    ],
+    'a file download' => [
+        'https://api.telegram.org/file/bot'.TELEGRAM_BOT_TOKEN.'/documents/file_1.pdf',
+        'https://api.telegram.org/file/bot[REDACTED]/documents/file_1.pdf',
+    ],
+    'the url ends at the token' => ['GET https://api.telegram.org/bot'.TELEGRAM_BOT_TOKEN, 'GET https://api.telegram.org/bot[REDACTED]'],
+    'json with escaped slashes' => [
+        '{"url":"https:\/\/api.telegram.org\/bot'.TELEGRAM_BOT_TOKEN.'\/getMe"}',
+        '{"url":"https:\/\/api.telegram.org\/bot[REDACTED]\/getMe"}',
+    ],
+    'an upper-case host' => ['https://API.TELEGRAM.ORG/bot'.TELEGRAM_BOT_TOKEN.'/getMe', 'https://API.TELEGRAM.ORG/bot[REDACTED]/getMe'],
+    'an encoded colon' => ['https://api.telegram.org/bot123456789%3AAAF4k3T0kenF4k3T0kenF4k3T0ken_F4k-3/getMe', 'https://api.telegram.org/bot[REDACTED]/getMe'],
+    'a token cut short on the api host' => ['https://api.telegram.org/bot123456789:AAF4k3T0ken/getMe', 'https://api.telegram.org/bot[REDACTED]/getMe'],
+    'a token pasted with its quotes on the api host' => ['https://api.telegram.org/bot%22'.TELEGRAM_BOT_TOKEN.'%22/getMe', 'https://api.telegram.org/bot[REDACTED]/getMe'],
+    'a self-hosted bot api server' => ['http://localhost:8081/bot'.TELEGRAM_BOT_TOKEN.'/getUpdates', 'http://localhost:8081/bot[REDACTED]/getUpdates'],
+    'a self-hosted server in json' => ['{"url":"http:\/\/bot-api.internal\/bot'.TELEGRAM_BOT_TOKEN.'\/getMe"}', '{"url":"http:\/\/bot-api.internal\/bot[REDACTED]\/getMe"}'],
+    'two urls' => [
+        'https://api.telegram.org/bot'.TELEGRAM_BOT_TOKEN.'/getMe then https://api.telegram.org/bot'.TELEGRAM_BOT_TOKEN.'/close',
+        'https://api.telegram.org/bot[REDACTED]/getMe then https://api.telegram.org/bot[REDACTED]/close',
+    ],
+]);
+
+test('scrubString redacts a telegram bot token that stands on its own', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected);
+})->with([
+    'in prose' => ['the bot '.TELEGRAM_BOT_TOKEN.' was refused', 'the bot [REDACTED] was refused'],
+    'quoted in json under a key that says nothing' => ['{"bot":"'.TELEGRAM_BOT_TOKEN.'","ok":false}', '{"bot":"[REDACTED]","ok":false}'],
+    'an argument in a trace' => ["#0 /app/Bot.php(9): Bot->connect('".TELEGRAM_BOT_TOKEN."')", "#0 /app/Bot.php(9): Bot->connect('[REDACTED]')"],
+    'at the end of a sentence' => ['Unauthorized: '.TELEGRAM_BOT_TOKEN.'.', 'Unauthorized: [REDACTED].'],
+    'an encoded colon' => ['/setup?bot=123456789%3AAAF4k3T0kenF4k3T0kenF4k3T0ken_F4k-3&step=2', '/setup?bot=[REDACTED]&step=2'],
+]);
+
+test('scrubSource redacts a telegram bot token', function (string $line, string $expected): void {
+    expect(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'a positional argument' => ["\$bot = new Api('".TELEGRAM_BOT_TOKEN."');", "\$bot = new Api('[REDACTED]');"],
+    'a url under a key that says nothing' => [
+        "'endpoint' => 'https://api.telegram.org/bot".TELEGRAM_BOT_TOKEN."/sendMessage',",
+        "'endpoint' => 'https://api.telegram.org/bot[REDACTED]/sendMessage',",
+    ],
+]);
+
+test('scrubDeep redacts a telegram bot token in a value under a key that says nothing', function (): void {
+    $result = scrubber()->scrubDeep([
+        'endpoint' => 'https://api.telegram.org/bot'.TELEGRAM_BOT_TOKEN.'/sendMessage?chat_id=42',
+        'nested' => ['bots' => [TELEGRAM_BOT_TOKEN, 'plain']],
+    ]);
+
+    expect($result)->toBe([
+        'endpoint' => 'https://api.telegram.org/bot[REDACTED]/sendMessage?chat_id=42',
+        'nested' => ['bots' => ['[REDACTED]', 'plain']],
+    ]);
+});
+
+test('it leaves a look-alike of a telegram bot token readable', function (string $value): void {
+    expect(scrubber()->scrubString($value))->toBe($value)
+        ->and(scrubSourceLine($value))->toBe($value);
+})->with([
+    'a cache key of an id and a hash' => ['lock user:12345678:9f86d081884c7d659a2feaa0c55ad015a3b held'],
+    'a cache key whose hash starts with an A' => ['lock user:12345678:A9f86d081884c7d659a2feaa0c55ad015a3bf4f1b held'],
+    'a number and a colon in prose' => ['order 123456789: shipped'],
+    'a clock time' => ['at 12:34:56 AAF4k3T0kenF4k3T0kenF4k3T0ken_F4k-3'],
+    'a bot id too short' => ['1234:AAF4k3T0kenF4k3T0kenF4k3T0ken_F4k-3'],
+    'a number inside a word' => ['build123456789:AAF4k3T0kenF4k3T0kenF4k3T0ken_F4k-3'],
+    'a path that starts with bot' => ['GET /bots/123456789/status'],
+    'a bot path with a short second part' => ['GET /bot123456789:latest/status'],
+    'the telegram docs' => ['see https://core.telegram.org/bots/api#sendmessage'],
+    'the api host alone' => ['could not resolve api.telegram.org'],
+]);
+
 test('scrubSource redacts a value under a pwd key, but pass and dsn are not sensitive fragments', function (string $line, string $expected): void {
     expect(scrubSourceLine($line))->toBe($expected);
 })->with([
@@ -2312,6 +2398,26 @@ test('the value shapes stay linear on long runs', function (string $label, Closu
     'stripe prefixes after encoded slashes' => [
         'stripe prefixes after encoded slashes',
         fn (int $scale): array => [str_repeat('%2Fsk_live_', 2_000 * $scale), str_repeat('%2Fsk_live_', 2_000 * $scale)],
+    ],
+    'a digit run' => [
+        'a digit run',
+        fn (int $scale): array => [str_repeat('1', 25_000 * $scale), str_repeat('1', 25_000 * $scale)],
+    ],
+    'bot ids and colons' => [
+        'bot ids and colons',
+        fn (int $scale): array => [str_repeat('12345:A ', 3_000 * $scale), str_repeat('12345:A ', 3_000 * $scale)],
+    ],
+    'bot paths back to back' => [
+        'bot paths back to back',
+        fn (int $scale): array => [str_repeat('/bot12345:', 2_500 * $scale), str_repeat('/bot12345:', 2_500 * $scale)],
+    ],
+    'telegram hosts back to back' => [
+        'telegram hosts back to back',
+        fn (int $scale): array => [str_repeat('api.telegram.org/bot/', 1_200 * $scale), str_repeat('api.telegram.org/bot/', 1_200 * $scale)],
+    ],
+    'a long bot path token' => [
+        'a long bot path token',
+        fn (int $scale): array => ['/bot12345:'.str_repeat('a', 25_000 * $scale), '/bot[REDACTED]'],
     ],
 ]);
 
