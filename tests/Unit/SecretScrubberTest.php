@@ -1954,6 +1954,62 @@ test('scrubString stays linear on long runs of word characters', function (strin
             'token=[REDACTED] '.str_repeat('a', 12_500 * $scale),
         ],
     ],
+    'slack prefixes with short bodies in one run' => [
+        'slack prefixes with short bodies in one run',
+        fn (int $scale): array => [
+            str_repeat('xoxb-123_', 1_400 * $scale),
+            str_repeat('xoxb-123_', 1_400 * $scale),
+        ],
+    ],
+    'slack prefixes joined into one run that ends in an underscore' => [
+        'slack prefixes joined into one run that ends in an underscore',
+        fn (int $scale): array => [
+            'a-'.str_repeat('xoxb-', 2_500 * $scale).'_',
+            'a-[REDACTED]_',
+        ],
+    ],
+    'fine-grained github prefixes in one run' => [
+        'fine-grained github prefixes in one run',
+        fn (int $scale): array => [
+            str_repeat('github_pat_', 1_150 * $scale).'$',
+            str_repeat('github_pat_', 1_150 * $scale).'$',
+        ],
+    ],
+    'gitlab prefixes in one run that ends in a dollar sign' => [
+        'gitlab prefixes in one run that ends in a dollar sign',
+        fn (int $scale): array => [
+            'a_'.str_repeat('glpat-', 2_100 * $scale).'$',
+            'a_[REDACTED]$',
+        ],
+    ],
+    'stripe prefixes in one run' => [
+        'stripe prefixes in one run',
+        fn (int $scale): array => [
+            str_repeat('sk_live_', 1_600 * $scale),
+            str_repeat('sk_live_', 1_600 * $scale),
+        ],
+    ],
+    'jwt heads joined by hyphens with no second part' => [
+        'jwt heads joined by hyphens with no second part',
+        fn (int $scale): array => [
+            str_repeat('-eyJa', 2_500 * $scale),
+            str_repeat('-eyJa', 2_500 * $scale),
+        ],
+    ],
+    'jwt heads joined by dots' => [
+        'jwt heads joined by dots',
+        fn (int $scale): array => [
+            'a'.str_repeat('.eyJa', 2_499 * $scale),
+            'a'.str_repeat('.[REDACTED]', 833 * $scale),
+        ],
+    ],
+    'many jwt heads before one long second part with no third' => [
+        'many jwt heads before one long second part with no third',
+        fn (int $scale): array => [
+            str_repeat('-eyJa', 100).'.eyJ'.str_repeat('a', 12_500 * $scale).' ',
+            str_repeat('-eyJa', 100).'.eyJ'.str_repeat('a', 12_500 * $scale).' ',
+        ],
+    ],
     'many code values in a row' => [
         'many code values in a row',
         fn (int $scale): array => [
@@ -2189,7 +2245,13 @@ test('it leaves a look-alike of a prefixed token readable', function (string $va
     'an aws key id one character too long' => ['AKIAIOSFODNN7EXAMPLEX'],
     'a lower-case aws prefix' => ['akiaiosfodnn7example'],
     'a short github prefix' => ['ghp_short'],
-    'a word ending in a prefix' => ['myghp_1234567890abcdefABCDEF1234567890abcd'],
+    'a word that only holds a prefix' => ['risk_live_update'],
+    'a flag named after a key' => ['is_sk_live_enabled'],
+    'a short body glued to a word' => ['launch-sk_live_abc123'],
+    'a short slack body glued to a word' => ['my-xoxb-12345-short'],
+    'an aws key id glued to a letter' => ['XAKIAIOSFODNN7EXAMPLE'],
+    'an aws key id glued to a digit' => ['9AKIAIOSFODNN7EXAMPLE'],
+    'a variable named after a fine-grained token' => ['$github_pat_rotation_schedule_days'],
     'a slack prefix alone' => ['xoxb-'],
     'base64 json without a second part' => ['eyJhbGciOiJIUzI1NiJ9'],
 ]);
@@ -2214,8 +2276,115 @@ test('it leaves a look-alike of an encoded prefixed token readable', function (s
     expect(scrubber()->scrubString($value))->toBe($value);
 })->with([
     'an identifier that goes on after an encoded underscore' => ['/flags/sk%5Flive%5Fmode'],
-    'a word that ends in a prefix after an encoded underscore' => ['/x/my%5Fghp_1234567890abcdefABCDEF1234567890abcd'],
-    'a word that ends in a prefix after an encoded dash' => ['/x/my%2Dghp_1234567890abcdefABCDEF1234567890abcd'],
+    'a short body after an encoded dash' => ['/x/launch%2Dsk_live_abc123'],
+]);
+
+/*
+ * Tokens of a real length. Each is joined from two parts, so that this file
+ * holds no string a secret scanner takes for a live key.
+ */
+const LONG_STRIPE_KEY = 'sk_'.'live_51HabcDEF0123456789abcdefgh';
+
+const LONG_GITHUB_TOKEN = 'gh'.'p_1234567890abcdefABCDEF1234567890abcd';
+
+const LONG_SLACK_TOKEN = 'xox'.'b-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx';
+
+const LONG_AWS_KEY_ID = 'AK'.'IAIOSFODNN7EXAMPLE';
+
+const LONG_JWT = 'eyJhbGciOiJIUzI1NiJ9'.'.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+
+/**
+ * Every token whose body is its own evidence, 20 characters or more, glued to
+ * each kind of text that can stand right before it.
+ *
+ * @return array<string, array{0: string, 1: string}>
+ */
+function longTokensGluedToTheTextBefore(): array
+{
+    $tokens = [
+        'a stripe secret key' => LONG_STRIPE_KEY,
+        'a stripe restricted key' => 'rk_'.'live_51HabcDEF0123456789abcdefgh',
+        'a github classic token' => LONG_GITHUB_TOKEN,
+        'a github oauth token' => 'gh'.'o_1234567890abcdefABCDEF1234567890abcd',
+        'a github fine-grained token' => 'github_'.'pat_11ABCDEFG0123456789ABC_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUV',
+        'a slack bot token' => LONG_SLACK_TOKEN,
+        'a gitlab token' => 'glp'.'at-AbCdEf0123456789_-xyz',
+    ];
+
+    $before = [
+        'a hyphen' => 'acme-',
+        'an underscore' => 'acme_',
+        'a dot' => 'acme.',
+        'an encoded hyphen' => 'acme%2D',
+        'an encoded underscore' => 'acme%5F',
+        'an encoded dot' => 'acme%2E',
+        'a letter' => 'key',
+        'a digit' => 'v2',
+        'a dollar sign' => '$',
+        'the escaped newline of a json string' => 'keys:\n',
+        'the escaped tab of a json string' => 'keys:\t',
+        'the escaped character of a json string' => '“',
+    ];
+
+    $cases = [];
+
+    foreach ($tokens as $tokenLabel => $token) {
+        foreach ($before as $beforeLabel => $glue) {
+            $cases["{$tokenLabel} after {$beforeLabel}"] = [$glue.$token, $glue.'[REDACTED]'];
+        }
+    }
+
+    return $cases;
+}
+
+test('a token of a real length is redacted whatever stands right before it', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected)
+        ->and(scrubber()->scrubDeep(['v' => $value]))->toBe(['v' => $expected])
+        ->and(scrubSourceLine("\$note = '{$value}';"))->toBe("\$note = '{$expected}';");
+})->with(longTokensGluedToTheTextBefore());
+
+test('a token of a real length is redacted whatever stands right after it', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected)
+        ->and(scrubber()->scrubDeep(['v' => $value]))->toBe(['v' => $expected]);
+})->with([
+    'a stripe key before an underscore' => ['x '.LONG_STRIPE_KEY.'_backup', 'x [REDACTED]_backup'],
+    'a stripe key before a dollar sign' => ['x '.LONG_STRIPE_KEY.'$', 'x [REDACTED]$'],
+    'a github token before an underscore' => ['x '.LONG_GITHUB_TOKEN.'_old', 'x [REDACTED]_old'],
+    'a slack token before an underscore' => ['x '.LONG_SLACK_TOKEN.'_old', 'x [REDACTED]_old'],
+    'an aws key id before an underscore' => ['x '.LONG_AWS_KEY_ID.'_old', 'x [REDACTED]_old'],
+    'an aws key id before a dollar sign' => ['x '.LONG_AWS_KEY_ID.'$', 'x [REDACTED]$'],
+    'a jwt before a dollar sign' => ['x '.LONG_JWT.'$', 'x [REDACTED]$'],
+    'glued on both sides' => ['acme-'.LONG_STRIPE_KEY.'_backup', 'acme-[REDACTED]_backup'],
+]);
+
+test('a token glued into a url, a campaign value or a file name is redacted', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected)
+        ->and(scrubber()->scrubDeep(['v' => $value]))->toBe(['v' => $expected]);
+})->with([
+    'a path segment' => ['https://app.test/callback/acme-'.LONG_STRIPE_KEY, 'https://app.test/callback/acme-[REDACTED]'],
+    'a path segment that goes on' => ['/callback/acme_'.LONG_STRIPE_KEY.'/done', '/callback/acme_[REDACTED]/done'],
+    'a campaign value' => ['https://app.test/?utm_campaign=launch_'.LONG_STRIPE_KEY.'&page=2', 'https://app.test/?utm_campaign=launch_[REDACTED]&page=2'],
+    'a file name in a message' => ['could not read export-'.LONG_STRIPE_KEY.'.csv', 'could not read export-[REDACTED].csv'],
+    'a file name at the start of the string' => [LONG_STRIPE_KEY.'_backup.json was not found', '[REDACTED]_backup.json was not found'],
+    'the end of the string' => ['restored from backup-'.LONG_GITHUB_TOKEN, 'restored from backup-[REDACTED]'],
+    'the whole string' => [LONG_STRIPE_KEY, '[REDACTED]'],
+]);
+
+test('an aws key id and a jwt are redacted after a separator or an escape', function (string $glue): void {
+    foreach ([LONG_AWS_KEY_ID, LONG_JWT] as $token) {
+        expect(scrubber()->scrubString($glue.$token.' was refused'))->toBe($glue.'[REDACTED] was refused')
+            ->and(scrubber()->scrubDeep(['v' => $glue.$token]))->toBe(['v' => $glue.'[REDACTED]']);
+    }
+})->with([
+    'a hyphen' => ['acme-'],
+    'an underscore' => ['acme_'],
+    'a dot' => ['acme.'],
+    'an encoded hyphen' => ['acme%2D'],
+    'an encoded underscore' => ['acme%5F'],
+    'an encoded dot' => ['acme%2E'],
+    'the escaped newline of a json string' => ['keys:\n'],
+    'the escaped tab of a json string' => ['keys:\t'],
+    'the escaped character of a json string' => ['\u201c'],
 ]);
 
 /**
@@ -2287,6 +2456,15 @@ test('scrubDeep redacts a telegram bot token in a value under a key that says no
         'nested' => ['bots' => ['[REDACTED]', 'plain']],
     ]);
 });
+
+test('scrubString redacts a telegram bot token glued to the text before it', function (string $glue): void {
+    expect(scrubber()->scrubString($glue.TELEGRAM_BOT_TOKEN.' was refused'))->toBe($glue.'[REDACTED] was refused')
+        ->and(scrubber()->scrubDeep(['v' => $glue.TELEGRAM_BOT_TOKEN]))->toBe(['v' => $glue.'[REDACTED]']);
+})->with([
+    'a hyphen' => ['alerts-'],
+    'an underscore' => ['alerts_'],
+    'a dot' => ['alerts.'],
+]);
 
 test('it leaves a look-alike of a telegram bot token readable', function (string $value): void {
     expect(scrubber()->scrubString($value))->toBe($value)

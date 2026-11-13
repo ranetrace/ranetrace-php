@@ -6,6 +6,9 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Fixed
+- **A key or token with a known prefix is redacted when it is glued to other text.** The value pass that recognises a Stripe `sk_live_` or `rk_live_` key, a GitHub, Slack or GitLab token, an AWS access key id and a JWT found one only where it stood free: after a space, a slash, a quote or an equals sign, and ending where a word ends. A token joined to other text was sent as written: `acme-sk_live_...` in a URL path segment, `launch_sk_live_...` in a campaign value, `export.sk_live_...`, a key written straight after a word (`keysk_live_...`), a file name such as `sk_live_..._backup.json`, and a token right after the `\n` or `\u201c` of JSON inside a string. A token whose body is 20 characters or more, which every real key is, is now redacted wherever it stands, in a message, a trace, a source line and every string value of log context, event properties, breadcrumbs and an exception's `context()`. A shorter one must still stand free, so `$sk_live_mode`, `is_sk_live_enabled` and `risk_live_update` stay readable. An AWS access key id and a JWT are redacted after `-`, `_` and `.`, written out or percent-encoded, and after a JSON escape, but not directly after a letter, a digit or `$`. A Telegram bot token that stands on its own is redacted after `-`, `_` and `.` too. **If a live key of yours can have reached an error or a log record glued to other text, as in a URL path or a file name, look for it in Ranetrace, delete what you find and replace the key.** Nothing to do on upgrade
+
 ## [1.5.0] - 2026-11-13
 
 ### Added

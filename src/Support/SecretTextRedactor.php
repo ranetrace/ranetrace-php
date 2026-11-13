@@ -198,9 +198,7 @@ final class SecretTextRedactor
      * Tokens whose own prefix says they are a credential, wherever they stand.
      * The list is curated, short and high-signal: a provider's live secret
      * key, never its publishable or test key, and only prefixes that do not
-     * start an ordinary word or identifier. Each body has a minimum length and
-     * must end where a token does, so `$sk_live_mode`, `sk_live_key_id` and
-     * `ghp_short` stay readable.
+     * start an ordinary word or identifier.
      *
      * - Stripe secret and restricted live keys: `sk_live_`, `rk_live_`.
      * - AWS access key ids: `AKIA` (long-term) and `ASIA` (temporary), then
@@ -212,18 +210,51 @@ final class SecretTextRedactor
      * - A JWT: two base64url segments that each start with `eyJ`, the encoded
      *   `{"`, and the signature after the second `.`, empty when unsigned.
      *
-     * Matching is case-sensitive, as the prefixes are. A token can start only
-     * where no word character, `$`, `.` or `-` precedes it, and every repeat
-     * is possessive, so each run is entered once and the scan stays linear:
-     * without `-` there, `eyJa-eyJa-...` was entered at every `eyJ`.
+     * Matching is case-sensitive, as the prefixes are. Each shape is read in
+     * two ways, and the length of its body decides which applies.
+     *
+     * A short body has to stand free, which is the first branch. It has a
+     * minimum length per shape, it can start only where no word character,
+     * `$`, `.` or `-` precedes it, and it must end where a token does. That
+     * keeps `$sk_live_mode`, `sk_live_key_id`, `is_sk_live_enabled` and
+     * `ghp_short` readable.
+     *
+     * A body of {@see MIN_GLUED_TOKEN_BODY} characters or more is its own
+     * evidence, which is the branches after the first. No real key is
+     * shorter, and no identifier goes on that long without a separator. So
+     * it is redacted whatever it is glued to: `acme-sk_live_…` in a path
+     * segment, `launch_sk_live_…` in a campaign value, `keysk_live_…` where
+     * a message was joined without a space, `sk_live_…_backup.json`, and
+     * after the `\n` or `“` of text that is JSON inside a string. Two
+     * shapes are held tighter there:
+     *
+     * - A fine-grained GitHub token needs 20 letters and digits before its
+     *   first `_`, as a real one has 22, since its body can hold `_` and
+     *   `$github_pat_rotation_schedule_days` is a variable.
+     * - An AWS key id and a JWT have no long run of their own to count: the
+     *   first is exact and the second is three parts. They are read after
+     *   anything but a letter, a digit or `$`, so after `-`, `_` and `.`,
+     *   and after the letter or digit that ends a `\n`, `\r`, `\t` or
+     *   `\uXXXX` escape. A key id must not be followed by a letter or a
+     *   digit.
      *
      * Inside a URL a token can be written percent-encoded, so the `_`, `-`
      * and `.` of a prefix or a body are also read as `%5F`, `%2D` and `%2E`,
-     * and a token can start right after any other escape: the `%2F` of a URL
-     * inside a query string, or a `%20`. After one of those three it cannot,
-     * for the same reason it cannot after the character itself. No prefix
-     * starts with a digit, so the hex digits of an escape start no token
-     * either.
+     * and a short token can start right after any other escape: the `%2F` of
+     * a URL inside a query string, or a `%20`. No prefix starts with a digit,
+     * so the hex digits of an escape start no token either.
+     *
+     * Every repeat is possessive, and the scan stays linear for a reason per
+     * branch. A short token is entered only where a run of token characters
+     * starts: without `-` in that lookbehind, `eyJa-eyJa-...` was entered at
+     * every `eyJ`. A long body is entered at every prefix, but once it holds
+     * 20 characters nothing after it can make it fail, so an attempt either
+     * gives up within 20 characters or takes everything it read. The glued
+     * JWT is the one shape that can read far and still fail, for want of its
+     * second part, so its first part is bounded to
+     * {@see MAX_GLUED_JWT_HEAD} characters there: at most that many are
+     * read per attempt, and at most a fixed number of attempts share the
+     * parts after it.
      */
     private const string PREFIXED_TOKEN = '~(?:(?<![\w$.\-])|(?<=%[0-9A-Fa-f]{2})(?<!%5[Ff]|%2[DdEe]))(?:'
         .'[sr]k(?:_|%5[Ff])live(?:_|%5[Ff])[A-Za-z0-9]{6,}+'
@@ -233,7 +264,30 @@ final class SecretTextRedactor
         .'|xox[abpr](?:-|%2[Dd])(?:[A-Za-z0-9\-]|%2[Dd]){10,}+'
         .'|glpat(?:-|%2[Dd])(?:[\w\-]|%5[Ff]|%2[Dd]){20,}+'
         .'|eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])(?:[\w\-]|%5[Ff]|%2[Dd])*+'
-        .')(?![\w$])~';
+        .')(?![\w$])'
+        .'|[sr]k(?:_|%5[Ff])live(?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|gh[po](?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|github(?:_|%5[Ff])pat(?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+(?:(?:_|%5[Ff])[A-Za-z0-9]++)*+'
+        .'|xox[abpr](?:-|%2[Dd])(?:[A-Za-z0-9\-]|%2[Dd]){'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|glpat(?:-|%2[Dd])(?:[\w\-]|%5[Ff]|%2[Dd]){'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|(?:(?<![A-Za-z0-9$])|(?<=%5[Ff])|(?<=%2[DdEe])|(?<=\\\\[nrt])|(?<=\\\\u[0-9A-Fa-f]{4}))(?:'
+        .'A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])'
+        .'|eyJ(?:[\w\-]|%5[Ff]|%2[Dd]){1,'.self::MAX_GLUED_JWT_HEAD.'}+(?:\.|%2[Ee])eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])(?:[\w\-]|%5[Ff]|%2[Dd])*+'
+        .')~';
+
+    /**
+     * The fewest body characters that make a prefixed token its own evidence
+     * in {@see PREFIXED_TOKEN}, whatever it is glued to. A GitLab token has
+     * exactly 20, a legacy Stripe key 24, and every other shape more.
+     */
+    private const int MIN_GLUED_TOKEN_BODY = 20;
+
+    /**
+     * The longest first part of a JWT that is read glued to the text before
+     * it in {@see PREFIXED_TOKEN}. An ordinary header is 36 to 150
+     * characters. One that stands free is read whatever its length.
+     */
+    private const int MAX_GLUED_JWT_HEAD = 256;
 
     /**
      * A Telegram bot token, `<bot id>:<secret>`. It is a segment of the path
@@ -249,18 +303,21 @@ final class SecretTextRedactor
      *   host: a self-hosted Bot API server or a proxy.
      * - The token on its own, in prose or under a key nobody listed: 5 to 16
      *   digits, `:` and exactly 35 token characters, the first an `A`, which
-     *   is what BotFather issues. Exact, and bounded like a prefixed token,
-     *   because a number and a colon before a long word are common: the
-     *   cache key `user:12345678:<hash>` stays readable.
+     *   is what BotFather issues. Exact, because a number and a colon before
+     *   a long word are common: the cache key `user:12345678:<hash>` stays
+     *   readable. It can start after anything but a letter, a digit or `$`,
+     *   so `alerts_123456789:AA…` is redacted and `build123456789:AA…`
+     *   is not.
      *
      * The `:` can be written `%3A`, and a `/` as the `\/` of a JSON-encoded
-     * URL. Every repeat is possessive and none of the three can start inside
-     * the run another attempt walked, so the scan stays linear.
+     * URL. Every repeat is possessive and each of the three reads a bounded
+     * number of characters past where it starts, or a run no other attempt
+     * starts in, so the scan stays linear.
      */
     private const string TELEGRAM_BOT_TOKEN = '~'
         .'((?i:api\.telegram\.org)(?:/|\\\\/)(?:file(?:/|\\\\/))?+bot)[^\s/\\\\?#\'"`<>]++'
         .'|((?:/|\\\\/)bot)\d{5,16}+(?::|%3[Aa])[\w\-]{30,}+'
-        .'|(?<![\w$.\-])\d{5,16}+(?::|%3[Aa])A[\w\-]{34}(?![\w\-])'
+        .'|(?<![A-Za-z0-9$])\d{5,16}+(?::|%3[Aa])A[\w\-]{34}(?![\w\-])'
         .'~';
 
     /**
