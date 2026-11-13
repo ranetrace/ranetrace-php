@@ -6,6 +6,7 @@ namespace Ranetrace\Php\Logging;
 
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\DataSanitizer;
+use Ranetrace\Php\Support\EnvironmentName;
 use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\ProjectRootStripper;
 use Ranetrace\Php\Support\Scrubber;
@@ -41,6 +42,12 @@ final class LogItemBuilder
     private const int MAX_CONTEXT_BYTES = 51_200;
 
     private const int MAX_EXTRA_BYTES = 10_240;
+
+    /**
+     * The backend's bound on `channel`, in characters. A channel is a name,
+     * so it is cut to its first characters with no suffix.
+     */
+    private const int MAX_CHANNEL_LENGTH = 255;
 
     private readonly ProjectRootStripper $projectRoot;
 
@@ -86,7 +93,7 @@ final class LogItemBuilder
                 self::MAX_CONTEXT_BYTES,
                 'Context exceeded 50KB limit and was removed',
             ),
-            'channel' => Utf8::repair($channel),
+            'channel' => $this->channel($channel),
             'timestamp' => Utf8::repair($timestamp),
             'extra' => $this->extra($extra, $sensitivePathValues),
         ];
@@ -105,6 +112,13 @@ final class LogItemBuilder
         }
 
         return mb_substr($message, 0, self::MAX_MESSAGE_LENGTH - mb_strlen(self::TRUNCATION_SUFFIX)).self::TRUNCATION_SUFFIX;
+    }
+
+    private function channel(string $channel): string
+    {
+        $channel = Utf8::repair($channel);
+
+        return mb_strlen($channel) <= self::MAX_CHANNEL_LENGTH ? $channel : mb_substr($channel, 0, self::MAX_CHANNEL_LENGTH);
     }
 
     /**
@@ -140,10 +154,8 @@ final class LogItemBuilder
             'Extra data exceeded 10KB limit and was removed',
         );
 
-        $environment = $this->config->get('environment');
-
         $vocabulary = [
-            'environment' => is_scalar($environment) ? Utf8::repair((string) $environment) : '',
+            'environment' => EnvironmentName::fromConfig($this->config->get('environment')),
             'php_version' => (string) phpversion(),
         ];
 

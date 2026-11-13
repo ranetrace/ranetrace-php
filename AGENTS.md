@@ -65,7 +65,7 @@ Event names must be snake_case, 3 to 50 characters, starting with a letter: `/^[
 | `RANETRACE_ENABLED` | `enabled` | `true` |
 | `RANETRACE_KEY` | `key` | empty (nothing is captured without it) |
 | `RANETRACE_BASE_URL` | `base_url` | `https://api.ranetrace.com/v1` |
-| `RANETRACE_ENVIRONMENT` | `environment` | `APP_ENV`, else `production` |
+| `RANETRACE_ENVIRONMENT` | `environment` | `APP_ENV`, else `production`. The name is sent as at most 50 characters, and a longer one is cut |
 | `RANETRACE_PROJECT_ROOT` | `project_root` | resolved from Composer's autoloader location |
 | `RANETRACE_BUFFER_PATH` | `buffer_path` | `sys_get_temp_dir().'/ranetrace-buffer'` |
 | `RANETRACE_FRAMEWORK` | `framework` | `null` |

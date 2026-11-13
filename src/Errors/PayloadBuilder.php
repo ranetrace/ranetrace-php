@@ -9,6 +9,7 @@ use InvalidArgumentException;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\Diagnostics;
+use Ranetrace\Php\Support\EnvironmentName;
 use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\ProjectRootStripper;
 use Ranetrace\Php\Support\Quietly;
@@ -127,6 +128,23 @@ final class PayloadBuilder
     private const int MAX_CONSOLE_ARGV_COUNT = 50;
 
     private const int MAX_CONSOLE_ARGV_LENGTH = 500;
+
+    /**
+     * The command line in `console_command`, as the backend bounds it. Free
+     * text, so it is cut with {@see TRUNCATION_SUFFIX}.
+     */
+    private const int MAX_CONSOLE_COMMAND_LENGTH = 1_000;
+
+    /**
+     * `framework` and `framework_version`, as the backend bounds each. Names,
+     * so they are cut to their first characters with no suffix.
+     */
+    private const int MAX_FRAMEWORK_LENGTH = 50;
+
+    /**
+     * `php_version`, as the backend bounds it, cut like a name.
+     */
+    private const int MAX_PHP_VERSION_LENGTH = 20;
 
     /**
      * Bounds on `exception_context`. The backend allows 100 top-level keys, 5
@@ -277,7 +295,7 @@ final class PayloadBuilder
             'file' => $this->boundFilePath($file),
             'line' => $line,
             'type' => (string) $this->codeName($throwable::class, self::MAX_TYPE_LENGTH),
-            'environment' => $this->stringConfig('environment'),
+            'environment' => EnvironmentName::fromConfig($this->config->get('environment'), '', $this->log),
             'trace' => $this->truncate($this->freeText($throwable->getTraceAsString()), self::MAX_TRACE_LENGTH),
             'headers' => $isConsole ? null : $this->headers($context),
             'context' => $source,
@@ -286,9 +304,9 @@ final class PayloadBuilder
             'timestamp' => Utf8::repairNullable($context->timestamp) ?? (new DateTimeImmutable)->format('c'),
             'url' => $isConsole ? null : $this->url($context),
             'method' => $isConsole ? null : $this->method($context),
-            'php_version' => (string) phpversion(),
-            'framework' => $this->nullableStringConfig('framework'),
-            'framework_version' => $this->nullableStringConfig('framework_version'),
+            'php_version' => $this->cutName((string) phpversion(), self::MAX_PHP_VERSION_LENGTH),
+            'framework' => $this->nameConfig('framework', self::MAX_FRAMEWORK_LENGTH),
+            'framework_version' => $this->nameConfig('framework_version', self::MAX_FRAMEWORK_LENGTH),
             'is_console' => $isConsole,
             'console_command' => $isConsole ? $this->consoleCommand($context) : null,
             'console_arguments' => $isConsole ? $this->consoleArguments($context) : null,
@@ -793,8 +811,9 @@ final class PayloadBuilder
 
     /**
      * The command line the process was started with, scrubbed for `--token=…`
-     * style secrets. A script path it starts with is first replaced by the path
-     * it resolves to: see {@see resolvedScript()}.
+     * style secrets, then cut to {@see MAX_CONSOLE_COMMAND_LENGTH}. A script
+     * path it starts with is first replaced by the path it resolves to: see
+     * {@see resolvedScript()}.
      */
     private function consoleCommand(ErrorContext $context): ?string
     {
@@ -810,7 +829,7 @@ final class PayloadBuilder
             $command = $script['resolved'].mb_substr($command, mb_strlen($script['typed'], '8bit'), null, '8bit');
         }
 
-        return $this->freeText($command);
+        return $this->truncate($this->freeText($command), self::MAX_CONSOLE_COMMAND_LENGTH);
     }
 
     /**
@@ -953,17 +972,19 @@ final class PayloadBuilder
         return mb_substr($value, 0, $maxLength - mb_strlen(self::TRUNCATION_SUFFIX)).self::TRUNCATION_SUFFIX;
     }
 
-    private function stringConfig(string $dotKey): string
+    /**
+     * A name (a version, a framework) cut to its first $maxLength characters,
+     * with no suffix: a suffix would make it a different name.
+     */
+    private function cutName(string $value, int $maxLength): string
     {
-        $value = $this->config->get($dotKey);
-
-        return is_scalar($value) ? Utf8::repair((string) $value) : '';
+        return mb_strlen($value) <= $maxLength ? $value : mb_substr($value, 0, $maxLength);
     }
 
-    private function nullableStringConfig(string $dotKey): ?string
+    private function nameConfig(string $dotKey, int $maxLength): ?string
     {
         $value = $this->config->get($dotKey);
 
-        return is_scalar($value) && (string) $value !== '' ? Utf8::repair((string) $value) : null;
+        return is_scalar($value) && (string) $value !== '' ? $this->cutName(Utf8::repair((string) $value), $maxLength) : null;
     }
 }

@@ -206,6 +206,122 @@ test('an event emitted past the endpoint limits satisfies its field spec and bot
         ->and(DescriptorValidator::violations(WireContract::item('events')['fields'], $payload))->toBe([]);
 });
 
+/**
+ * A string of exactly $length characters for $field, multibyte past its
+ * prefix so a limit counted in bytes would not hold it.
+ */
+function contractValueOfLength(string $field, int $length): string
+{
+    $prefix = match ($field) {
+        'url' => 'https://app.test/',
+        'console_command' => 'artisan run ',
+        default => '',
+    };
+
+    return $prefix.str_repeat('é', $length - mb_strlen($prefix));
+}
+
+/**
+ * The value at a dot path of an emitted item, with `*` read as the first entry.
+ */
+function contractFieldValue(array $payload, string $field): mixed
+{
+    foreach (explode('.', $field) as $segment) {
+        $payload = is_array($payload) ? ($payload[$segment === '*' ? 0 : $segment] ?? null) : null;
+    }
+
+    return $payload;
+}
+
+/**
+ * One item of $type emitted with $field set to $value.
+ *
+ * Errors and logs go through their real capture paths. A JavaScript error goes
+ * through the shared builder the relay and the Laravel SDK's controller both
+ * call: the relay refuses a browser payload past these limits before building,
+ * but the builder scrubs afterwards and is called by a controller with its own
+ * validation, so it is the builder that has to hold them.
+ *
+ * @return array<string, mixed>
+ */
+function contractEmittedWith(string $type, string $field, string $value): array
+{
+    $root = in_array($field, ['environment', 'framework', 'framework_version'], true) ? [$field => $value] : [];
+    $config = testConfig([
+        'environment' => 'testing',
+        'internal_logging' => ['enabled' => false],
+        'logging' => ['enabled' => true],
+        ...$root,
+    ]);
+    $log = new InternalLogger($config);
+    $scrubber = new SecretScrubber($config, $log);
+    $buffer = new ArrayBuffer;
+
+    if ($type === 'errors') {
+        $reporter = new ErrorReporter($config, $buffer, $scrubber, $log);
+        $reporter->setServerContext($field === 'console_command' ? ['argv' => explode(' ', $value, 2)] : [], true);
+        $reporter->report(new RuntimeException('Something broke'));
+
+        return $buffer->payloads('errors')[0];
+    }
+
+    if ($type === 'logs') {
+        (new RanetraceHandler($config, $buffer, $scrubber, $log))->handle(new LogRecord(
+            new DateTimeImmutable('2026-08-19 09:30:45'),
+            $value,
+            Level::Warning,
+            'Payment gateway timed out',
+        ));
+
+        return $buffer->payloads('logs')[0];
+    }
+
+    $payload = [
+        'message' => 'Something broke',
+        'url' => 'https://app.test/cart',
+        'breadcrumbs' => [['timestamp' => '2026-08-19T09:30:45+00:00', 'category' => 'ui', 'message' => 'clicked', 'data' => []]],
+    ];
+
+    if (str_starts_with($field, 'breadcrumbs.*.')) {
+        $payload['breadcrumbs'][0][mb_substr($field, mb_strlen('breadcrumbs.*.'))] = $value;
+    } elseif ($field !== 'environment') {
+        $payload[$field] = $value;
+    }
+
+    return (new ErrorItemBuilder($config, $scrubber))->build($payload, null, null, null);
+}
+
+/**
+ * The SDK's cuts are held to the fixtures' numbers rather than to a copy of
+ * them: a field at its `max` arrives whole, and one character past it arrives
+ * cut to something the endpoint takes.
+ */
+test('a string field at its endpoint limit is sent whole and one past it is cut to fit the field spec', function (string $type, string $field): void {
+    $fields = WireContract::item($type)['fields'];
+    $max = $fields[$field]['max'];
+
+    $atLimit = contractValueOfLength($field, $max);
+    $pastLimit = contractEmittedWith($type, $field, contractValueOfLength($field, $max + 1));
+
+    expect(contractFieldValue(contractEmittedWith($type, $field, $atLimit), $field))->toBe($atLimit)
+        ->and(mb_strlen(contractFieldValue($pastLimit, $field)))->toBe($max)
+        ->and(DescriptorValidator::violations($fields, $pastLimit, $type === 'errors'))->toBe([]);
+})->with([
+    'errors environment' => ['errors', 'environment'],
+    'errors framework' => ['errors', 'framework'],
+    'errors framework_version' => ['errors', 'framework_version'],
+    'errors console_command' => ['errors', 'console_command'],
+    'javascript_errors message' => ['javascript_errors', 'message'],
+    'javascript_errors stack' => ['javascript_errors', 'stack'],
+    'javascript_errors url' => ['javascript_errors', 'url'],
+    'javascript_errors type' => ['javascript_errors', 'type'],
+    'javascript_errors filename' => ['javascript_errors', 'filename'],
+    'javascript_errors environment' => ['javascript_errors', 'environment'],
+    'javascript_errors breadcrumbs.*.category' => ['javascript_errors', 'breadcrumbs.*.category'],
+    'javascript_errors breadcrumbs.*.message' => ['javascript_errors', 'breadcrumbs.*.message'],
+    'logs channel' => ['logs', 'channel'],
+]);
+
 test('the fixtures refuse an id that is not a uuid', function (string $type): void {
     $spec = WireContract::item($type);
     $example = [...$spec['examples']['full'], 'id' => 'not-a-uuid'];

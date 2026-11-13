@@ -8,6 +8,7 @@ use DateTimeImmutable;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Support\BrowserIdentity;
 use Ranetrace\Php\Support\DataSanitizer;
+use Ranetrace\Php\Support\EnvironmentName;
 use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\Scrubber;
 use Ranetrace\Php\Support\UserId;
@@ -73,6 +74,37 @@ final class ErrorItemBuilder
      */
     private const int MAX_BREADCRUMB_DATA_BYTES = 5_120;
 
+    /**
+     * Appended to free text cut at its limit, counted inside the limit, as
+     * {@see \Ranetrace\Php\Errors\PayloadBuilder::TRUNCATION_SUFFIX} is.
+     */
+    private const string TRUNCATION_SUFFIX = '... (truncated)';
+
+    /**
+     * The backend's bounds on the free-text fields, in characters. The relay
+     * checks the browser's payload against the same numbers, but the builder
+     * scrubs afterwards and a scrub can lengthen a string, and the Laravel SDK
+     * calls this builder from its own controller, so the builder holds them
+     * itself. Each is cut with {@see TRUNCATION_SUFFIX}, after the scrub.
+     */
+    private const int MAX_MESSAGE_LENGTH = 2_000;
+
+    private const int MAX_STACK_LENGTH = 10_000;
+
+    private const int MAX_URL_LENGTH = 2_000;
+
+    private const int MAX_BREADCRUMB_MESSAGE_LENGTH = 500;
+
+    /**
+     * The backend's bounds on the name fields, in characters. A name is cut
+     * to its first characters with no suffix.
+     */
+    private const int MAX_TYPE_LENGTH = 100;
+
+    private const int MAX_FILENAME_LENGTH = 500;
+
+    private const int MAX_BREADCRUMB_CATEGORY_LENGTH = 100;
+
     public function __construct(
         private readonly Config $config,
         private readonly Scrubber $scrubber,
@@ -101,10 +133,10 @@ final class ErrorItemBuilder
 
         return [
             'id' => Uuid::v4(),
-            'message' => $this->scrubber->scrubString(Utf8::repair($message)),
-            'stack' => is_string($stack) ? $this->scrubber->scrubString(Utf8::repair($stack)) : null,
-            'type' => isset($payload['type']) && is_string($payload['type']) ? Utf8::repair($payload['type']) : 'Error',
-            'filename' => isset($payload['filename']) && is_string($payload['filename']) ? Utf8::repair($payload['filename']) : null,
+            'message' => $this->truncate($this->scrubber->scrubString(Utf8::repair($message)), self::MAX_MESSAGE_LENGTH),
+            'stack' => is_string($stack) ? $this->truncate($this->scrubber->scrubString(Utf8::repair($stack)), self::MAX_STACK_LENGTH) : null,
+            'type' => isset($payload['type']) && is_string($payload['type']) ? $this->cutName(Utf8::repair($payload['type']), self::MAX_TYPE_LENGTH) : 'Error',
+            'filename' => isset($payload['filename']) && is_string($payload['filename']) ? $this->cutName(Utf8::repair($payload['filename']), self::MAX_FILENAME_LENGTH) : null,
             'line' => $this->intOrNull($payload['line'] ?? null),
             'column' => $this->intOrNull($payload['column'] ?? null),
             'user_agent' => Utf8::repairNullable($userAgent),
@@ -112,9 +144,12 @@ final class ErrorItemBuilder
             // endpoint it was posted to, so it gets scrubbed on its own terms:
             // query first, then whichever path segments the host declared
             // secret-bearing for THAT url.
-            'url' => $this->scrubber->scrubUrlPath($this->scrubber->scrubUrl(Utf8::repair($url)), $sensitivePathValues),
+            'url' => $this->truncate(
+                (string) $this->scrubber->scrubUrlPath($this->scrubber->scrubUrl(Utf8::repair($url)), $sensitivePathValues),
+                self::MAX_URL_LENGTH,
+            ),
             'timestamp' => $this->timestamp($payload, $timestampFallback),
-            'environment' => Utf8::repair((string) $this->config->get('environment', 'production')),
+            'environment' => EnvironmentName::fromConfig($this->config->get('environment', 'production'), 'production'),
             'user_id' => UserId::accepted($userId),
             'session_id' => Utf8::repairNullable($sessionId),
             'breadcrumbs' => $this->breadcrumbs($payload['breadcrumbs'] ?? [], $sensitivePathValues),
@@ -149,11 +184,13 @@ final class ErrorItemBuilder
 
         return array_map(function (mixed $breadcrumb) use ($sensitivePathValues): array {
             $breadcrumb = is_array($breadcrumb) ? $breadcrumb : [];
+            $category = Utf8::repairDeep($breadcrumb['category'] ?? null);
+            $message = Utf8::repairDeep($breadcrumb['message'] ?? null);
 
             return [
                 'timestamp' => Utf8::repairDeep($breadcrumb['timestamp'] ?? null),
-                'category' => Utf8::repairDeep($breadcrumb['category'] ?? null),
-                'message' => Utf8::repairDeep($breadcrumb['message'] ?? null),
+                'category' => is_string($category) ? $this->cutName($category, self::MAX_BREADCRUMB_CATEGORY_LENGTH) : $category,
+                'message' => is_string($message) ? $this->truncate($message, self::MAX_BREADCRUMB_MESSAGE_LENGTH) : $message,
                 'data' => PayloadSizer::capBytes(
                     $this->scrubbedArray($breadcrumb['data'] ?? [], $sensitivePathValues),
                     self::MAX_BREADCRUMB_DATA_BYTES,
@@ -207,6 +244,26 @@ final class ErrorItemBuilder
         );
 
         return is_array($scrubbed) ? $scrubbed : [];
+    }
+
+    /**
+     * Free text cut to at most $maxLength characters, the suffix included.
+     */
+    private function truncate(string $value, int $maxLength): string
+    {
+        if (mb_strlen($value) <= $maxLength) {
+            return $value;
+        }
+
+        return mb_substr($value, 0, $maxLength - mb_strlen(self::TRUNCATION_SUFFIX)).self::TRUNCATION_SUFFIX;
+    }
+
+    /**
+     * A name cut to its first $maxLength characters, with no suffix.
+     */
+    private function cutName(string $value, int $maxLength): string
+    {
+        return mb_strlen($value) <= $maxLength ? $value : mb_substr($value, 0, $maxLength);
     }
 
     /**
