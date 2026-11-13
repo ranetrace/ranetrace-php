@@ -11,6 +11,9 @@ This file starts here, so releases before it are not recorded; the git history i
 - **Every JavaScript error item carries an id of its own, so a batch that is sent again does not count an occurrence twice.** The JavaScript errors endpoint had no way to recognise a report it had stored, so a batch sent again after a lost answer stored every report in it a second time, and an error counted two occurrences for one. `JavaScript\ErrorItemBuilder::build()` now adds `id`, made once on the server when the relay receives the report, as the first of the item's sixteen keys. It is never read from the browser payload: a browser that chose the id could have another visitor's report ignored by sending that id first. `contract/items/javascript_errors.json` describes the field and carries it in its `full` example
 - `Support\Uuid::v4()` makes both ids, and the spool envelope's id, which `Buffer\FileBuffer` made with a private copy of the same function
 
+### Changed
+- **The internal log names the server's message when a batch is rate limited.** Every answer that is not a 200 carries `{"success": false, "error": {"message": ...}}`, and the log line of each status held that message except the 429's, which gave only the type and the pause length. It now carries `message` as well, so "Rate limit exceeded" says which limit refused the batch
+
 ## [1.3.0] - 2026-11-13
 
 ### Changed

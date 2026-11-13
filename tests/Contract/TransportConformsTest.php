@@ -120,6 +120,32 @@ test('the worker without an api key does what the contract states: no request, n
     'a key of whitespace' => [' '],
 ]);
 
+/**
+ * Every non-200 carries the contracted error body, the 401 of a rejected key
+ * and the 429 of the route throttle included. Its message is read for the
+ * diagnostics log only, so the log is where it has to arrive.
+ */
+test('the worker writes the message of a 401 and a 429 error body to the internal log', function (int $status, string $message): void {
+    expect(WireContract::responses()['error_body']['shape']['error'])->toHaveKey('message');
+
+    $directory = tempDirectory();
+    $config = testConfig([
+        'buffer_path' => $directory,
+        'internal_logging' => ['enabled' => true, 'level' => 'debug', 'stderr_fallback' => false],
+    ]);
+    $http = FakeHttpClient::respondingWith($status, ['success' => false, 'error' => ['message' => $message]]);
+    $log = new InternalLogger($config);
+    $buffer = new ArrayBuffer;
+    $buffer->items['events'] = [['id' => 'waiting', 'data' => WireContract::item('events')['examples']['minimal'], 'timestamp' => time() - 60]];
+
+    new Worker($config, $buffer, new PauseStore($config), new ApiClient($config, $http, $log), $log)->run('events');
+
+    expect((string) file_get_contents($log->currentLogFile()))->toContain('"message":"'.$message.'"');
+})->with([
+    'a rejected key' => [401, 'Unauthenticated'],
+    'the route throttle' => [429, 'Too many requests'],
+]);
+
 test('the response policy substitutes the contracted floor for an absent Retry-After', function (mixed $header, ?int $expected): void {
     $responses = WireContract::responses();
     $floor = $responses['rate_limit_floor_seconds'];

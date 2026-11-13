@@ -390,6 +390,7 @@ final class Worker
             429 => $this->log->warning('Rate limit exceeded', [
                 'type' => $type,
                 'retry_after' => $outcome->pauseSeconds,
+                'message' => ResponsePolicy::errorMessage($data, 'Too Many Requests'),
             ]),
             default => $this->log->error(
                 $outcome->status === 500 ? 'Server error during batch processing' : 'Unexpected API response status',
