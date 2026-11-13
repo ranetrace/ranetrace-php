@@ -39,6 +39,7 @@ So:
 ## Releasing
 
 - When you tag `vX.Y.Z`, move everything under `## [Unreleased]` in `CHANGELOG.md` to a new `## [X.Y.Z] - YYYY-MM-DD` heading in the commit the tag points at, and leave an empty `## [Unreleased]` above it. A tag without its own heading is a release nobody can read about: v1.0.1 to v1.0.3 shipped with every entry still under `[Unreleased]`.
+- Push `main` and wait until the `tests` workflow is green on the commit that cuts the CHANGELOG section. Tag that commit only then: a tag on Packagist cannot be taken back, and the runners test PHP and PCRE2 versions this machine does not have.
 
 ## The browser capture script is a committed pair
 
