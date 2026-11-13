@@ -27,10 +27,9 @@
  * spelled exactly as CaptureScript::CONFIG_TOKEN and must occur exactly once, or
  * the host ships an unconfigured script.
  *
- * This is the ONE copy of the script. `ranetrace/ranetrace-laravel` used to carry
- * a second one inline in resources/views/error-tracker.blade.php; both relays
- * validate exactly what their own copy sends, so a fix to one silently stranded
- * the other. Both SDKs now render this file, each supplying its own config, and a
+ * This is the ONE copy of the script. Both relays validate exactly what the
+ * script sends, so with a second copy a fix to one would silently strand the
+ * other. Both SDKs render this file, each supplying its own config, and a
  * capability only one host has (the CSRF token below) is switched on by that
  * config rather than by forking the script.
  */

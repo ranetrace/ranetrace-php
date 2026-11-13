@@ -9,13 +9,11 @@ use RuntimeException;
 /**
  * The browser capture script, with a host's runtime config substituted into it.
  *
- * This is the one source for the script both Ranetrace SDKs serve. The same ~370
- * lines used to live twice, once at `resources/js/error-tracker.js` here and once
- * inline in `ranetrace/ranetrace-laravel`'s `error-tracker.blade.php`. Each SDK's
- * relay validates exactly what its own copy sends, so a fix applied to one copy
- * silently stranded the other, and nothing failed until a browser in production
- * posted a shape the other relay did not accept. The script now lives only here
- * and every host obtains it through this class.
+ * This is the one source for the script both Ranetrace SDKs serve, and every host
+ * obtains it through this class. Each SDK's relay validates exactly what the
+ * script sends, so with a second copy a fix applied to one would silently strand
+ * the other, and nothing would fail until a browser in production posted a shape
+ * the other relay does not accept.
  *
  * The host supplies the whole runtime config, because the two hosts do not build
  * it the same way: this SDK reads {@see \Ranetrace\Php\Config} (see {@see Snippet}),
@@ -35,8 +33,8 @@ use RuntimeException;
  * `resources/js/error-tracker.js` is the readable source, the file humans edit.
  * `resources/js/error-tracker.min.js` is its generated twin, and it is the one
  * read here, because this body is inlined into every page view of every site that
- * installs either SDK: its comments and indentation were being downloaded by
- * every visitor on the critical path of a page they were waiting for. Minified it
+ * installs either SDK, where its comments and indentation would be downloaded by
+ * every visitor on the critical path of a page they are waiting for. Minified it
  * is about 4.3 KB instead of 13.4 KB, 1.7 KB instead of 4.0 KB over the wire.
  *
  * The twin is committed rather than built on install because a PHP package is

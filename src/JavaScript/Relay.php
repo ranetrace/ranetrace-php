@@ -18,12 +18,12 @@ use Throwable;
  * sent, replaces the fields a browser must never be trusted to state, and
  * buffers the result.
  *
- * Ported from `ranetrace/ranetrace-laravel`'s `JavaScriptErrorController`.
- * Two things that were middleware there are not middleware here, because this
+ * The counterpart of `ranetrace/ranetrace-laravel`'s `JavaScriptErrorController`.
+ * Two things that are middleware there are not middleware here, because this
  * SDK mounts nothing:
  *
- * 1. CSRF. The Laravel relay sat behind the `web` group, so a forged
- *    cross-origin POST was stopped by the CSRF token. There is no session and no
+ * 1. CSRF. The Laravel relay sits behind the `web` group, so a forged
+ *    cross-origin POST is stopped by the CSRF token. There is no session and no
  *    token here, so the equivalent protection is a same-origin check: when the
  *    request carries an `Origin` (or failing that a `Referer`), its host must
  *    match the request's own `Host` or appear in
@@ -31,7 +31,7 @@ use Throwable;
  *    no `X-CSRF-TOKEN`. A request with neither header is allowed: those are
  *    same-origin navigations and server-to-server calls, and rejecting them
  *    would drop legitimate reports.
- * 2. Rate limiting. The Laravel relay had `throttle:60,1`. This SDK has no
+ * 2. Rate limiting. The Laravel relay has a route rate limit. This SDK has no
  *    shared store to count against and will not invent one, so THE HOST MUST
  *    RATE LIMIT THE MOUNTED ENDPOINT. It is a public, unauthenticated POST:
  *    without a limit in front of it, a single browser tab in a crash loop can

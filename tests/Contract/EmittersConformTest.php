@@ -105,9 +105,9 @@ test('every field the endpoint requires is emitted and not null', function (stri
 })->with(WireContract::itemTypes());
 
 /**
- * The generic pair replaced it, and the endpoint still tolerates the old
- * spelling only for Laravel SDK versions already in production. This SDK
- * emitting it would keep that compatibility branch alive forever.
+ * The generic `framework` / `framework_version` pair carries the framework
+ * identity. The error type's allow-list is strict, so the ingest refuses an
+ * item carrying the retired key, and every error that carried it would be lost.
  */
 test('the error payload never carries the legacy laravel_version key', function (): void {
     expect(contractEmittedPayloads()['errors'])

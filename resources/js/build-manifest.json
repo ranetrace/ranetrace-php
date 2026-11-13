@@ -6,7 +6,7 @@
     "command": "esbuild resources/js/error-tracker.js --minify --target=es2020 --charset=utf8 --legal-comments=none --log-level=warning --outfile=resources/js/error-tracker.min.js",
     "rebuild_with": "composer build-js",
     "sha256": {
-        "error-tracker.js": "8ad4df681f279d758485cea787f1efb90c7a9d3c745993494ef5fac5a339d64a",
+        "error-tracker.js": "321066f96e8d2652b3d373b5ea4f10ff7eccd8f3cdb6c38ce8ad6a095212f420",
         "error-tracker.min.js": "91a77fe0a4ec491e32810578b2557d8f637506555557b5b00479d88b3116a429"
     }
 }

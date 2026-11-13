@@ -59,8 +59,8 @@ beforeEach(function (): void {
 
 /**
  * A blocked tag manager script or a broken image fires an `error` event on its
- * element with no message, file, line or error object. The script used to post
- * each one as an error named "Unknown error", with nothing in it to act on.
+ * element with no message, file, line or error object. Posted, each one would be
+ * an error named "Unknown error", with nothing in it to act on.
  */
 test('a resource that failed to load is not reported', function (): void {
     expect(reportsPostedFor([['target' => 'element']]))->toBe([]);

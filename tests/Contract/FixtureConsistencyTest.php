@@ -41,9 +41,8 @@ test('every item fixture declares its own type and wrapper key', function (strin
 })->with(WireContract::itemTypes());
 
 test('the errors fixture keeps the retired laravel_version key out entirely', function (): void {
-    // It was tolerated under legacy_fields while deployed Laravel SDKs still
-    // sent it; the ingest dropped it on 2026-08-21, so the fixture carries no
-    // legacy block at all and the key must not creep back into fields.
+    // The ingest refuses an error item carrying the key, so the fixture
+    // carries no legacy block at all and the key must not creep back into fields.
     $spec = WireContract::item('errors');
 
     expect(DescriptorValidator::topLevelKeys($spec['fields']))->not->toContain('laravel_version')

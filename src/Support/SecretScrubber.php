@@ -16,12 +16,11 @@ use Throwable;
  * name. The built-in fragment list is always applied and can be extended (never
  * shrunk) via the `scrubbing.extra_keys` config value.
  *
- * This is the ONE scrubber both SDKs use. `ranetrace/ranetrace-laravel` used to
- * keep a copy of it; the copy is gone, and the router knowledge that was the
- * copy's whole reason to exist now arrives through the `$sensitiveValues`
+ * This is the ONE scrubber both SDKs use. What only a framework knows, which
+ * path segments its router calls secret, arrives through the `$sensitiveValues`
  * callable seam described on {@see scrubDeep()}. The redaction semantics are the
- * privacy promise the two SDKs share, so there is deliberately nowhere left for
- * them to drift.
+ * privacy promise the two SDKs share, so there is deliberately one place for
+ * them and nowhere to drift.
  */
 final class SecretScrubber implements Scrubber
 {

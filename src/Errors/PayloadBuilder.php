@@ -36,8 +36,8 @@ use Throwable;
  * reaches for a superglobal or a framework.
  *
  * The item is 23 keys, all always present. The framework identity is a pair,
- * `framework` and `framework_version`, both nullable, which replaced the
- * `laravel_version` the Laravel SDK once sent and which is retired.
+ * `framework` and `framework_version`, both nullable. The Laravel-only
+ * `laravel_version` key is retired and never sent.
  *
  * `frames` is the trace as structured frames, `previous` the chain of previous
  * exceptions, nearest first. A frame never carries `args`: the trace's `args`

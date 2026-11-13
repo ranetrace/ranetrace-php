@@ -63,7 +63,7 @@ test('the endpoint table builds the contracted User-Agent for whichever SDK asks
 
 /**
  * The response matrix, row by row, read straight off the fixture. Both SDKs
- * decide through this one policy, so a drift between them now has to start as a
+ * decide through this one policy, so a drift between them has to start as a
  * drift from the fixture and this test is where it stops.
  */
 test('the response policy decides every contracted status the way the fixture states', function (string $status): void {
