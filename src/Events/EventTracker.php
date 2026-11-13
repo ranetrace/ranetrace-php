@@ -159,17 +159,16 @@ final class EventTracker
             // item, right before it reaches the buffer. A null item was
             // irreducibly over budget and was dropped with a diagnostics entry,
             // so there is nothing left to buffer.
+            [$userAgentHash, $sessionIdHash] = $this->visitorHashes();
+
             $item = $this->budget->cap(self::BUFFER_TYPE, $this->items->build(
                 $name,
                 $properties,
                 $this->resolveUser($userId),
                 (new DateTimeImmutable)->format('c'),
                 $this->currentUrl(),
-                $this->fingerprints->generateUserAgentHash($this->serverString('HTTP_USER_AGENT')),
-                $this->fingerprints->generateSessionIdHash(
-                    $this->serverString('REMOTE_ADDR'),
-                    $this->serverString('HTTP_USER_AGENT'),
-                ),
+                $userAgentHash,
+                $sessionIdHash,
                 $this->sensitivePathValues,
             ));
 
@@ -354,6 +353,29 @@ final class EventTracker
         }
 
         return $this->scheme().'://'.$host.($this->serverString('REQUEST_URI') ?? '/');
+    }
+
+    /**
+     * The user agent hash and the session hash of the request the event
+     * happened in. A console process has no request and no visitor, so both
+     * are null there, whatever the server context holds: a session hash of
+     * the date alone is one value for every console event of the day, which
+     * the backend would count as one visitor.
+     *
+     * @return array{0: string|null, 1: string|null}
+     */
+    private function visitorHashes(): array
+    {
+        if ($this->isConsole()) {
+            return [null, null];
+        }
+
+        $userAgent = $this->serverString('HTTP_USER_AGENT');
+
+        return [
+            $this->fingerprints->generateUserAgentHash($userAgent),
+            $this->fingerprints->generateSessionIdHash($this->serverString('REMOTE_ADDR'), $userAgent),
+        ];
     }
 
     /**

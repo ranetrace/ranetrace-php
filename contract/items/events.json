@@ -8,7 +8,8 @@
         "`additional_checks` are enforced after the field rules and refuse the item just as hard. An example that satisfies `fields` but trips one of them is not a valid example.",
         "The endpoint also applies burst protection per IP, per session hash and per website before validation. That is a 429 on the request, not an item rule, so it is described in responses.json rather than here.",
         "`user` is null or an object with only the key `id`: events carry no email, and an `email` or any other key refuses the item, although the endpoint drops unknown top-level keys. `user.id` is required whenever `user` is not null, as an integer or a string of at most 255 characters.",
-        "`user_agent_hash` is null when the request carried no user agent, which is every event tracked from the command line. It is never an empty string: the field is null or 64 characters."
+        "`user_agent_hash` is null when the request carried no user agent, which is every event tracked from the command line. It is never an empty string: the field is null or 64 characters.",
+        "`session_id_hash` is null for an event tracked from a console process: a command, a scheduled task or a queued job. There is no visitor there, and a hash of the date alone would be one value for every console event of the day. An event tracked in a request always carries the hash."
     ],
     "fields": {
         "event_name": {"required": true, "type": "string", "min": 3, "max": 50, "pattern": "/^[a-z][a-z0-9_]*$/"},

@@ -43,9 +43,17 @@ The fixtures beside this file are the source of truth, not the prose below:
 - `headers.json`: the five request headers.
 - `responses.json`: the client's response matrix and the response bodies.
 
-Nothing is in flight. The two 2026-11-12 entries are released in this package's 1.2.0 and in `ranetrace/ranetrace-laravel` 1.3.0, which requires it; the backend had nothing to do for either. Every other coordinated change below is applied on both sides: the backend deployed the six before them on 2026-10-16, and this package's 1.1.0 is the first release to send the error item's `frames`, `frames_omitted` and `previous`.
+One change is in flight: the 2026-11-13 entry below is in both SDKs' main branches and not released yet, and the backend has nothing to do for it. The two 2026-11-12 entries are released in this package's 1.2.0 and in `ranetrace/ranetrace-laravel` 1.3.0, which requires it; the backend had nothing to do for either. Every other coordinated change below is applied on both sides: the backend deployed the six before them on 2026-10-16, and this package's 1.1.0 is the first release to send the error item's `frames`, `frames_omitted` and `previous`.
 
 ## Change log
+
+### 2026-11-13, an event from a console process sends `session_id_hash` and `user_agent_hash` as null
+
+Status: **APPLIED in the main branch of `ranetrace/ranetrace-php` and of `ranetrace/ranetrace-laravel`, PENDING release in both. Nothing to do for the backend.** No rule moved: `items/events.json` gives both fields as optional and, when present, a string of 64 characters, which is the backend's `nullable|string|size:64`. What moved is the emitters, for an event tracked from a command, a scheduled task or a queued job.
+
+A console process has no visitor, and the two SDKs said so in two different ways. This package sent a null `user_agent_hash` and a `session_id_hash` built from an empty address, an empty user agent and the date. The Laravel SDK read the request Laravel makes up for a console process, whose user agent is the word `Symfony` and whose address is `127.0.0.1`, and sent the hash of each. Either way every console event of one installation on one day shared one session hash, and the backend counts the session hashes of events without a user as visitors, so a day of scheduled events counted as one active user. Both SDKs now send null for both fields in a console process: `Events\EventTracker` here, `Ranetrace::buildEventPayload()` there, and `Events\EventItemBuilder::build()` takes a nullable session hash. An event tracked in a request carries both hashes as before, and a page visit is not affected.
+
+The deployed backend was read on 2026-11-13 (`09e7ca94c`): the rule for both fields is `nullable|string|size:64`, both columns are nullable, the per-session burst check runs only for a session hash of 64 characters, and the duplicate check hashes a null like any other value. So there is no order to keep: the backend accepts the old and the new value. What changes for its reader is the count: console events without a user are no longer one visitor a day. `items/events.json` says so in its notes.
 
 ### 2026-11-12, an event without a user agent sends `user_agent_hash` as null
 

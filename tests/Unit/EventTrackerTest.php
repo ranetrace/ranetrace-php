@@ -262,6 +262,38 @@ test('the user agent hash is null, never an empty string, when the request carri
     expect(firstEvent($buffer)['user_agent_hash'])->toBeNull();
 });
 
+/**
+ * A console process has no visitor. A session hash of the date alone would be
+ * one value for every console event of the day, which the backend counts as
+ * one visitor, so the event says nothing: the keys stay, with null.
+ */
+test('an event tracked from a console process carries no user agent hash and no session hash, whatever the server context holds', function (): void {
+    $buffer = new ArrayBuffer;
+
+    $tracker = eventTracker($buffer);
+    $tracker->setServerContext([
+        'HTTP_USER_AGENT' => 'Symfony',
+        'REMOTE_ADDR' => '127.0.0.1',
+    ], console: true);
+    $tracker->track('invoice_sent');
+
+    $event = firstEvent($buffer);
+
+    expect($event)->toHaveKeys(['user_agent_hash', 'session_id_hash'])
+        ->and($event['user_agent_hash'])->toBeNull()
+        ->and($event['session_id_hash'])->toBeNull();
+});
+
+test('a request without a user agent still carries a session hash, from its address', function (): void {
+    $buffer = new ArrayBuffer;
+
+    $tracker = eventTracker($buffer);
+    $tracker->setServerContext(['HTTP_HOST' => 'app.test', 'REQUEST_URI' => '/', 'REMOTE_ADDR' => '203.0.113.10'], console: false);
+    $tracker->track('page_view');
+
+    expect(firstEvent($buffer)['session_id_hash'])->toHaveLength(64);
+});
+
 test('an invalid event name throws loudly because it is a developer mistake', function (): void {
     $buffer = new ArrayBuffer;
 

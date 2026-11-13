@@ -33,7 +33,8 @@ final class EventItemBuilder
      * @param  array{id: mixed}|null  $user  Only the id travels; events carry no email. An id the backend would reject sends no user.
      * @param  string  $timestamp  ISO 8601 capture time, from the host's clock.
      * @param  string|null  $url  The URL of the request the event happened in, unscrubbed. Null for a console process.
-     * @param  string|null  $userAgentHash  Null when the request carried no user agent.
+     * @param  string|null  $userAgentHash  Null when the request carried no user agent, and for a console process.
+     * @param  string|null  $sessionIdHash  Null for a console process, which has no visitor to tell apart from another.
      * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues  Path segment values to redact from $url and from any URL hiding in $properties: a fixed list, or a per-URL resolver for a host with a router. Null means query-only scrubbing.
      * @return array{
      *     event_name: string,
@@ -42,7 +43,7 @@ final class EventItemBuilder
      *     timestamp: string,
      *     url: string|null,
      *     user_agent_hash: string|null,
-     *     session_id_hash: string,
+     *     session_id_hash: string|null,
      * }
      */
     public function build(
@@ -52,7 +53,7 @@ final class EventItemBuilder
         string $timestamp,
         ?string $url,
         ?string $userAgentHash,
-        string $sessionIdHash,
+        ?string $sessionIdHash,
         array|callable|null $sensitivePathValues = null,
     ): array {
         $userId = UserId::accepted($user['id'] ?? null);
@@ -73,7 +74,7 @@ final class EventItemBuilder
                 $sensitivePathValues,
             ),
             'user_agent_hash' => Utf8::repairNullable($userAgentHash),
-            'session_id_hash' => Utf8::repair($sessionIdHash),
+            'session_id_hash' => Utf8::repairNullable($sessionIdHash),
         ];
     }
 }
