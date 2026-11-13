@@ -43,13 +43,13 @@ The fixtures beside this file are the source of truth, not the prose below:
 - `headers.json`: the five request headers.
 - `responses.json`: the client's response matrix and the response bodies.
 
-In flight: the 2026-11-13 `id` entry, whose status says what waits on what. The 2026-11-13 console event entry is released in this package's 1.3.0, and `ranetrace/ranetrace-laravel` sends it from 1.4.0, which requires that release. The two 2026-11-12 entries are released in this package's 1.2.0 and in `ranetrace/ranetrace-laravel` 1.3.0, which requires it. The backend had nothing to do for any of the three. Every other coordinated change below is applied on both sides: the backend deployed the six before them on 2026-10-16, and this package's 1.1.0 is the first release to send the error item's `frames`, `frames_omitted` and `previous`.
+Nothing is in flight. The 2026-11-13 `id` entry is released in this package's 1.4.0, and `ranetrace/ranetrace-laravel` sends it from 1.5.0, which requires that release; the backend deployed its half the same day. That Laravel release is also the first to send a page visit without its `url`. The 2026-11-13 console event entry is released in this package's 1.3.0, and `ranetrace/ranetrace-laravel` sends it from 1.4.0, which requires that release. The two 2026-11-12 entries are released in this package's 1.2.0 and in `ranetrace/ranetrace-laravel` 1.3.0, which requires it. The backend had nothing to do for any of the three. Every other coordinated change below is applied on both sides: the backend deployed the six before them on 2026-10-16, and this package's 1.1.0 is the first release to send the error item's `frames`, `frames_omitted` and `previous`.
 
 ## Change log
 
 ### 2026-11-13, the event item and the JavaScript error item carry an `id`
 
-Status: **Events: APPLIED on the backend, deployed 2026-11-13. JavaScript errors: PENDING on the backend, built on its main branch and waiting for a deploy. Both SDKs: on their main branches, PENDING release (`ranetrace/ranetrace-php` 1.4.0, and `ranetrace/ranetrace-laravel` 1.5.0, which requires it).** The order is the iron rule's: the backend deploy with the JavaScript error half comes first, then this package's release, then the Laravel SDK's. Neither endpoint allow-lists its fields, so an SDK that sent the `id` to a backend that does not know it would lose no item: the key is dropped and the item is handled as before. What breaks until the JavaScript error half is deployed is only that its `id` does nothing yet.
+Status: **APPLIED on both sides. Backend deployed 2026-11-13, the event half first and the JavaScript error half before this package's release. Released in `ranetrace/ranetrace-php` 1.4.0. `ranetrace/ranetrace-laravel` sends it from 1.5.0, which requires that release.** The order was the iron rule's: the backend deploy came first, then this package's release, then the Laravel SDK's. Neither endpoint allow-lists its fields, so an SDK that sends the `id` to a backend that does not know it loses no item: the key is dropped and the item is handled as before.
 
 A batch that the backend stored, whose answer never reached the client, is kept by the client and sent again 60 to 900 seconds later. The backend has to recognise those items or store them twice. For events it compared fields (name, timestamp, URL, both hashes, properties, user), and two events alike in every field within one second, as a counter tracked twice in a loop of a console process is, were read as one event sent twice: the second was counted `ignored` and lost. For JavaScript errors it had no check at all, so a batch sent again stored every report a second time and an error counted two occurrences for one.
 
@@ -61,7 +61,7 @@ The backend validates `id` as `nullable|uuid` on both endpoints and does not sto
 
 ### 2026-11-10, a page visit's `url` is optional, and the Laravel SDK stops sending it
 
-Status: **APPLIED on the backend, deployed 2026-11-10. `ranetrace/ranetrace-laravel`: on its main branch, PENDING release in 1.5.0. Nothing to do for this package, which sends no page visits.** The backend required `url` on a page visit and then dropped it, because a visit keeps its `path` and has no column for a URL. The rule is `nullable` now, so the Laravel SDK sends a visit without the key. The page visit item has no fixture here, because only the Laravel SDK emits it.
+Status: **APPLIED on the backend, deployed 2026-11-10. `ranetrace/ranetrace-laravel` stops sending the key from 1.5.0. Nothing to do for this package, which sends no page visits.** The backend required `url` on a page visit and then dropped it, because a visit keeps its `path` and has no column for a URL. The rule is `nullable` now, so the Laravel SDK sends a visit without the key. The page visit item has no fixture here, because only the Laravel SDK emits it.
 
 ### 2026-11-10, the backend stops storing a batch after 8 seconds
 
