@@ -6,6 +6,8 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-13
+
 ### Added
 - **`vendor/bin/ranetrace-test` checks the install.** It captures one test error (`Test exception from Ranetrace`) and one test event (`test_event`, with `source: ranetrace-test`), sends each straight to the API, and prints what the API answered per type, then the buffer path, the items waiting in it and any pauses. It exits `0` when the API accepted at least one of the two, and `1` otherwise, so a missing key, a refused key and an unreachable API no longer all look like success. The test items go beside the buffer, never into it, and no answer sets a pause, so a failed test leaves nothing behind. A 200 lifts the pauses it disproves: a pause on everything after a 401, and that type's own pause unless the API set it with a 429, 413 or 422. Like `ranetrace-flush`, the binary reads the environment only; an application that configures the SDK in its bootstrap runs the same check from its own console with `Ranetrace::instance()->sendTest()`, which returns a `Worker\TestReport` (`accepted()`, `render()`). The API stores an identical error once per 5 minutes, so a second run within 5 minutes reports the error as accepted, not stored. The items carry no field the API would not expect. Nothing to do on upgrade
 
