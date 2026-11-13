@@ -146,8 +146,8 @@ final class SecretScrubber implements Scrubber
      *
      * Every string value gets the value pass of
      * {@see SecretTextRedactor::redactSecretValues()}: the password of a URL,
-     * a token with a known prefix and a Telegram bot token. It lives here
-     * rather than in
+     * a token with a known prefix, a Telegram bot token and the secret part
+     * of a Slack or Discord webhook URL. It lives here rather than in
      * {@see scrub()}, which stays the key primitive, because every capture
      * path (log context and extra, event properties, breadcrumbs, an
      * exception's context()) comes through this method. It costs two linear

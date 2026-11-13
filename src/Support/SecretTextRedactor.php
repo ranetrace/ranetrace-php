@@ -24,9 +24,9 @@ use UnexpectedValueException;
  * A few secrets are caught by their value alone, wherever they stand: the
  * password of a URL (`pgsql://app:[REDACTED]@db`, user name and host kept),
  * a token on a short list of prefixes that say what it is, such as
- * `sk_live_` or `AKIA`, and a Telegram bot token, see
- * {@see redactSecretValues()}. Any other secret under a name the fragment
- * list does not hold is not.
+ * `sk_live_` or `AKIA`, a Telegram bot token and the secret part of a Slack
+ * or Discord webhook URL, see {@see redactSecretValues()}. Any other secret
+ * under a name the fragment list does not hold is not.
  *
  * The value after an anchor takes one of these shapes:
  *
@@ -264,6 +264,27 @@ final class SecretTextRedactor
         .'~';
 
     /**
+     * An incoming webhook URL, whose path is the credential: whoever holds it
+     * can post. Like a Bot API URL it is what an HTTP client puts in the
+     * message of a failed request. What stays readable is in group 1 or 2:
+     *
+     * - Slack: `hooks.slack.com/services/T.../B.../...`, and that host's
+     *   `workflows` and `triggers` URLs. Everything after that first segment
+     *   is redacted, since the secret is its last part and the ids before it
+     *   only matter together with it.
+     * - Discord: `discord.com/api/webhooks/<id>/<token>`, on `discordapp.com`
+     *   and with an API version (`/api/v10/`) as well. The id stays, the
+     *   token is redacted.
+     *
+     * A `/` can be the `\/` of a JSON-encoded URL. Every repeat is possessive
+     * and each match starts at a literal host, so the scan stays linear.
+     */
+    private const string WEBHOOK_URL = '~'
+        .'((?i:hooks\.slack\.com)(?:/|\\\\/)(?:services|workflows|triggers)(?:/|\\\\/))(?:[^\s\\\\?#\'"`<>]|\\\\/)++'
+        .'|((?i:discord(?:app)?+\.com)(?:/|\\\\/)api(?:/|\\\\/)(?:v\d{1,3}+(?:/|\\\\/))?+webhooks(?:/|\\\\/)\d{5,25}+(?:/|\\\\/))[^\s/\\\\?#\'"`<>]++'
+        .'~';
+
+    /**
      * {@see anchorPattern()}, built once per instance for each value of
      * {@see $readsCredentialSubclass}.
      *
@@ -375,10 +396,12 @@ final class SecretTextRedactor
     /**
      * $text with every secret that its value alone gives away redacted: the
      * password of a URL ({@see URL_PASSWORD}), a token with a known prefix
-     * ({@see PREFIXED_TOKEN}) and a Telegram bot token
-     * ({@see TELEGRAM_BOT_TOKEN}). It runs after the key pass, on its output,
-     * so it reaches what that pass keeps: a literal under a name nobody listed
-     * (`$dsn = 'pgsql://app:secret@db'`), a positional argument and prose.
+     * ({@see PREFIXED_TOKEN}), a Telegram bot token
+     * ({@see TELEGRAM_BOT_TOKEN}) and the secret part of a Slack or Discord
+     * webhook URL ({@see WEBHOOK_URL}). It runs after the key pass, on its
+     * output, so it reaches what that pass keeps: a literal under a name
+     * nobody listed (`$dsn = 'pgsql://app:secret@db'`), a positional argument
+     * and prose.
      * A shape inside a placeholder the key pass left cannot match, since
      * `[REDACTED]` holds none. {@see SecretScrubber::scrubDeep()} runs it on
      * every string value on its own, without the key pass, which the keys of
@@ -389,8 +412,13 @@ final class SecretTextRedactor
     public function redactSecretValues(string $text): string
     {
         $redacted = preg_replace(
-            [self::URL_PASSWORD, self::PREFIXED_TOKEN, self::TELEGRAM_BOT_TOKEN],
-            ['${1}'.SecretScrubber::REDACTION.'@', SecretScrubber::REDACTION, '${1}${2}'.SecretScrubber::REDACTION],
+            [self::URL_PASSWORD, self::PREFIXED_TOKEN, self::TELEGRAM_BOT_TOKEN, self::WEBHOOK_URL],
+            [
+                '${1}'.SecretScrubber::REDACTION.'@',
+                SecretScrubber::REDACTION,
+                '${1}${2}'.SecretScrubber::REDACTION,
+                '${1}${2}'.SecretScrubber::REDACTION,
+            ],
             $text,
         );
 

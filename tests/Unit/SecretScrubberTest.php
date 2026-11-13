@@ -2304,6 +2304,71 @@ test('it leaves a look-alike of a telegram bot token readable', function (string
     'the api host alone' => ['could not resolve api.telegram.org'],
 ]);
 
+/*
+ * The Slack URLs below are joined from two parts, so that this file holds no
+ * string a secret scanner takes for a live webhook.
+ */
+test('scrubString redacts the secret part of a webhook url and keeps what says whose it is', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected)
+        ->and(scrubber()->scrubDeep(['v' => $value]))->toBe(['v' => $expected]);
+})->with([
+    'a slack webhook in a guzzle client error' => [
+        'Client error: `POST https://hooks.slack.com/services/'.'T00000000/B00000000/F4k3F4k3F4k3F4k3F4k3F4k3` resulted in a `404 Not Found` response',
+        'Client error: `POST https://hooks.slack.com/services/[REDACTED]` resulted in a `404 Not Found` response',
+    ],
+    'a slack workflow webhook' => [
+        'https://hooks.slack.com/workflows/'.'T00000000/A00000000/123456789012345678/F4k3F4k3F4k3F4k3F4k3F4k3 timed out',
+        'https://hooks.slack.com/workflows/[REDACTED] timed out',
+    ],
+    'a slack trigger' => ['https://hooks.slack.com/triggers/'.'T00000000/1234567890123/f4k3f4k3f4k3f4k3', 'https://hooks.slack.com/triggers/[REDACTED]'],
+    'a slack webhook in json' => [
+        '{"url":"https:\/\/hooks.slack.com\/services\/'.'T00000000\/B00000000\/F4k3F4k3F4k3","ok":false}',
+        '{"url":"https:\/\/hooks.slack.com\/services\/[REDACTED]","ok":false}',
+    ],
+    'an upper-case slack host' => ['https://HOOKS.SLACK.COM/services/'.'T00000000/B00000000/F4k3F4k3', 'https://HOOKS.SLACK.COM/services/[REDACTED]'],
+    'a discord webhook' => [
+        'cURL error 28: Operation timed out for https://discord.com/api/webhooks/123456789012345678/F4k3-F4k3_F4k3F4k3F4k3F4k3F4k3F4k3',
+        'cURL error 28: Operation timed out for https://discord.com/api/webhooks/123456789012345678/[REDACTED]',
+    ],
+    'a discord webhook with an api version and a query' => [
+        'https://discord.com/api/v10/webhooks/123456789012345678/F4k3F4k3F4k3F4k3?wait=true',
+        'https://discord.com/api/v10/webhooks/123456789012345678/[REDACTED]?wait=true',
+    ],
+    'a discord webhook to slack format' => [
+        'https://discordapp.com/api/webhooks/123456789012345678/F4k3F4k3F4k3F4k3/slack',
+        'https://discordapp.com/api/webhooks/123456789012345678/[REDACTED]/slack',
+    ],
+    'a discord webhook in json' => [
+        '{"url":"https:\/\/discord.com\/api\/webhooks\/123456789012345678\/F4k3F4k3F4k3F4k3"}',
+        '{"url":"https:\/\/discord.com\/api\/webhooks\/123456789012345678\/[REDACTED]"}',
+    ],
+]);
+
+test('scrubSource redacts the secret part of a webhook url', function (string $line, string $expected): void {
+    expect(scrubSourceLine($line))->toBe($expected);
+})->with([
+    'a slack webhook under a key that says nothing' => [
+        "'slack' => 'https://hooks.slack.com/services/"."T00000000/B00000000/F4k3F4k3F4k3',",
+        "'slack' => 'https://hooks.slack.com/services/[REDACTED]',",
+    ],
+    'a discord webhook as a positional argument' => [
+        "Http::post('https://discord.com/api/webhooks/123456789012345678/F4k3F4k3F4k3F4k3', \$payload);",
+        "Http::post('https://discord.com/api/webhooks/123456789012345678/[REDACTED]', \$payload);",
+    ],
+]);
+
+test('it leaves a url that only looks like a webhook readable', function (string $value): void {
+    expect(scrubber()->scrubString($value))->toBe($value)
+        ->and(scrubSourceLine($value))->toBe($value);
+})->with([
+    'the slack host alone' => ['could not resolve hooks.slack.com'],
+    'the slack api' => ['POST https://slack.com/api/chat.postMessage failed'],
+    'another path on the slack hooks host' => ['https://hooks.slack.com/status'],
+    'the discord api without a webhook' => ['GET https://discord.com/api/v10/channels/123456789012345678/messages'],
+    'a discord webhook id without a token' => ['https://discord.com/api/webhooks/123456789012345678'],
+    'the discord docs' => ['see https://discord.com/developers/docs/resources/webhook'],
+]);
+
 test('scrubSource redacts a value under a pwd key, but pass and dsn are not sensitive fragments', function (string $line, string $expected): void {
     expect(scrubSourceLine($line))->toBe($expected);
 })->with([
@@ -2418,6 +2483,18 @@ test('the value shapes stay linear on long runs', function (string $label, Closu
     'a long bot path token' => [
         'a long bot path token',
         fn (int $scale): array => ['/bot12345:'.str_repeat('a', 25_000 * $scale), '/bot[REDACTED]'],
+    ],
+    'slack hosts back to back' => [
+        'slack hosts back to back',
+        fn (int $scale): array => [str_repeat('hooks.slack.com/services ', 1_000 * $scale), str_repeat('hooks.slack.com/services ', 1_000 * $scale)],
+    ],
+    'a long slack webhook path of escaped slashes' => [
+        'a long slack webhook path of escaped slashes',
+        fn (int $scale): array => ['hooks.slack.com/services/'.str_repeat('a\/', 8_000 * $scale), 'hooks.slack.com/services/[REDACTED]'],
+    ],
+    'discord webhook ids back to back' => [
+        'discord webhook ids back to back',
+        fn (int $scale): array => [str_repeat('discord.com/api/webhooks/12345/ ', 800 * $scale), str_repeat('discord.com/api/webhooks/12345/ ', 800 * $scale)],
     ],
 ]);
 
