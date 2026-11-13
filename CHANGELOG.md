@@ -6,6 +6,8 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-13
+
 ### Changed
 - **An event tracked from a console process sends no session hash.** A command, a cron script or a queue worker has no visitor, but its events carried a `session_id_hash` built from an empty address, an empty user agent and the date: one value for every console event of the day. Ranetrace counts the sessions of events without a user as visitors, so a day of scheduled events showed as one active user. `session_id_hash` is now null there, as `user_agent_hash` already was, and both are null in a console process whatever the server context holds. An event tracked in a request is sent exactly as before. `Events\EventItemBuilder::build()` takes a nullable session hash. The API already accepts null for the field, so there is nothing to do on upgrade. Active users on the events page no longer counts events from console processes that name no user
 
