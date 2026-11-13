@@ -5,4 +5,5 @@ parameters:
         - bin/build-capture-script
         - bin/ranetrace-flush
         - bin/ranetrace-test
+        - bin/release-check
     treatPhpDocTypesAsCertain: false

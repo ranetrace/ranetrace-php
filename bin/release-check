@@ -1,0 +1,182 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * The release gate: send one item of every type this package emits to the API
+ * and say, per type, whether the API took it. Run it from the checkout at the
+ * commit about to be tagged, before the tag:
+ *
+ *     php bin/release-check
+ *
+ * The API matches each item's fields strictly and refuses an item that
+ * carries a key it does not know, which is final. A tag that sends a new field
+ * before the backend that accepts it is deployed loses every item of that type
+ * for everyone who upgrades, and a tag cannot be taken back. A pushed backend
+ * commit is not a deployed one, so this asks the deployed API itself.
+ *
+ * The items are captured through the real capture paths, so they carry every
+ * key a real one does, and each is sent on its own, straight to the API. They
+ * are spooled in a directory of their own, which is removed afterwards, so the
+ * run never touches the buffer or the pauses of an application on this
+ * machine.
+ *
+ * The key is an ingest key of a website kept for this check, read from a file
+ * so that it is never typed into a command line: the file named as the first
+ * argument, else by RANETRACE_RELEASE_KEY_FILE, else
+ * ~/.config/ranetrace/release-check-key. The API is the production one unless
+ * RANETRACE_BASE_URL says otherwise, and the report names the one it asked.
+ *
+ * Maintainers only: the file is not part of the distributed package.
+ *
+ * Exit codes: 0 when the API took the item of every type. 1 when it refused
+ * or did not take one, or the check could not run.
+ */
+
+use Monolog\Level;
+use Monolog\LogRecord;
+use Ranetrace\Php\Contract\WireContract;
+use Ranetrace\Php\Http\ApiClient;
+use Ranetrace\Php\Http\CurlHttpClient;
+use Ranetrace\Php\Ranetrace;
+use Ranetrace\Php\Support\InternalLogger;
+use Ranetrace\Php\Worker\TestResult;
+use Ranetrace\Php\Worker\Worker;
+
+require dirname(__DIR__).'/vendor/autoload.php';
+
+(static function (array $argv): never {
+    $fail = static function (string $message): never {
+        fwrite(STDERR, "release-check: {$message}\n");
+
+        exit(1);
+    };
+
+    $arguments = array_slice($argv, 1);
+
+    if (in_array($arguments[0] ?? null, ['--help', '-h'], true)) {
+        fwrite(STDOUT, "Usage: php bin/release-check [key-file]\n");
+
+        exit(0);
+    }
+
+    if (count($arguments) > 1) {
+        $fail('expected at most one argument, the key file.');
+    }
+
+    $configured = getenv('RANETRACE_RELEASE_KEY_FILE');
+    $home = getenv('HOME');
+    $keyFile = $arguments[0]
+        ?? (is_string($configured) && $configured !== '' ? $configured : null)
+        ?? (is_string($home) && $home !== '' ? $home.'/.config/ranetrace/release-check-key' : null);
+
+    if ($keyFile === null || ! is_file($keyFile) || ! is_readable($keyFile)) {
+        $fail(sprintf(
+            'no readable key file at [%s]. Save the ingest key of the release check website there, or name the file as the first argument.',
+            $keyFile ?? 'HOME is not set',
+        ));
+    }
+
+    $key = mb_trim((string) file_get_contents($keyFile));
+
+    if ($key === '') {
+        $fail("the key file [{$keyFile}] is empty.");
+    }
+
+    $spool = sys_get_temp_dir().'/ranetrace-release-check-'.bin2hex(random_bytes(6));
+
+    $removeSpool = static function () use ($spool): void {
+        foreach (glob($spool.'/*') ?: [] as $file) {
+            @unlink($file);
+        }
+
+        @rmdir($spool);
+    };
+
+    register_shutdown_function($removeSpool);
+
+    try {
+        $ranetrace = new Ranetrace([
+            'key' => $key,
+            'enabled' => true,
+            'environment' => 'release-check',
+            'buffer_path' => $spool,
+            'flush_on_shutdown' => false,
+            'errors' => ['enabled' => true],
+            'events' => ['enabled' => true],
+            'logging' => ['enabled' => true],
+            'javascript_errors' => ['enabled' => true, 'sample_rate' => 1.0, 'ignored_errors' => []],
+            'internal_logging' => ['enabled' => false],
+        ]);
+
+        $config = $ranetrace->config();
+
+        /** @var callable(): Exception $exception */
+        $exception = require dirname(__DIR__).'/resources/test-exception.php';
+
+        $ranetrace->report($exception());
+        $ranetrace->trackEvent('release_check', ['source' => 'release-check']);
+        $ranetrace->monologHandler(Level::Debug)->handle(new LogRecord(
+            new DateTimeImmutable,
+            'release-check',
+            Level::Warning,
+            'Release check log record',
+            ['source' => 'release-check'],
+        ));
+        $ranetrace->relay()->handleRequest(
+            [
+                'HTTP_HOST' => 'release-check.test',
+                'HTTP_ORIGIN' => 'https://release-check.test',
+                'HTTP_USER_AGENT' => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+            ],
+            [
+                'message' => 'Release check JavaScript error',
+                'stack' => "Error: Release check JavaScript error\n    at check (https://release-check.test/app.js:1:1)",
+                'type' => 'Error',
+                'filename' => 'https://release-check.test/app.js',
+                'line' => 1,
+                'column' => 1,
+                'url' => 'https://release-check.test/',
+                'breadcrumbs' => [
+                    ['timestamp' => (new DateTimeImmutable)->format('c'), 'category' => 'navigation', 'message' => 'Page loaded', 'data' => []],
+                ],
+            ],
+        );
+
+        $log = new InternalLogger($config);
+        $worker = new Worker($config, $ranetrace->buffer(), $ranetrace->pauses(), new ApiClient($config, new CurlHttpClient, $log), $log);
+
+        $baseUrl = $config->baseUrl();
+        $taken = 0;
+        $types = WireContract::itemTypes();
+        $width = max(array_map(mb_strlen(...), $types));
+
+        fwrite(STDOUT, "Release check against {$baseUrl}\n\n");
+
+        foreach ($types as $type) {
+            $item = $ranetrace->buffer()->take($type, 1)[0]['data'] ?? null;
+
+            if (! is_array($item)) {
+                fwrite(STDOUT, sprintf("  %-{$width}s  not captured: the SDK built no item of this type\n", $type));
+
+                continue;
+            }
+
+            $result = TestResult::fromResponse($worker->send($type, [$item]));
+            $taken += $result->accepted() ? 1 : 0;
+
+            fwrite(STDOUT, sprintf("  %-{$width}s  %s\n", $type, $result->line($type, $baseUrl, false)));
+        }
+    } catch (Throwable $failure) {
+        $fail($failure->getMessage());
+    }
+
+    $every = $taken === count($types);
+
+    fwrite(STDOUT, $every
+        ? "\nThe API took the item of every type.\n"
+        : "\nThe API did not take every item. Do not tag: find out which side is behind first.\n");
+
+    exit($every ? 0 : 1);
+})($argv ?? []);

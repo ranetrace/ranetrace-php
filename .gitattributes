@@ -14,6 +14,11 @@
 /package.json             export-ignore
 /package-lock.json        export-ignore
 
+# The release gate is maintainer-only too: it asks the live API, with a key
+# only the maintainer holds, whether it takes what the commit about to be
+# tagged sends.
+/bin/release-check export-ignore
+
 # Everything under resources/js ships, including error-tracker.min.js (the body
 # a browser downloads), build-manifest.json (the stamp the freshness guard reads)
 # and the readable error-tracker.js, which is small on disk, never sent to a
