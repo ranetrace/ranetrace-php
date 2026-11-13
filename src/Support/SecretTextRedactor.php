@@ -1344,11 +1344,18 @@ final class SecretTextRedactor
      * @param  list<string>  $lines
      * @return list<string>
      *
+     * The marker's label is the space after BEGIN or END and up to 40
+     * characters more. It is written as one run of 1 to 41 that has to start
+     * with the space, not as a space and a run of 0 to 40: under JIT, PCRE2
+     * 10.45 to 10.47 can miss a match where a character class repeated from
+     * zero up to a bound follows the start of a pattern, and they missed
+     * every END marker here.
+     *
      * @throws UnexpectedValueException when PCRE gives up
      */
     private function redactPrivateKeyBodies(array $lines): array
     {
-        $marker = '/-----(?<kind>BEGIN|END) [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/';
+        $marker = '/-----(?<kind>BEGIN|END)(?= )[A-Z0-9 ]{1,41}PRIVATE KEY(?: BLOCK)?-----/';
         $markers = [];
         $insideKey = null;
 

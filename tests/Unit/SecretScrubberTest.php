@@ -1292,6 +1292,32 @@ test('scrubSource redacts the body of a private key and keeps its markers and co
     ],
 ]);
 
+test('a private key marker carries a label of at most 40 characters behind the space it needs', function (string $marker, string $bodyLine): void {
+    expect(scrubber()->scrubSource([$marker, 'short1A']))->toBe([$marker, $bodyLine]);
+})->with([
+    'no label' => ['-----BEGIN PRIVATE KEY-----', '[REDACTED]'],
+    'a label of 40 characters' => ['-----BEGIN '.str_repeat('A', 39).' PRIVATE KEY-----', '[REDACTED]'],
+    'a label of 41 characters' => ['-----BEGIN '.str_repeat('A', 40).' PRIVATE KEY-----', 'short1A'],
+    'no space after BEGIN' => ['-----BEGINRSA PRIVATE KEY-----', 'short1A'],
+]);
+
+test('no pattern repeats a character class from zero up to a bound', function (): void {
+    // Under JIT, PCRE2 10.45 to 10.47 can miss a match of a pattern that has
+    // `[...]{0,n}` behind its start. Nothing fails to compile, so on any
+    // other PCRE2 only this test tells. Write the run from 1 up, as the
+    // private key marker does.
+    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator(dirname(__DIR__, 2).'/src', FilesystemIterator::SKIP_DOTS));
+    $found = [];
+
+    foreach ($files as $file) {
+        if (preg_match('/\][+?]?\{0,\d*\}/', (string) file_get_contents($file->getPathname())) === 1) {
+            $found[] = $file->getFilename();
+        }
+    }
+
+    expect($found)->toBe([]);
+});
+
 test('scrubSource keeps a certificate marker and a long path readable', function (): void {
     // A certificate is public, though a base64 line of its body can still be
     // taken for a key body: that costs the line, never a secret.

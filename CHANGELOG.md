@@ -6,6 +6,9 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Fixed
+- **The END marker of a private key is found on PCRE2 10.45 to 10.47.** Under JIT, those PCRE2 versions can miss a match of a pattern shaped like the one that finds `-----BEGIN ... PRIVATE KEY-----` and `-----END ... PRIVATE KEY-----` in source lines, and they missed every END marker. In a source window that holds the BEGIN marker, the END line and every line after it in that window were redacted as key body, which cost readable code and no secret. In a window that starts inside a key, nothing said that the lines above the END marker are body, so a body line under 40 characters, such as the last line of a key, was sent as written; a full-length body line was still redacted. The pattern now has a form those versions match, and it matches exactly what it did. PHP's bundled PCRE2 is 10.44 and not affected. A PHP linked to a system PCRE2 is when `php -r 'echo PCRE_VERSION;'` prints 10.45, 10.46 or 10.47. Nothing to do on upgrade
+
 ## [1.2.0] - 2026-11-13
 
 ### Added
