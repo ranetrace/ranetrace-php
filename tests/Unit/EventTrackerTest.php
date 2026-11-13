@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Ranetrace\Php\Events\EventItemBuilder;
 use Ranetrace\Php\Events\EventLimits;
 use Ranetrace\Php\Events\EventTracker;
 use Ranetrace\Php\Support\FingerprintGenerator;
@@ -633,12 +634,65 @@ test('a sale with a products list too large for the endpoint arrives with its or
         ->and(mb_strlen((string) json_encode($event), '8bit'))->toBeLessThanOrEqual(EventLimits::MAX_ITEM_BYTES);
 });
 
-test('an event that cannot be brought within the endpoint limits is not buffered', function (): void {
+/**
+ * The events endpoint takes a `url` of at most 2,000 characters and refuses
+ * the event otherwise, so a longer one is cut, as an error's is.
+ *
+ * @return array<string, mixed>
+ */
+function eventTrackedAt(string $requestUri): array
+{
     $buffer = new ArrayBuffer;
-
     $tracker = eventTracker($buffer);
-    $tracker->setServerContext(['HTTP_HOST' => 'shop.test', 'REQUEST_URI' => '/'.str_repeat('a', 6_000)], false);
+    $tracker->setServerContext(['HTTP_HOST' => 'shop.test', 'REQUEST_URI' => $requestUri], false);
     $tracker->track('search_performed');
 
-    expect($buffer->count('events'))->toBe(0);
+    return $buffer->payloads('events')[0] ?? [];
+}
+
+test('an event from a url over 2,000 characters arrives with the url cut to 2,000, the suffix included', function (): void {
+    $url = eventTrackedAt('/'.str_repeat('a', 6_000))['url'];
+
+    expect(mb_strlen($url))->toBe(2_000)
+        ->and($url)->toBe('http://shop.test/'.str_repeat('a', 1_968).'... (truncated)');
+});
+
+test('an event url of exactly 2,000 characters is sent whole', function (): void {
+    $requestUri = '/'.str_repeat('a', 2_000 - mb_strlen('http://shop.test/'));
+
+    expect(eventTrackedAt($requestUri)['url'])->toBe('http://shop.test'.$requestUri);
+});
+
+/**
+ * Built directly: escaped, a URL this long is far over the item limit, so a
+ * tracked event carrying it would be dropped after the cut.
+ */
+test('an event url is counted and cut in characters, not bytes', function (): void {
+    $config = testConfig(['internal_logging' => ['enabled' => false]]);
+    $url = (new EventItemBuilder(new SecretScrubber($config, new InternalLogger($config))))
+        ->build('search_performed', [], null, '2026-11-13T09:30:45+00:00', 'http://shop.test/'.str_repeat('é', 1_990), null, null)['url'];
+
+    expect(mb_strlen($url))->toBe(2_000)
+        ->and(mb_check_encoding($url, 'UTF-8'))->toBeTrue()
+        ->and($url)->toEndWith('é... (truncated)');
+});
+
+/**
+ * Cut first, a secret that straddles the boundary would keep its head: the
+ * scrubber would no longer see a whole `token=` value to redact.
+ */
+test('an event url is scrubbed before it is cut, so no part of a secret survives the boundary', function (): void {
+    $url = eventTrackedAt('/'.str_repeat('a', 1_950).'?token=supersecretvalue123')['url'];
+
+    expect(mb_strlen($url))->toBeLessThanOrEqual(2_000)
+        ->and($url)->not->toContain('super');
+});
+
+/**
+ * Escaped as the server measures it, each non-ASCII character of a URL takes
+ * six bytes, so a URL within its 2,000 characters can still hold the event
+ * over 5,120 bytes when nothing else is left to give way.
+ */
+test('an event whose url fits its 2,000 characters but not the item limit once escaped is not buffered', function (): void {
+    expect(eventTrackedAt('/'.str_repeat('é', 1_900)))->toBe([]);
 });

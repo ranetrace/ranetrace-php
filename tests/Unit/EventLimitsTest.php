@@ -161,7 +161,7 @@ test('an event of many small properties has its properties replaced as a whole',
 test('an event over the limit with nothing left to replace is dropped and says so', function (): void {
     $log = new RecordingDiagnostics;
 
-    $fitted = (new EventLimits($log))->fit(limitedEvent([], 'https://shop.test/'.str_repeat('a', 6_000), 'search_performed'));
+    $fitted = (new EventLimits($log))->fit(limitedEvent([], 'https://shop.test/'.str_repeat('é', 1_900), 'search_performed'));
 
     expect($fitted)->toBeNull()
         ->and($log->records)->toBe([[
@@ -289,12 +289,12 @@ test('a diagnostics sink that throws costs neither the cut nor the caller', func
 });
 
 test('a dropped event with a sink that throws is still dropped without throwing', function (): void {
-    expect((new EventLimits(new RecordingDiagnostics(throws: true)))->fit(limitedEvent([], 'https://shop.test/'.str_repeat('a', 6_000))))
+    expect((new EventLimits(new RecordingDiagnostics(throws: true)))->fit(limitedEvent([], 'https://shop.test/'.str_repeat('é', 1_900))))
         ->toBeNull();
 });
 
 test('an item without a properties key is never given one', function (): void {
-    $item = limitedEvent([], 'https://shop.test/'.str_repeat('a', 6_000));
+    $item = limitedEvent([], 'https://shop.test/'.str_repeat('é', 1_900));
     unset($item['properties']);
 
     expect((new EventLimits(new RecordingDiagnostics))->fit($item))->toBeNull();
