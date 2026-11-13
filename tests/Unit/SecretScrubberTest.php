@@ -2194,6 +2194,30 @@ test('it leaves a look-alike of a prefixed token readable', function (string $va
     'base64 json without a second part' => ['eyJhbGciOiJIUzI1NiJ9'],
 ]);
 
+test('scrubString redacts a prefixed token written with percent-encoding or after an encoded character', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected)
+        ->and(scrubber()->scrubDeep(['v' => $value]))->toBe(['v' => $expected]);
+})->with([
+    'an encoded underscore in a path' => ['/keys/sk%5Flive%5F51HabcDEF0123456789', '/keys/[REDACTED]'],
+    'a lower-case escape in a query' => ['https://app.test/x?ref=rk%5flive%5f51HabcDEF0123456789&page=2', 'https://app.test/x?ref=[REDACTED]&page=2'],
+    'an encoded dash' => ['/hooks/xoxb%2D123456789012%2D1234567890123/ok', '/hooks/[REDACTED]/ok'],
+    'an encoded underscore in a token body' => ['github%5Fpat%5F11ABCDEFG0123456789%5Fabcdefghijklmnop', '[REDACTED]'],
+    'a jwt with encoded dots' => ['/verify/eyJhbGciOiJIUzI1NiJ9%2EeyJzdWIiOiIxMjM0In0%2Edozjg%2DNryP4J3jVmNHl0w5N', '/verify/[REDACTED]'],
+    'after an encoded slash in a url inside a url' => [
+        'https://app.test/login?next=https%3A%2F%2Fapp.test%2Fkeys%2Fsk_live_abc123',
+        'https://app.test/login?next=https%3A%2F%2Fapp.test%2Fkeys%2F[REDACTED]',
+    ],
+    'after an encoded space' => ['/search?q=key%20AKIAIOSFODNN7EXAMPLE', '/search?q=key%20[REDACTED]'],
+]);
+
+test('it leaves a look-alike of an encoded prefixed token readable', function (string $value): void {
+    expect(scrubber()->scrubString($value))->toBe($value);
+})->with([
+    'an identifier that goes on after an encoded underscore' => ['/flags/sk%5Flive%5Fmode'],
+    'a word that ends in a prefix after an encoded underscore' => ['/x/my%5Fghp_1234567890abcdefABCDEF1234567890abcd'],
+    'a word that ends in a prefix after an encoded dash' => ['/x/my%2Dghp_1234567890abcdefABCDEF1234567890abcd'],
+]);
+
 test('scrubSource redacts a value under a pwd key, but pass and dsn are not sensitive fragments', function (string $line, string $expected): void {
     expect(scrubSourceLine($line))->toBe($expected);
 })->with([
@@ -2265,6 +2289,29 @@ test('the value shapes stay linear on long runs', function (string $label, Closu
     'a long stripe key' => [
         'a long stripe key',
         fn (int $scale): array => ['sk_live_'.str_repeat('a', 12_500 * $scale), '[REDACTED]'],
+    ],
+    'jwt heads joined by encoded dashes' => [
+        'jwt heads joined by encoded dashes',
+        fn (int $scale): array => [str_repeat('eyJa%2D', 2_500 * $scale), str_repeat('eyJa%2D', 2_500 * $scale)],
+    ],
+    'jwt heads joined by encoded spaces' => [
+        'jwt heads joined by encoded spaces',
+        fn (int $scale): array => [str_repeat('eyJa%20', 2_500 * $scale), str_repeat('eyJa%20', 2_500 * $scale)],
+    ],
+    'jwt heads joined by encoded dots' => [
+        'jwt heads joined by encoded dots',
+        fn (int $scale): array => [
+            'eyJ'.str_repeat('a', 12_500 * $scale).'%2EeyJ'.str_repeat('a', 12_500 * $scale),
+            'eyJ'.str_repeat('a', 12_500 * $scale).'%2EeyJ'.str_repeat('a', 12_500 * $scale),
+        ],
+    ],
+    'encoded underscores in a token body' => [
+        'encoded underscores in a token body',
+        fn (int $scale): array => ['glpat-'.str_repeat('a%5F', 5_000 * $scale), '[REDACTED]'],
+    ],
+    'stripe prefixes after encoded slashes' => [
+        'stripe prefixes after encoded slashes',
+        fn (int $scale): array => [str_repeat('%2Fsk_live_', 2_000 * $scale), str_repeat('%2Fsk_live_', 2_000 * $scale)],
     ],
 ]);
 

@@ -6,6 +6,9 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Fixed
+- **A token with a known prefix is redacted when it is written percent-encoded inside a URL, or stands right after an encoded character.** The value pass that recognises a Stripe `sk_live_` key, a GitHub or GitLab token, a Slack token, an AWS access key id or a JWT wherever it stands read raw text only. A token whose `_`, `-` or `.` was written as `%5F`, `%2D` or `%2E`, as in `/keys/sk%5Flive%5F...`, was sent as written, and so was a token behind an encoded separator, as in the URL inside `?next=https%3A%2F%2Fapp.test%2Fkeys%2Fsk_live_...`, because the `F` of `%2F` read as the letter before it. Both are now redacted in a message, a trace, a source line and every string value of log context, event properties, breadcrumbs and an exception's `context()`. Nothing to do on upgrade
+
 ## [1.2.1] - 2026-11-13
 
 ### Fixed

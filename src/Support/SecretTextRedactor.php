@@ -215,15 +215,23 @@ final class SecretTextRedactor
      * where no word character, `$`, `.` or `-` precedes it, and every repeat
      * is possessive, so each run is entered once and the scan stays linear:
      * without `-` there, `eyJa-eyJa-...` was entered at every `eyJ`.
+     *
+     * Inside a URL a token can be written percent-encoded, so the `_`, `-`
+     * and `.` of a prefix or a body are also read as `%5F`, `%2D` and `%2E`,
+     * and a token can start right after any other escape: the `%2F` of a URL
+     * inside a query string, or a `%20`. After one of those three it cannot,
+     * for the same reason it cannot after the character itself. No prefix
+     * starts with a digit, so the hex digits of an escape start no token
+     * either.
      */
-    private const string PREFIXED_TOKEN = '~(?<![\w$.\-])(?:'
-        .'[sr]k_live_[A-Za-z0-9]{6,}+'
+    private const string PREFIXED_TOKEN = '~(?:(?<![\w$.\-])|(?<=%[0-9A-Fa-f]{2})(?<!%5[Ff]|%2[DdEe]))(?:'
+        .'[sr]k(?:_|%5[Ff])live(?:_|%5[Ff])[A-Za-z0-9]{6,}+'
         .'|A[KS]IA[A-Z0-9]{16}'
-        .'|gh[po]_[A-Za-z0-9]{20,}+'
-        .'|github_pat_\w{20,}+'
-        .'|xox[abpr]-[A-Za-z0-9\-]{10,}+'
-        .'|glpat-[\w\-]{20,}+'
-        .'|eyJ[\w\-]++\.eyJ[\w\-]++\.[\w\-]*+'
+        .'|gh[po](?:_|%5[Ff])[A-Za-z0-9]{20,}+'
+        .'|github(?:_|%5[Ff])pat(?:_|%5[Ff])(?:\w|%5[Ff]){20,}+'
+        .'|xox[abpr](?:-|%2[Dd])(?:[A-Za-z0-9\-]|%2[Dd]){10,}+'
+        .'|glpat(?:-|%2[Dd])(?:[\w\-]|%5[Ff]|%2[Dd]){20,}+'
+        .'|eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])(?:[\w\-]|%5[Ff]|%2[Dd])*+'
         .')(?![\w$])~';
 
     /**
