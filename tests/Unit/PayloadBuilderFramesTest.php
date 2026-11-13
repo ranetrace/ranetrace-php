@@ -376,10 +376,13 @@ test('a previous exception message is scrubbed and capped like the item message'
  * A notification channel wraps the exception of its HTTP client, whose
  * message holds the request URL, and the path of a Telegram Bot API URL
  * holds the bot token. With `zend.exception_ignore_args` off the URL is an
- * argument in the text trace as well, cut to its first characters.
+ * argument in the text trace as well, as much of it as
+ * `zend.exception_string_param_max_len` lets through: 15 characters by
+ * default, none with PHP's production settings, and the whole URL here.
  */
 test('a telegram bot token in a request url reaches no part of the report', function (): void {
     $previous = ini_set('zend.exception_ignore_args', '0');
+    $previousLength = ini_set('zend.exception_string_param_max_len', '200');
 
     try {
         $root = frameProject();
@@ -403,10 +406,11 @@ test('a telegram bot token in a request url reaches no part of the report', func
 
         expect($payload['message'])->toBe('The communication with Telegram failed. `Client error: `POST https://api.telegram.org/bot[REDACTED]/sendMessage` resulted in a `401 Unauthorized` response`')
             ->and($payload['previous'][0]['message'])->toBe('cURL error 28: Operation timed out for https://api.telegram.org/bot[REDACTED]/sendMessage')
-            ->and($payload['trace'])->toContain("('https://api.tel...')")
+            ->and($payload['trace'])->toContain("('https://api.telegram.org/bot[REDACTED]/sendMessage')")
             ->and((string) json_encode($payload))->not->toContain($secret);
     } finally {
         ini_set('zend.exception_ignore_args', (string) $previous);
+        ini_set('zend.exception_string_param_max_len', (string) $previousLength);
     }
 });
 
