@@ -9,9 +9,10 @@ use Ranetrace\Php\Config;
 
 /**
  * Turns raw visitor identifiers into salted, one-way hashes before they leave
- * the host. Ranetrace never receives a raw IP, user agent or session id.
+ * the host. An event or a page visit carries these hashes in place of the raw
+ * IP, user agent and session id.
  *
- * Shared with `ranetrace/ranetrace-laravel`, whose copy this replaced. The
+ * Shared with `ranetrace/ranetrace-laravel`. The
  * hashed inputs and their separator are the contract: the session hash is
  * HMAC-SHA256 over `ip|first-100-chars-of-user-agent|Y-m-d`, so it rotates
  * every day and cannot be joined across sites. There is one derivation because
