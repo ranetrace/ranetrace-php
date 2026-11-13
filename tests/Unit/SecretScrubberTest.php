@@ -370,9 +370,9 @@ test('scrubString honours user-configured extra keys', function (): void {
 });
 
 test('scrubString redacts a quoted value up to its closing quote, whatever it holds', function (string $line, string $expected): void {
-    // A quoted value used to end at the first space, comma or semicolon and then
-    // needed its closing quote right there, so any value holding one of those
-    // was left whole. Source lines around a frame are full of exactly that.
+    // A quoted value ends at its closing quote, not at its first space, comma
+    // or semicolon: ended there, a value holding one of those would be left
+    // whole. Source lines around a frame are full of exactly that.
     expect(scrubber()->scrubString($line))->toBe($expected);
 })->with([
     'array element' => ["'api_key' => 'sk_live_abc',", "'api_key' => '[REDACTED]',"],
@@ -400,8 +400,8 @@ test('scrubString redacts the quoted value that follows a quoted sensitive key a
 ]);
 
 test('scrubString never splits => into a separator and a redacted value', function (): void {
-    // `=` used to match on its own when the value after `=>` failed, which ate
-    // the `>` as the "value" and left the real one in place.
+    // The `=` of `=>` is not a separator on its own: read as one, it takes the
+    // `>` for the value and leaves the real one in place.
     expect(scrubber()->scrubString("'token' => \"a,b\","))->not->toContain('a,b')
         ->and(scrubber()->scrubString("'token' => \"a,b\","))->toContain('=>')
         ->and(scrubber()->scrubString("'password' => '',"))->toBe("'password' => '',")
@@ -433,8 +433,8 @@ test('scrubString keeps the other pairs of a query string', function (): void {
 });
 
 test('scrubString redacts the credential of an authorization header, not its scheme', function (string $line, string $expected): void {
-    // The scheme used to be taken for the value, so the credential after it
-    // shipped as written.
+    // The scheme is not the value: taken for it, the credential after it is
+    // sent as written.
     expect(scrubber()->scrubString($line))->toBe($expected);
 })->with([
     'bearer' => ['Authorization: Bearer abc123', 'Authorization: Bearer [REDACTED]'],
@@ -461,8 +461,8 @@ test('scrubString never keeps an unquoted value under a sensitive key', function
 ]);
 
 test('scrubString never ships a literal inside a code-shaped value under a sensitive key', function (string $line, string $expected): void {
-    // The value used to stop at its first quote, which left the literal, the
-    // actual secret, behind the placeholder.
+    // The value does not stop at its first quote: stopped there, the literal,
+    // the actual secret, is left behind the placeholder.
     expect(scrubber()->scrubString($line))->toBe($expected);
 })->with([
     'a static call' => ["'password' => Hash::make('x'),", "'password' => [REDACTED],"],
@@ -490,9 +490,9 @@ test('the same line is read as code in source and redacted whole in a message', 
 });
 
 test('scrubSource keeps a code value after a sensitive key and redacts only its literals', function (string $line, string $expected): void {
-    // An unquoted value used to run to the first quote or bracket, which cut
-    // into the code, garbled it and left the literal after the cut, the real
-    // secret, as written.
+    // An unquoted value that is code does not end at its first quote or
+    // bracket: a cut there garbles the code and leaves the literal after the
+    // cut, the real secret, as written.
     expect(scrubSourceLine($line))->toBe($expected);
 })->with([
     'hashing a literal' => ["'password' => Hash::make('x'),", "'password' => Hash::make('[REDACTED]'),"],
@@ -512,8 +512,8 @@ test('scrubSource keeps a code value after a sensitive key and redacts only its 
 ]);
 
 test('scrubSource reads a name spaced from its call as code and redacts the name', function (string $line, string $expected): void {
-    // The value used to be a bare token up to the space, so the literals after
-    // it shipped. A word spaced from a bracket is as likely prose in a comment
+    // Read as a bare token up to the space, the value leaves the literals after
+    // it as written. A word spaced from a bracket is as likely prose in a comment
     // (`password: hunter2 (old)`) as a call, so the word goes and the rest is
     // read as code.
     expect(scrubSourceLine($line))->toBe($expected);
@@ -569,8 +569,8 @@ test('scrubString redacts an unquoted value to the end of its line and leaves th
 });
 
 test('scrubString treats a quoted key that closes a subscript as a key', function (string $line, string $expected): void {
-    // The `]` between the key and the separator used to hide the key, so an
-    // assignment into a config array shipped its value as written.
+    // The `]` between the key and the separator does not hide the key, so an
+    // assignment into a config array loses its value.
     expect(scrubber()->scrubString($line))->toBe($expected);
 })->with([
     'single subscript' => ["\$config['password'] = 'hunter2';", "\$config['password'] = '[REDACTED]';"],
@@ -580,8 +580,8 @@ test('scrubString treats a quoted key that closes a subscript as a key', functio
 ]);
 
 test('a fallback after a sensitive key is its value', function (string $line, string $expected): void {
-    // `??` and `?:` were not separators, so the literal a sensitive read falls
-    // back to shipped as written.
+    // `??` and `?:` are separators, so the literal a sensitive read falls back
+    // to is redacted.
     expect(scrubber()->scrubString($line))->toBe($expected)
         ->and(scrubSourceLine($line))->toBe($expected);
 })->with([
@@ -894,8 +894,8 @@ test('scrubSource redacts the literals passed to a known credential-taking call'
 ]);
 
 test('scrubString redacts a literal concatenated onto a quoted secret', function (string $line, string $expected): void {
-    // Only the first literal used to be redacted; the one joined onto it with
-    // `.` shipped as written.
+    // The literal joined onto the first with `.` is part of the secret, so it
+    // is redacted too.
     expect(scrubber()->scrubString($line))->toBe($expected);
 })->with([
     'two literals' => ["'password' => 'abc' . 'def',", "'password' => '[REDACTED]' . '[REDACTED]',"],
@@ -954,8 +954,8 @@ test('scrubString redacts the value after a quoted label that holds a sensitive 
 });
 
 test('scrubString still redacts a bare token whole, whatever it spells', function (string $line, string $expected): void {
-    // true, null, numbers and constants stay bare tokens: they are redacted as
-    // before, which hides nothing a reader needs.
+    // true, null, numbers and constants are bare tokens, not code: they are
+    // redacted whole, which hides nothing a reader needs.
     expect(scrubber()->scrubString($line))->toBe($expected);
 })->with([
     'a word' => ['password=hunter2', 'password=[REDACTED]'],
@@ -1014,8 +1014,8 @@ test('scrubString keeps multibyte keys and values whole under a UTF-8 locale', f
 });
 
 test('scrubSource reads the start of the next line as the value of a key that ends a line', function (array $lines, array $expected): void {
-    // Each line used to be scrubbed on its own, so a value formatted onto the
-    // line after its key shipped as written.
+    // A window is scrubbed as a whole, not line by line, so a value formatted
+    // onto the line after its key is redacted.
     expect(scrubber()->scrubSource($lines))->toBe($expected);
 })->with([
     'array element' => [["'password' =>", "    'hunter2',"], ["'password' =>", "    '[REDACTED]',"]],
@@ -1123,8 +1123,9 @@ test('scrubSource does not carry a full ternary or a call key before a compariso
 ]);
 
 test('scrubSource carries an open bracket of a sensitive value onto the lines after it until it closes', function (array $lines, array $expected): void {
-    // Only the line after the opening bracket used to be read as the value, so
-    // a call or a code value spread over more lines shipped its later literals.
+    // The value runs to the closing bracket, not only over the line after the
+    // opening one, so a call or a code value spread over more lines loses its
+    // later literals too.
     expect(scrubber()->scrubSource($lines))->toBe($expected);
 })->with([
     'sensitive call over several lines' => [
@@ -1154,7 +1155,7 @@ test('scrubSource carries an open bracket of a sensitive value onto the lines af
 ]);
 
 test('scrubSource carries an open bracket of a sensitive value past a comment', function (array $lines, array $expected): void {
-    // A comment used to end the value, so the arguments after it shipped.
+    // A comment does not end the value, so the arguments after it are redacted.
     expect(scrubber()->scrubSource($lines))->toBe($expected);
 })->with([
     'a line comment on a line of its own' => [
@@ -1355,8 +1356,8 @@ test('scrubSource leaves a heredoc readable after a read that is not sensitive o
 ]);
 
 test('scrubSource goes on redacting a sensitive string literal that runs onto the next lines', function (array $lines, array $expected): void {
-    // The first line used to lose its literal to the end of the line and the
-    // rest of the literal, on the lines after it, shipped as written.
+    // A literal still open at the end of its line is redacted to the end of
+    // that line, and its rest, on the lines after it, up to its closing quote.
     expect(scrubber()->scrubSource($lines))->toBe($expected);
 })->with([
     'quoted value' => [
@@ -1679,7 +1680,7 @@ test('scrubSource stays linear on long windows', function (string $label, Closur
 
 test('scrubDeep redacts a sensitive query param in a relative URL value', function (): void {
     // A signed download link recorded by the fetch/XHR breadcrumb hooks is
-    // usually relative; only the absolute form used to be redacted.
+    // usually relative, so that form is redacted like the absolute one.
     expect(scrubber()->scrubDeep(['url' => '/exports/42/download?expires=1735689600&signature=a1b2c3']))
         ->toBe(['url' => '/exports/42/download?expires=1735689600&signature=[REDACTED]']);
 });
@@ -1696,12 +1697,11 @@ test('scrubDeep redacts relative URL shapes that carry no leading slash', functi
 ]);
 
 test('scrubString redacts the whole value when PCRE gives up, and says so in the internal log', function (): void {
-    // A PCRE limit failure used to return the input unscrubbed. Losing the
-    // string beats leaking it, and the give-up must never be silent.
+    // Losing the string beats leaking it, and the give-up must never be silent.
     //
     // The limit has to be pinned artificially low to reach this path at all:
-    // the pattern is no longer super-linear, so no realistic input reaches the
-    // real limit. The path still has to work, because a host can lower
+    // the pattern is linear, so no realistic input reaches the real limit.
+    // The path has to work all the same, because a host can lower
     // `pcre.backtrack_limit` itself and PCRE gives up on bad UTF-8 too.
     $directory = tempDirectory();
     $scrubber = scrubber(['buffer_path' => $directory]);
@@ -1723,11 +1723,11 @@ test('scrubString redacts the whole value when PCRE gives up, and says so in the
         ->toContain('Backtrack limit');
 });
 
-test('scrubString stays linear on the long word runs that used to burn the backtrack limit', function (string $label, Closure $shape): void {
-    // These are the shapes the pattern used to be quadratic on: a 50k run of
-    // word characters, which cost one full re-scan per start position. PCRE
-    // gave up and the whole value was redacted wholesale. The result is now the
-    // precise redaction, which is only reachable if the engine never gave up.
+test('scrubString stays linear on long runs of word characters', function (string $label, Closure $shape): void {
+    // A pattern that re-scans a 50k run of word characters once per start
+    // position is quadratic on these shapes, and PCRE then gives up and the
+    // whole value is redacted wholesale. Each shape therefore also expects the
+    // precise redaction, which is only reachable when the engine never gave up.
     $scrubber = scrubber();
 
     expectScrubStaysLinear($label, $shape, fn (string $value): string => $scrubber->scrubString($value));
@@ -1999,8 +1999,8 @@ test('a resolver that throws leaves the path unscrubbed instead of breaking the 
 });
 
 test('scrubUrl redacts a query-shaped fragment', function (string $url, string $expected): void {
-    // The OAuth implicit flow puts the grant in the fragment, where nothing
-    // used to look for it.
+    // The OAuth implicit flow puts the grant in the fragment, so the fragment
+    // is read like a query.
     expect(scrubber()->scrubUrl($url))->toBe($expected);
 })->with([
     'no query before it' => [
@@ -2053,9 +2053,9 @@ test('scrubUrlPath leaves a fragment without a sensitive segment byte-for-byte',
 });
 
 test('scrubUrlPath redacts the path even when the query or fragment carries an absolute url', function (string $url, string $expected): void {
-    // An unencoded `https://` in the query used to be mistaken for the URL's
-    // own scheme, which moved the path window into the query and shipped the
-    // live token untouched.
+    // An unencoded `https://` in the query is not the URL's own scheme: taken
+    // for it, the path window moves into the query and the live token is sent
+    // untouched.
     expect(scrubber()->scrubUrlPath($url, ['TOKEN']))->toBe($expected)
         ->and(scrubber()->scrubDeep(['url' => $url], ['TOKEN']))->toBe(['url' => $expected]);
 })->with([
