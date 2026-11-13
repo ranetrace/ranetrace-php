@@ -6,6 +6,7 @@ use Monolog\Level;
 use Monolog\LogRecord;
 use Ranetrace\Php\Contract\WireContract;
 use Ranetrace\Php\Errors\ErrorReporter;
+use Ranetrace\Php\Events\EventLimits;
 use Ranetrace\Php\Events\EventTracker;
 use Ranetrace\Php\JavaScript\ErrorItemBuilder;
 use Ranetrace\Php\JavaScript\Relay;
@@ -167,6 +168,42 @@ test('the emitted error satisfies the strict field spec, its id included', funct
 
     expect($payload)->toHaveKey('id')
         ->and(DescriptorValidator::violations(WireContract::item('errors')['fields'], $payload, true, []))->toBe([]);
+});
+
+/**
+ * The SDK cuts an event to the events endpoint's two size checks, so its
+ * numbers must be the endpoint's: a limit above the endpoint's lets a refused
+ * event through, and one below it cuts events the endpoint would take.
+ */
+test('the event limits equal the events endpoint checks', function (): void {
+    $checks = WireContract::item('events')['additional_checks'];
+
+    expect(EventLimits::MAX_ITEM_BYTES)->toBe($checks['max_item_bytes']['value'])
+        ->and(EventLimits::MAX_PROPERTY_VALUE_BYTES)->toBe($checks['max_property_value_chars']['value']);
+});
+
+test('an event emitted past the endpoint limits satisfies its field spec and both size checks', function (): void {
+    $config = testConfig(['environment' => 'testing', 'internal_logging' => ['enabled' => false]]);
+    $log = new InternalLogger($config);
+    $buffer = new ArrayBuffer;
+
+    (new EventTracker($config, $buffer, new SecretScrubber($config, $log), new FingerprintGenerator($config), $log))
+        ->track('checkout_completed', [
+            'order_id' => 'ORD-4821',
+            'note' => str_repeat('ü/', 400),
+            'lines' => array_map(static fn (int $index): string => "https://shop.test/products/{$index}", range(1, 300)),
+        ]);
+
+    $payload = $buffer->payloads('events')[0];
+    $checks = WireContract::item('events')['additional_checks'];
+    $longest = max(array_map(
+        static fn (mixed $value): int => is_string($value) ? mb_strlen($value) : 0,
+        $payload['properties'],
+    ));
+
+    expect(mb_strlen((string) json_encode($payload), '8bit'))->toBeLessThanOrEqual($checks['max_item_bytes']['value'])
+        ->and($longest)->toBeLessThanOrEqual($checks['max_property_value_chars']['value'])
+        ->and(DescriptorValidator::violations(WireContract::item('events')['fields'], $payload))->toBe([]);
 });
 
 test('the fixtures refuse an id that is not a uuid', function (string $type): void {

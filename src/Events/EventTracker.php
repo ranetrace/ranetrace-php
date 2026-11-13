@@ -96,6 +96,8 @@ final class EventTracker
 
     private readonly EventItemBuilder $items;
 
+    private readonly EventLimits $limits;
+
     public function __construct(
         private readonly Config $config,
         private readonly BufferInterface $buffer,
@@ -105,6 +107,7 @@ final class EventTracker
     ) {
         $this->budget = new ItemByteBudget($log);
         $this->items = new EventItemBuilder($scrubber);
+        $this->limits = new EventLimits($log);
     }
 
     /**
@@ -154,13 +157,14 @@ final class EventTracker
         }
 
         try {
-            // The per-item byte budget runs on the finished, already scrubbed
-            // item, right before it reaches the buffer. A null item was
-            // irreducibly over budget and was dropped with a diagnostics entry,
-            // so there is nothing left to buffer.
+            // The finished, already scrubbed item is held to the events
+            // endpoint's own limits first, then to the per-item byte budget,
+            // right before it reaches the buffer. A null item could not be
+            // brought within one of them and was dropped with a diagnostics
+            // entry, so there is nothing left to buffer.
             [$userAgentHash, $sessionIdHash] = $this->visitorHashes();
 
-            $item = $this->budget->cap(self::BUFFER_TYPE, $this->items->build(
+            $item = $this->limits->fit($this->items->build(
                 $name,
                 $properties,
                 $this->resolveUser($userId),
@@ -170,6 +174,8 @@ final class EventTracker
                 $sessionIdHash,
                 $this->sensitivePathValues,
             ));
+
+            $item = $item === null ? null : $this->budget->cap(self::BUFFER_TYPE, $item);
 
             if ($item === null) {
                 return;

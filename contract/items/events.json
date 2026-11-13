@@ -27,11 +27,13 @@
     "additional_checks": {
         "max_item_bytes": {
             "value": 5120,
-            "note": "JSON-encoded size of the whole item, measured server-side."
+            "note": "JSON-encoded size of the whole item, measured server-side with PHP's default encoding, so escaped slashes and `\\uXXXX` count.",
+            "client": "The SDKs cut an event to this limit before sending: they replace the largest top-level property values with the nested marker `{\"_truncated\": \"<reason>\"}` until the item fits, then `properties` as a whole, and drop the event only when even that does not fit. Each cut and each drop writes one line to the internal log."
         },
         "max_property_value_chars": {
             "value": 500,
-            "note": "Applies to top-level string property values only, counted in characters, not bytes."
+            "note": "Applies to top-level string property values only, counted in characters, not bytes.",
+            "client": "The SDKs cut a longer top-level string property to at most 500 bytes before sending, the `... (truncated)` suffix included, on a character boundary. At most 500 bytes is at most 500 characters, so the cut also passes a backend that counts bytes."
         }
     },
     "examples": {

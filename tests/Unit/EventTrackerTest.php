@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
+use Ranetrace\Php\Events\EventLimits;
 use Ranetrace\Php\Events\EventTracker;
 use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
-use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
 use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 
@@ -570,15 +570,75 @@ test('customUnsafe skips validation', function (): void {
         ->and($event['user'])->toBe(['id' => 5]);
 });
 
-test('an event over the per-item byte budget has its properties replaced, never its top level', function (): void {
+/**
+ * The events endpoint's own limits are far below the per-item budget, so the
+ * event is held to them first and the general budget has nothing left to do:
+ * the internal log holds the event's own line and not the budget's.
+ */
+test('an event over the endpoint limits reaches the buffer cut, and the general budget has nothing left to do', function (): void {
+    $directory = tempDirectory();
     $buffer = new ArrayBuffer;
 
-    eventTracker($buffer)->track('checkout_started', ['blob' => str_repeat('p', 100_000)]);
+    eventTracker($buffer, [
+        'buffer_path' => $directory,
+        'internal_logging' => ['enabled' => true, 'level' => 'debug', 'stderr_fallback' => false],
+    ])->track('checkout_started', [
+        'note' => str_repeat('p', 100_000),
+        'cart' => array_map(static fn (int $index): array => ['sku' => "SKU-{$index}", 'name' => "Product {$index}"], range(1, 200)),
+    ]);
 
     $event = firstEvent($buffer);
+    $log = implode('', array_map(
+        static fn (string $file): string => (string) file_get_contents($file),
+        glob($directory.'/internal-*.log') ?: [],
+    ));
 
     expect(array_keys($event))->toBe(EVENT_KEYS)
         ->and($event)->not->toHaveKey('_truncated')
-        ->and($event['properties'])->toBe(['_truncated' => 'Field exceeded the per-item budget and was removed'])
-        ->and(mb_strlen((string) json_encode($event), '8bit'))->toBeLessThanOrEqual(ItemByteBudget::MAX_ITEM_BYTES);
+        ->and($event['properties'])->toBe([
+            'note' => str_repeat('p', 485).'... (truncated)',
+            'cart' => ['_truncated' => EventLimits::PROPERTY_REPLACED_REASON],
+        ])
+        ->and(mb_strlen((string) json_encode($event), '8bit'))->toBeLessThanOrEqual(EventLimits::MAX_ITEM_BYTES)
+        ->and(mb_substr_count($log, 'Event exceeded the events endpoint limits and was cut'))->toBe(1)
+        ->and($log)->toContain('"event_name":"checkout_started"')
+        ->and($log)->not->toContain('per-item byte budget');
+});
+
+test('a sale with a products list too large for the endpoint arrives with its order, total, currency and count', function (): void {
+    $buffer = new ArrayBuffer;
+    $products = array_map(static fn (int $index): array => [
+        'id' => "PROD-{$index}",
+        'name' => "Organic cotton t-shirt, size M, colour number {$index}",
+        'sku' => "TS-ORG-M-{$index}",
+        'category' => 'Clothing',
+        'price' => 29.99,
+        'quantity' => 2,
+    ], range(1, 40));
+
+    expect(mb_strlen((string) json_encode($products), '8bit'))->toBeGreaterThan(EventLimits::MAX_ITEM_BYTES);
+
+    eventTracker($buffer)->sale('ORD-4821', 2399.20, $products, 'EUR');
+
+    $event = firstEvent($buffer);
+
+    expect($event['event_name'])->toBe('sale')
+        ->and($event['properties'])->toBe([
+            'order_id' => 'ORD-4821',
+            'total_amount' => 2399.20,
+            'currency' => 'EUR',
+            'products' => ['_truncated' => EventLimits::PROPERTY_REPLACED_REASON],
+            'product_count' => 40,
+        ])
+        ->and(mb_strlen((string) json_encode($event), '8bit'))->toBeLessThanOrEqual(EventLimits::MAX_ITEM_BYTES);
+});
+
+test('an event that cannot be brought within the endpoint limits is not buffered', function (): void {
+    $buffer = new ArrayBuffer;
+
+    $tracker = eventTracker($buffer);
+    $tracker->setServerContext(['HTTP_HOST' => 'shop.test', 'REQUEST_URI' => '/'.str_repeat('a', 6_000)], false);
+    $tracker->track('search_performed');
+
+    expect($buffer->count('events'))->toBe(0);
 });
