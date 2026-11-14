@@ -200,13 +200,20 @@ final class SecretTextRedactor
      * key, never its publishable or test key, and only prefixes that do not
      * start an ordinary word or identifier.
      *
-     * - Stripe secret and restricted live keys: `sk_live_`, `rk_live_`.
+     * - Stripe secret and restricted live keys (`sk_live_`, `rk_live_`), the
+     *   signing secret of a webhook endpoint (`whsec_`) and an organization
+     *   key (`sk_org_`, with or without `live_` after it, never `test_`).
      * - AWS access key ids: `AKIA` (long-term) and `ASIA` (temporary), then
      *   exactly 16 upper-case letters and digits.
-     * - GitHub classic and OAuth tokens (`ghp_`, `gho_`) and fine-grained
-     *   tokens (`github_pat_`).
-     * - Slack tokens: `xoxa-`, `xoxb-`, `xoxp-`, `xoxr-`.
-     * - GitLab personal access tokens: `glpat-`.
+     * - GitHub classic and OAuth tokens (`ghp_`, `gho_`), the three tokens of
+     *   a GitHub App (`ghs_` installation, `ghu_` user, `ghr_` refresh) and
+     *   fine-grained tokens (`github_pat_`). An installation token is also
+     *   issued as `ghs_<app id>_<JWT>`, see {@see GITHUB_INSTALLATION_JWT}.
+     * - Slack tokens, see {@see SLACK_PREFIX}: `xoxa-`, `xoxb-`, `xoxp-`,
+     *   `xoxr-`, the refresh token `xoxe-`, the app-level token `xapp-`,
+     *   and each of them behind the `xoxe.` of a rotated token.
+     * - GitLab tokens, see {@see GITLAB_PREFIX}: `glpat-` and the other
+     *   prefixes GitLab issues, with the checksum of a routable token.
      * - A JWT: two base64url segments that each start with `eyJ`, the encoded
      *   `{"`, and the signature after the second `.`, empty when unsigned.
      *
@@ -259,17 +266,19 @@ final class SecretTextRedactor
     private const string PREFIXED_TOKEN = '~(?:(?<![\w$.\-])|(?<=%[0-9A-Fa-f]{2})(?<!%5[Ff]|%2[DdEe]))(?:'
         .'[sr]k(?:_|%5[Ff])live(?:_|%5[Ff])[A-Za-z0-9]{6,}+'
         .'|A[KS]IA[A-Z0-9]{16}'
-        .'|gh[po](?:_|%5[Ff])[A-Za-z0-9]{20,}+'
+        .'|gh[oprsu](?:_|%5[Ff])[A-Za-z0-9]{20,}+'
         .'|github(?:_|%5[Ff])pat(?:_|%5[Ff])(?:\w|%5[Ff]){20,}+'
-        .'|xox[abpr](?:-|%2[Dd])(?:[A-Za-z0-9\-]|%2[Dd]){10,}+'
-        .'|glpat(?:-|%2[Dd])(?:[\w\-]|%5[Ff]|%2[Dd]){20,}+'
+        .'|'.self::SLACK_PREFIX.'(?:[A-Za-z0-9\-]|%2[Dd]){10,}+'
+        .'|'.self::GITLAB_PREFIX.'(?:[\w\-]|%5[Ff]|%2[Dd]){20,}+'.self::GITLAB_ROUTABLE_TAIL
         .'|eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])(?:[\w\-]|%5[Ff]|%2[Dd])*+'
         .')(?![\w$])'
-        .'|[sr]k(?:_|%5[Ff])live(?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
-        .'|gh[po](?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|(?:[sr]k(?:_|%5[Ff])live|whsec)(?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|sk(?:_|%5[Ff])org(?:_|%5[Ff])(?:live(?:_|%5[Ff]))?+[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|'.self::GITHUB_INSTALLATION_JWT
+        .'|gh[oprsu](?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
         .'|github(?:_|%5[Ff])pat(?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+(?:(?:_|%5[Ff])[A-Za-z0-9]++)*+'
-        .'|xox[abpr](?:-|%2[Dd])(?:[A-Za-z0-9\-]|%2[Dd]){'.self::MIN_GLUED_TOKEN_BODY.',}+'
-        .'|glpat(?:-|%2[Dd])(?:[\w\-]|%5[Ff]|%2[Dd]){'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|'.self::SLACK_PREFIX.'(?:[A-Za-z0-9\-]|%2[Dd]){'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|'.self::GITLAB_PREFIX.'(?:[\w\-]|%5[Ff]|%2[Dd]){'.self::MIN_GLUED_TOKEN_BODY.',}+'.self::GITLAB_ROUTABLE_TAIL
         .'|(?:(?<![A-Za-z0-9$])|(?<=%5[Ff])|(?<=%2[DdEe])|(?<=\\\\[nrt])|(?<=\\\\u[0-9A-Fa-f]{4}))(?:'
         .'A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])'
         .'|eyJ(?:[\w\-]|%5[Ff]|%2[Dd]){1,'.self::MAX_GLUED_JWT_HEAD.'}+(?:\.|%2[Ee])eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])(?:[\w\-]|%5[Ff]|%2[Dd])*+'
@@ -278,9 +287,55 @@ final class SecretTextRedactor
     /**
      * The fewest body characters that make a prefixed token its own evidence
      * in {@see PREFIXED_TOKEN}, whatever it is glued to. A GitLab token has
-     * exactly 20, a legacy Stripe key 24, and every other shape more.
+     * 20 or more, a legacy Stripe key 24, and every other shape more.
      */
     private const int MIN_GLUED_TOKEN_BODY = 20;
+
+    /**
+     * What a Slack token starts with in {@see PREFIXED_TOKEN}, up to the `-`
+     * before its body. With token rotation on, Slack issues an access token
+     * as `xoxe.xoxp-1-…` (or `xoxe.xoxb-`, `xoxe.xapp-`) and its refresh
+     * token as `xoxe-1-…`, so the `xoxe.` is read as part of the token it
+     * leads. An app-level token is `xapp-1-A0123ABCD-…`: a version, which
+     * some carry and some do not, and the id of the app, upper case and
+     * starting with an `A`. The app id is asked for because `xapp-` alone
+     * can start or end an identifier, as in `xapp-settings-panel` and
+     * `linuxapp-1-westeurope`.
+     */
+    private const string SLACK_PREFIX = '(?:xoxe(?:\.|%2[Ee]))?+'
+        .'(?:xox[abepr]|xapp(?:-|%2[Dd])(?:\d++(?:-|%2[Dd]))?+A[A-Z0-9]++)(?:-|%2[Dd])';
+
+    /**
+     * What a GitLab token starts with in {@see PREFIXED_TOKEN}: every prefix
+     * of GitLab's token table. Personal, project and group access tokens
+     * (`glpat-`), an OAuth application secret (`gloas-`), and the deploy
+     * (`gldt-`), runner (`glrt-`, `glrtr-`), CI job (`glcbt-`), trigger
+     * (`glptt-`), feed (`glft-`), incoming mail (`glimt-`), agent
+     * (`glagent-`), workspace (`glwt-`), SCIM (`glsoat-`) and feature flags
+     * client (`glffct-`) tokens.
+     */
+    private const string GITLAB_PREFIX = 'gl(?:pat|oas|dt|rtr?+|cbt|ptt|ft|imt|agent|wt|soat|ffct)(?:-|%2[Dd])';
+
+    /**
+     * What a routable GitLab token ends in after its body, which the body's
+     * characters stop before: an optional two-character version, then the
+     * length of its payload and a checksum, nine lower-case base36 characters
+     * together, each part behind a `.`. Read this exactly, so that the
+     * `.json` of `glpat-….json` and the full stop of a sentence stay.
+     */
+    private const string GITLAB_ROUTABLE_TAIL = '(?:(?:(?:\.|%2[Ee])[0-9a-z]{2}(?=\.|%2[Ee]))?+(?:\.|%2[Ee])[0-9a-z]{9}(?![A-Za-z0-9]))?+';
+
+    /**
+     * A GitHub App installation token in the format GitHub issues since
+     * 2026: `ghs_`, the id of the app, `_` and a JWT of about 500
+     * characters. The app id is a short run of digits, so the body of the
+     * older format is not there to count. The first part of the JWT is
+     * counted instead, {@see MIN_GLUED_TOKEN_BODY} characters or more, and
+     * the parts after it are taken with it. Each part is asked to hold a
+     * character, so the full stop that ends a sentence stays.
+     */
+    private const string GITHUB_INSTALLATION_JWT = 'ghs(?:_|%5[Ff])\d++(?:_|%5[Ff])(?:[\w\-]|%5[Ff]|%2[Dd]){'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'(?:(?:\.|%2[Ee])(?:[\w\-]|%5[Ff]|%2[Dd])++)*+';
 
     /**
      * The longest first part of a JWT that is read glued to the text before

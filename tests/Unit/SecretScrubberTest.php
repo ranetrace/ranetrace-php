@@ -2254,6 +2254,18 @@ test('it leaves a look-alike of a prefixed token readable', function (string $va
     'a variable named after a fine-grained token' => ['$github_pat_rotation_schedule_days'],
     'a slack prefix alone' => ['xoxb-'],
     'base64 json without a second part' => ['eyJhbGciOiJIUzI1NiJ9'],
+    'a short github app prefix' => ['ghs_short'],
+    'a variable named after an installation' => ['$ghs_installation_lifetime_seconds'],
+    'the newer installation shape with a short body' => ['ghs_123456_short'],
+    'an identifier that starts like a webhook secret' => ['whsec_endpoint'],
+    'a stripe organization test key' => ['sk_'.'org_test_51HabcDEF0123456789abcdefgh'],
+    'an identifier that starts like an organization key' => ['sk_org_id'],
+    'an identifier that starts like a slack app-level token' => ['xapp-settings-panel-component'],
+    'a slug that ends like a slack app-level prefix' => ['linuxapp-1-westeurope-production-blue'],
+    'a short slack app-level body' => ['xapp-1-A0123456789-short'],
+    'the lead of a rotated slack token alone' => ['xoxe.'],
+    'a host that starts like a rotated slack token' => ['xoxe.example.com'],
+    'a short gitlab deploy prefix' => ['gldt-short'],
 ]);
 
 test('scrubString redacts a prefixed token written with percent-encoding or after an encoded character', function (string $value, string $expected): void {
@@ -2270,6 +2282,13 @@ test('scrubString redacts a prefixed token written with percent-encoding or afte
         'https://app.test/login?next=https%3A%2F%2Fapp.test%2Fkeys%2F[REDACTED]',
     ],
     'after an encoded space' => ['/search?q=key%20AKIAIOSFODNN7EXAMPLE', '/search?q=key%20[REDACTED]'],
+    'a rotated slack token with an encoded dot and dashes' => ['/hooks/xoxe%2Exoxp%2D1%2DMi0yLTEyMzQ1Njc4OTAxMi0x/ok', '/hooks/[REDACTED]/ok'],
+    'a webhook secret with an encoded underscore' => ['/keys/whsec%5FAbCdEf0123456789AbCdEf0123456789', '/keys/[REDACTED]'],
+    'an organization key with encoded underscores' => ['/keys/sk%5Forg%5Flive%5F51HabcDEF0123456789abcdefgh', '/keys/[REDACTED]'],
+    'a github installation jwt with encoded separators' => [
+        '/x/ghs%5F123456%5FeyJhbGciOiJIUzI1NiJ9%2EeyJzdWIiOiIxMjM0In0%2Edozjg%2DNryP4J3jVmNHl0w5N/y',
+        '/x/[REDACTED]/y',
+    ],
 ]);
 
 test('it leaves a look-alike of an encoded prefixed token readable', function (string $value): void {
@@ -2293,6 +2312,30 @@ const LONG_AWS_KEY_ID = 'AK'.'IAIOSFODNN7EXAMPLE';
 
 const LONG_JWT = 'eyJhbGciOiJIUzI1NiJ9'.'.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
 
+const LONG_GITHUB_APP_TOKEN = 'gh'.'s_1234567890abcdefABCDEF1234567890abcd';
+
+/**
+ * A GitHub App installation token in the format issued since 2026: the id
+ * of the app and a JWT after the prefix.
+ */
+const LONG_GITHUB_APP_JWT_TOKEN = 'gh'.'s_123456_'.LONG_JWT;
+
+const LONG_STRIPE_WEBHOOK_SECRET = 'whs'.'ec_AbCdEf0123456789AbCdEf0123456789';
+
+const LONG_STRIPE_ORGANIZATION_KEY = 'sk_'.'org_live_51HabcDEF0123456789abcdefgh';
+
+const LONG_SLACK_REFRESH_TOKEN = 'xox'.'e-1-My0xLTEyMzQ1Njc4OTAxMi0xMjM0NTY3ODkwMTIzLWFiY2RlZg';
+
+const LONG_SLACK_ROTATED_TOKEN = 'xox'.'e.xoxp-1-Mi0yLTEyMzQ1Njc4OTAxMi0xMjM0NTY3ODkwMTIzLWFiY2RlZg';
+
+const LONG_SLACK_APP_TOKEN = 'xap'.'p-1-A0123456789-1234567890123-0123456789abcdef0123456789abcdef';
+
+/**
+ * A GitLab personal access token in the routable format, without the
+ * version and checksum it ends in.
+ */
+const ROUTABLE_GITLAB_TOKEN = 'glp'.'at-YzowCm86MQp1OjFSDdqkLmVS337oi4qlKHnlEA';
+
 /**
  * Every token whose body is its own evidence, 20 characters or more, glued to
  * each kind of text that can stand right before it.
@@ -2309,6 +2352,15 @@ function longTokensGluedToTheTextBefore(): array
         'a github fine-grained token' => 'github_'.'pat_11ABCDEFG0123456789ABC_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUV',
         'a slack bot token' => LONG_SLACK_TOKEN,
         'a gitlab token' => 'glp'.'at-AbCdEf0123456789_-xyz',
+        'a github app token' => LONG_GITHUB_APP_TOKEN,
+        'a github app token with a jwt' => LONG_GITHUB_APP_JWT_TOKEN,
+        'a stripe webhook secret' => LONG_STRIPE_WEBHOOK_SECRET,
+        'a stripe organization key' => LONG_STRIPE_ORGANIZATION_KEY,
+        'a slack refresh token' => LONG_SLACK_REFRESH_TOKEN,
+        'a rotated slack token' => LONG_SLACK_ROTATED_TOKEN,
+        'a slack app-level token' => LONG_SLACK_APP_TOKEN,
+        'a gitlab deploy token' => 'gld'.'t-AbCdEf0123456789_-xyz',
+        'a routable gitlab token' => ROUTABLE_GITLAB_TOKEN.'.01.121e8269o',
     ];
 
     $before = [
@@ -2355,6 +2407,61 @@ test('a token of a real length is redacted whatever stands right after it', func
     'an aws key id before a dollar sign' => ['x '.LONG_AWS_KEY_ID.'$', 'x [REDACTED]$'],
     'a jwt before a dollar sign' => ['x '.LONG_JWT.'$', 'x [REDACTED]$'],
     'glued on both sides' => ['acme-'.LONG_STRIPE_KEY.'_backup', 'acme-[REDACTED]_backup'],
+    'a github app token before an underscore' => ['x '.LONG_GITHUB_APP_TOKEN.'_old', 'x [REDACTED]_old'],
+    'a github app token with a jwt before a dollar sign' => ['x '.LONG_GITHUB_APP_JWT_TOKEN.'$', 'x [REDACTED]$'],
+    'a stripe webhook secret before an underscore' => ['x '.LONG_STRIPE_WEBHOOK_SECRET.'_old', 'x [REDACTED]_old'],
+    'a stripe organization key before an underscore' => ['x '.LONG_STRIPE_ORGANIZATION_KEY.'_old', 'x [REDACTED]_old'],
+    'a slack refresh token before an underscore' => ['x '.LONG_SLACK_REFRESH_TOKEN.'_old', 'x [REDACTED]_old'],
+    'a slack app-level token before an underscore' => ['x '.LONG_SLACK_APP_TOKEN.'_old', 'x [REDACTED]_old'],
+]);
+
+test('scrubString redacts each token a github app, a stripe webhook or organization and a rotating slack app is issued', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected)
+        ->and(scrubber()->scrubDeep(['v' => $value]))->toBe(['v' => $expected]);
+})->with([
+    'a github app installation token' => ['clone failed with '.LONG_GITHUB_APP_TOKEN, 'clone failed with [REDACTED]'],
+    'a github app user token' => ['gh'.'u_1234567890abcdefABCDEF1234567890abcd expired', '[REDACTED] expired'],
+    'a github app refresh token' => [
+        'gh'.'r_1234567890abcdefABCDEF1234567890abcd1234567890abcdefABCDEF1234567890abcd was refused',
+        '[REDACTED] was refused',
+    ],
+    'a github app installation token with a jwt' => ['clone failed with '.LONG_GITHUB_APP_JWT_TOKEN.' today', 'clone failed with [REDACTED] today'],
+    'a github app installation token with a jwt before a full stop' => ['refused '.LONG_GITHUB_APP_JWT_TOKEN.'.', 'refused [REDACTED].'],
+    'a stripe webhook signing secret' => ['no signature matched '.LONG_STRIPE_WEBHOOK_SECRET, 'no signature matched [REDACTED]'],
+    'a stripe organization key' => ['charge failed with '.LONG_STRIPE_ORGANIZATION_KEY, 'charge failed with [REDACTED]'],
+    'a stripe organization key without a mode' => ['charge failed with sk_'.'org_51HabcDEF0123456789abcdefgh', 'charge failed with [REDACTED]'],
+    'a slack refresh token' => ['slack said no to '.LONG_SLACK_REFRESH_TOKEN.'.', 'slack said no to [REDACTED].'],
+    'a rotated slack user token' => ['slack said no to '.LONG_SLACK_ROTATED_TOKEN.'.', 'slack said no to [REDACTED].'],
+    'a rotated slack bot token' => ['xox'.'e.xoxb-1-MS0xLTEyMzQ1Njc4OTAxMi0xMjM0NTY3ODkwMTIz expired', '[REDACTED] expired'],
+    'a slack app-level token' => ['socket closed for '.LONG_SLACK_APP_TOKEN, 'socket closed for [REDACTED]'],
+    'a rotated slack app-level token' => ['socket closed for xoxe.'.LONG_SLACK_APP_TOKEN, 'socket closed for [REDACTED]'],
+    'a slack app-level token without a version' => ['socket closed for xap'.'p-A0123456789-1234567890123-0123456789abcdef', 'socket closed for [REDACTED]'],
+]);
+
+test('scrubString redacts a gitlab token of every prefix gitlab issues', function (string $prefix): void {
+    // Joined here, so that this file holds no string a secret scanner takes
+    // for a live token.
+    $token = $prefix.'AbCdEf0123456789_-xy';
+
+    expect(scrubber()->scrubString("gitlab said no to {$token}."))->toBe('gitlab said no to [REDACTED].')
+        ->and(scrubber()->scrubString("runner_{$token} was refused"))->toBe('runner_[REDACTED] was refused');
+})->with([
+    'glpat-', 'gloas-', 'gldt-', 'glrt-', 'glrtr-', 'glcbt-', 'glptt-', 'glft-', 'glimt-', 'glagent-', 'glwt-', 'glsoat-', 'glffct-',
+]);
+
+test('scrubString redacts the checksum a routable gitlab token ends in, and nothing else that follows a dot', function (string $value, string $expected): void {
+    expect(scrubber()->scrubString($value))->toBe($expected)
+        ->and(scrubber()->scrubDeep(['v' => $value]))->toBe(['v' => $expected]);
+})->with([
+    'a version and a checksum' => [ROUTABLE_GITLAB_TOKEN.'.01.121e8269o was refused', '[REDACTED] was refused'],
+    'a checksum alone' => [ROUTABLE_GITLAB_TOKEN.'.121e8269o was refused', '[REDACTED] was refused'],
+    'a checksum before a full stop' => ['refused '.ROUTABLE_GITLAB_TOKEN.'.01.121e8269o.', 'refused [REDACTED].'],
+    'encoded dots' => ['/t/'.ROUTABLE_GITLAB_TOKEN.'%2E01%2E121e8269o/x', '/t/[REDACTED]/x'],
+    'a runner token' => ['glr'.'t-t3_AbCdEf0123456789_-xy.01.121e8269o expired', '[REDACTED] expired'],
+    'a file extension stays' => ['could not read '.ROUTABLE_GITLAB_TOKEN.'.json', 'could not read [REDACTED].json'],
+    'a full stop stays' => ['refused '.ROUTABLE_GITLAB_TOKEN.'.', 'refused [REDACTED].'],
+    'a word one character longer than a checksum stays' => [ROUTABLE_GITLAB_TOKEN.'.121e8269ox', '[REDACTED].121e8269ox'],
+    'a version with no checksum stays' => [ROUTABLE_GITLAB_TOKEN.'.01.short', '[REDACTED].01.short'],
 ]);
 
 test('a token glued into a url, a campaign value or a file name is redacted', function (string $value, string $expected): void {
@@ -2641,6 +2748,57 @@ test('the value shapes stay linear on long runs', function (string $label, Closu
     'stripe prefixes after encoded slashes' => [
         'stripe prefixes after encoded slashes',
         fn (int $scale): array => [str_repeat('%2Fsk_live_', 2_000 * $scale), str_repeat('%2Fsk_live_', 2_000 * $scale)],
+    ],
+    'github installation prefixes in one run' => [
+        'github installation prefixes in one run',
+        fn (int $scale): array => [str_repeat('ghs_1_', 4_000 * $scale), '[REDACTED]'],
+    ],
+    'github app prefixes with short bodies' => [
+        'github app prefixes with short bodies',
+        fn (int $scale): array => [str_repeat('ghs_1', 5_000 * $scale), str_repeat('ghs_1', 5_000 * $scale)],
+    ],
+    'the parts of a github installation jwt' => [
+        'the parts of a github installation jwt',
+        fn (int $scale): array => ['ghs_1_'.str_repeat('a', 20).str_repeat('.a', 12_500 * $scale), '[REDACTED]'],
+    ],
+    'rotated slack leads back to back' => [
+        'rotated slack leads back to back',
+        fn (int $scale): array => [str_repeat('xoxe.', 5_000 * $scale), str_repeat('xoxe.', 5_000 * $scale)],
+    ],
+    'rotated slack leads before short tokens' => [
+        'rotated slack leads before short tokens',
+        fn (int $scale): array => [str_repeat('xoxe.xoxp-1 ', 2_000 * $scale), str_repeat('xoxe.xoxp-1 ', 2_000 * $scale)],
+    ],
+    'a long version of a slack app-level token' => [
+        'a long version of a slack app-level token',
+        fn (int $scale): array => ['xapp-'.str_repeat('1', 25_000 * $scale), 'xapp-'.str_repeat('1', 25_000 * $scale)],
+    ],
+    'a long app id of a slack app-level token' => [
+        'a long app id of a slack app-level token',
+        fn (int $scale): array => ['xapp-1-'.str_repeat('A', 25_000 * $scale), 'xapp-1-'.str_repeat('A', 25_000 * $scale)],
+    ],
+    'slack app-level prefixes back to back' => [
+        'slack app-level prefixes back to back',
+        fn (int $scale): array => [str_repeat('xapp-1-A1-', 2_500 * $scale), '[REDACTED]'],
+    ],
+    'webhook secret prefixes in one run' => [
+        'webhook secret prefixes in one run',
+        fn (int $scale): array => [str_repeat('whsec_', 4_000 * $scale), str_repeat('whsec_', 4_000 * $scale)],
+    ],
+    'organization key prefixes in one run' => [
+        'organization key prefixes in one run',
+        fn (int $scale): array => [str_repeat('sk_org_live_', 2_000 * $scale), str_repeat('sk_org_live_', 2_000 * $scale)],
+    ],
+    'gitlab versions with no checksum' => [
+        'gitlab versions with no checksum',
+        fn (int $scale): array => [
+            'glpat-'.str_repeat('a', 20).str_repeat('.01', 8_000 * $scale),
+            '[REDACTED]'.str_repeat('.01', 8_000 * $scale),
+        ],
+    ],
+    'gitlab prefixes of two kinds in one run' => [
+        'gitlab prefixes of two kinds in one run',
+        fn (int $scale): array => [str_repeat('glagent-glrtr-', 1_800 * $scale), '[REDACTED]'],
     ],
     'a digit run' => [
         'a digit run',
