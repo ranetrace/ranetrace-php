@@ -4,13 +4,20 @@ declare(strict_types=1);
 
 use Ranetrace\Php\Contract\WireContract;
 
-test('it loads every declared item type', function (string $type): void {
+test('it loads every described item type', function (string $type): void {
     expect(WireContract::item($type))->toHaveKeys(['type', 'wrapper', 'fields', 'examples']);
-})->with(WireContract::itemTypes());
+})->with(WireContract::describedItemTypes());
+
+test('it describes the page visit only the laravel sdk sends, beside the four types this package sends', function (): void {
+    // The buffer, the worker and the endpoint table are built from
+    // itemTypes(), so a type this package cannot send must stay out of it.
+    expect(WireContract::itemTypes())->toBe(['errors', 'events', 'logs', 'javascript_errors'])
+        ->and(WireContract::describedItemTypes())->toBe([...WireContract::itemTypes(), 'page_visits']);
+});
 
 test('it rejects a type the contract does not describe', function (): void {
-    WireContract::item('page_visits');
-})->throws(InvalidArgumentException::class, "Unknown Ranetrace item type 'page_visits'");
+    WireContract::item('metrics');
+})->throws(InvalidArgumentException::class, "Unknown Ranetrace item type 'metrics'");
 
 test('it loads the envelope, endpoints, headers and responses', function (): void {
     expect(WireContract::envelope())->toHaveKeys(['request_body', 'buffered_item', 'wrappers', 'max_items_per_batch'])

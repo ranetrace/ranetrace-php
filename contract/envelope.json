@@ -21,7 +21,8 @@
         "errors": "errors",
         "events": "events",
         "logs": "logs",
-        "javascript_errors": "javascript_errors"
+        "javascript_errors": "javascript_errors",
+        "page_visits": "page_visits"
     },
     "max_items_per_batch": 1000,
     "server_max_body_bytes": 5000000,

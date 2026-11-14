@@ -9,11 +9,11 @@ use InvalidArgumentException;
 /**
  * The one place either SDK looks up where a batch goes.
  *
- * {@see contract()} is the four types the wire contract names
- * (`contract/endpoints.json`). A host with a capture type of its own extends the
- * table with {@see with()} rather than keeping a second, drifting copy of the
- * four: the Laravel SDK adds `page_visits`, which is a Laravel-only feature and
- * therefore not part of the shared contract.
+ * {@see contract()} is the four types this package sends, as
+ * `contract/endpoints.json` names them. A host with a capture type of its own
+ * extends the table with {@see with()} rather than keeping a second, drifting
+ * copy of the four: the Laravel SDK adds `page_visits`, which the contract
+ * describes and only that SDK sends.
  */
 final class EndpointTable
 {

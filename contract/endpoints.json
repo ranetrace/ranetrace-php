@@ -3,10 +3,12 @@
     "method": "POST",
     "base_url_default": "https://api.ranetrace.com/v1",
     "base_url_note": "Every path below is appended to the configured API base URL, which already carries the version prefix.",
+    "endpoints_note": "`page_visits` is sent by `ranetrace/ranetrace-laravel` only. `ranetrace/ranetrace-php` sends the other four, and its endpoint table holds those four.",
     "endpoints": {
         "errors": {"path": "/errors/store", "wrapper": "errors"},
         "events": {"path": "/events/store", "wrapper": "events"},
         "logs": {"path": "/logs/store", "wrapper": "logs"},
-        "javascript_errors": {"path": "/javascript-errors/store", "wrapper": "javascript_errors"}
+        "javascript_errors": {"path": "/javascript-errors/store", "wrapper": "javascript_errors"},
+        "page_visits": {"path": "/page-visits/store", "wrapper": "page_visits"}
     }
 }

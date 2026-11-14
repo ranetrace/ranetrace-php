@@ -6,6 +6,9 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Added
+- **The wire contract describes the page visit.** `contract/items/page_visits.json` holds the field spec of the one item this package does not send, transcribed from the backend's validator, with three examples. Only `ranetrace/ranetrace-laravel` sends a page visit, and its limits were numbers copied by hand. `Contract\WireContract::item('page_visits')` reads the fixture, and the new `WireContract::describedItemTypes()` lists all five types. `WireContract::itemTypes()` is unchanged: the four types this package sends. `contract/endpoints.json` and the `wrappers` of `contract/envelope.json` name the page visit too. Nothing changes in what is captured or sent
+
 ### Changed
 - **A string field over its endpoint's limit is cut to fit, where the whole item was refused and lost.** The API refuses an item with one string over its limit, and a refused item is counted `failed`, which is final. Several fields were sent uncut. They are now cut to the limit the endpoint holds, counted in characters as the endpoint counts them, after the secret scrub, so a redaction that lengthens a value cannot push it over:
   - **Error item.** `console_command` to 1,000 characters, the `... (truncated)` suffix included: a process started with a longer command line, such as a queue worker with many options, had every error it reported refused. `environment` to its first 50, `framework` and `framework_version` to their first 50 and `php_version` to its first 20

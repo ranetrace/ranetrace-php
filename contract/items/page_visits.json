@@ -1,0 +1,85 @@
+{
+    "type": "page_visits",
+    "wrapper": "page_visits",
+    "strict_fields": false,
+    "notes": [
+        "Transcribed from the backend app's PageVisitsBatchController, verified 2026-11-14.",
+        "Only `ranetrace/ranetrace-laravel` sends this item. Website analytics is a Laravel-only feature, and this package has no emitter, buffer or endpoint for it. The fixture lives here so that the Laravel SDK and the backend test against one description of the item, beside the four this package sends.",
+        "There is no allow-list here: a key outside `fields` is dropped by the validator rather than rejecting the item. The Laravel SDK sends every key in `fields` except `url`, and `verified_human` only while its human-verification beacon is on. With `website_analytics.debug.preserve_user_agent` on it also sends `user_agent`, which the validator drops.",
+        "`url` is accepted and then dropped: a visit keeps its `path` and has no column for a URL. The Laravel SDK stopped sending the key in 1.5.0, and the `with_url` example is a visit as an older release sends it.",
+        "`session_id_hash` and `user_agent_hash` are required and 64 characters. Unlike on an event they are never null: the Laravel SDK tracks no request without a user agent.",
+        "`path`, `referrer` and the five `utm_*` values refuse the item past their `max`, counted in characters. The Laravel SDK cuts each to its first characters, with no suffix, after the secret scrub. A value within its `max` that is longer than its column is clipped by the backend when it saves the visit.",
+        "`country_code` is two characters, none of them a lower-case letter. The Laravel SDK resolves no country and sends null.",
+        "`human_probability_score` is the SDK's own estimate from the request, 0 to 100, and `human_probability_reasons` the findings behind it. `verified_human` is the beacon's verdict: true when the browser answered, false when it did not. A visit without the key is one the SDK could not ask about, which the backend judges by the score."
+    ],
+    "fields": {
+        "path": {"required": true, "type": "string", "max": 1024},
+        "timestamp": {"required": true, "type": "date"},
+        "session_id_hash": {"required": true, "type": "string", "size": 64},
+        "user_agent_hash": {"required": true, "type": "string", "size": 64},
+        "url": {"required": false, "type": "string", "max": 2048},
+        "referrer": {"required": false, "type": "string", "max": 2048},
+        "country_code": {"required": false, "type": "string", "size": 2, "pattern": "/^\\P{Ll}+$/u"},
+        "device_type": {"required": false, "type": "string", "enum": ["desktop", "mobile", "tablet", "console"]},
+        "browser_name": {"required": false, "type": "string", "max": 50},
+        "utm_source": {"required": false, "type": "string", "max": 255},
+        "utm_medium": {"required": false, "type": "string", "max": 255},
+        "utm_campaign": {"required": false, "type": "string", "max": 255},
+        "utm_content": {"required": false, "type": "string", "max": 255},
+        "utm_term": {"required": false, "type": "string", "max": 255},
+        "human_probability_score": {"required": false, "type": "integer", "min": 0, "max": 100},
+        "human_probability_reasons": {"required": false, "type": "array"},
+        "human_probability_reasons.*": {"type": "string", "max": 500},
+        "verified_human": {"required": false, "type": "boolean"}
+    },
+    "examples": {
+        "minimal": {
+            "path": "/",
+            "timestamp": "2026-11-14T09:30:45+00:00",
+            "session_id_hash": "9c2e5f81a4d07b36e18c4a5209fb7d365a0d3c8e1f472b9684be2f705ac31d69",
+            "user_agent_hash": "3f6a1c9d5b2e8047a1d4c7f0b3e6591827a4d0c3f6b9e2510d7a4c1f8b5e2093"
+        },
+        "full": {
+            "path": "/pricing",
+            "timestamp": "2026-11-14T09:30:45+00:00",
+            "session_id_hash": "9c2e5f81a4d07b36e18c4a5209fb7d365a0d3c8e1f472b9684be2f705ac31d69",
+            "user_agent_hash": "3f6a1c9d5b2e8047a1d4c7f0b3e6591827a4d0c3f6b9e2510d7a4c1f8b5e2093",
+            "referrer": "https://news.example.com/monitoring-roundup?page=2",
+            "country_code": "NL",
+            "device_type": "desktop",
+            "browser_name": "Chrome",
+            "utm_source": "newsletter",
+            "utm_medium": "email",
+            "utm_campaign": "launch_2026",
+            "utm_content": "header_link",
+            "utm_term": "uptime monitoring",
+            "human_probability_score": 85,
+            "human_probability_reasons": [
+                "User agent has reasonable length",
+                "User agent has typical browser structure",
+                "Request includes a referrer",
+                "Request contains typical browser headers"
+            ],
+            "verified_human": true
+        },
+        "with_url": {
+            "url": "https://shop.example.com/pricing?plan=team",
+            "path": "/pricing",
+            "timestamp": "2026-11-14T09:30:45+00:00",
+            "session_id_hash": "9c2e5f81a4d07b36e18c4a5209fb7d365a0d3c8e1f472b9684be2f705ac31d69",
+            "user_agent_hash": "3f6a1c9d5b2e8047a1d4c7f0b3e6591827a4d0c3f6b9e2510d7a4c1f8b5e2093",
+            "referrer": null,
+            "country_code": null,
+            "device_type": "mobile",
+            "browser_name": "Safari",
+            "utm_source": null,
+            "utm_medium": null,
+            "utm_campaign": null,
+            "utm_content": null,
+            "utm_term": null,
+            "human_probability_score": 60,
+            "human_probability_reasons": [],
+            "verified_human": false
+        }
+    }
+}

@@ -24,13 +24,27 @@ use RuntimeException;
 final class WireContract
 {
     /**
-     * The four item types, in the order the buffer and the worker use.
+     * The four item types this package sends, in the order the buffer and the
+     * worker use.
      *
      * @var list<string>
      */
     private const array ITEM_TYPES = ['errors', 'events', 'logs', 'javascript_errors'];
 
     /**
+     * The item types the contract describes and this package does not send.
+     * A page visit is sent by `ranetrace/ranetrace-laravel` only. Its fixture
+     * lives here so that SDK and the backend test against one description of
+     * it, and it stays out of {@see ITEM_TYPES} because the buffer, the worker
+     * and the endpoint table of this package are built from that list.
+     *
+     * @var list<string>
+     */
+    private const array DESCRIBED_ONLY_ITEM_TYPES = ['page_visits'];
+
+    /**
+     * The item types this package sends.
+     *
      * @return list<string>
      */
     public static function itemTypes(): array
@@ -39,17 +53,29 @@ final class WireContract
     }
 
     /**
+     * Every item type the contract describes: {@see itemTypes()} and the ones
+     * only another SDK sends. This is the list for a consumer that holds an
+     * endpoint or an emitter to the fixtures, whichever SDK the item is from.
+     *
+     * @return list<string>
+     */
+    public static function describedItemTypes(): array
+    {
+        return [...self::ITEM_TYPES, ...self::DESCRIBED_ONLY_ITEM_TYPES];
+    }
+
+    /**
      * One item type's field spec and examples.
      *
      * @return array<string, mixed>
      *
-     * @throws InvalidArgumentException When the type is not one of {@see itemTypes()}.
+     * @throws InvalidArgumentException When the type is not one of {@see describedItemTypes()}.
      */
     public static function item(string $type): array
     {
-        if (! in_array($type, self::ITEM_TYPES, true)) {
+        if (! in_array($type, self::describedItemTypes(), true)) {
             throw new InvalidArgumentException(
-                "Unknown Ranetrace item type '{$type}'. Known types: ".implode(', ', self::ITEM_TYPES).'.'
+                "Unknown Ranetrace item type '{$type}'. Known types: ".implode(', ', self::describedItemTypes()).'.'
             );
         }
 

@@ -38,6 +38,7 @@ Verify a status against the code before you trust it. A status is a claim about 
 The fixtures beside this file are the source of truth, not the prose below:
 
 - `items/errors.json`, `items/events.json`, `items/logs.json`, `items/javascript_errors.json`: the per-type field spec, transcribed from the backend's validators, with a minimal and a full example that really pass them.
+- `items/page_visits.json`: the same for the page visit, which only `ranetrace/ranetrace-laravel` sends.
 - `envelope.json`: the request body shape, the buffered item shape, and the batch and per-item budgets.
 - `endpoints.json`: path and wrapper key per type.
 - `headers.json`: the five request headers.
@@ -46,6 +47,16 @@ The fixtures beside this file are the source of truth, not the prose below:
 No change is in flight. The 2026-11-13 entry that gives the error item an `id` is released in this package's 1.5.0, and `ranetrace/ranetrace-laravel` sends it from 1.6.0, which requires that release; the backend deployed its half the same day, before either release. The 2026-11-13 entry that retires three event checks is deployed on the backend since the same day, and `items/events.json` no longer lists them. The 2026-11-13 entry that gives the event item and the JavaScript error item an `id` is released in this package's 1.4.0, and `ranetrace/ranetrace-laravel` sends it from 1.5.0, which requires that release; the backend deployed its half the same day. That Laravel release is also the first to send a page visit without its `url`. The 2026-11-13 console event entry is released in this package's 1.3.0, and `ranetrace/ranetrace-laravel` sends it from 1.4.0, which requires that release. The two 2026-11-12 entries are released in this package's 1.2.0 and in `ranetrace/ranetrace-laravel` 1.3.0, which requires it. The backend had nothing to do for any of the three. Every other coordinated change below is applied on both sides: the backend deployed the six before them on 2026-10-16, and this package's 1.1.0 is the first release to send the error item's `frames`, `frames_omitted` and `previous`.
 
 ## Change log
+
+### 2026-11-14, the page visit item gets a fixture
+
+Status: **Nothing moved on the wire. The fixture ships with this package's next release. `ranetrace/ranetrace-laravel` tests against it from the release that requires that one, and the backend's contract test replays its examples once it has installed it.** This is a description catching up with the wire, so there is no order to keep.
+
+The page visit was the one item without a fixture, because this package does not send it. Its limits lived in the Laravel SDK as numbers copied by hand from the backend's validator, and nothing failed when one side changed. That is how a gap stayed unseen until 2026-11-13: the endpoint refused a visit with a `path` over 1,024 or a `referrer` over 2,048 characters, and the SDK cut neither.
+
+`items/page_visits.json` is transcribed from the backend's `PageVisitsBatchController` as read on 2026-11-14: eighteen keys, four of them required (`path`, `timestamp`, `session_id_hash`, `user_agent_hash`). It carries a `minimal` and a `full` example, and a `with_url` example for a visit as a Laravel SDK before 1.5.0 sends it. `endpoints.json` and the `wrappers` of `envelope.json` name the type too.
+
+`Contract\WireContract::item('page_visits')` reads it. `WireContract::itemTypes()` stays the four types this package sends, because its buffer, worker and endpoint table are built from that list, and the new `WireContract::describedItemTypes()` is all five. A consumer that holds an endpoint or an emitter to the fixtures iterates the second.
 
 ### 2026-11-13, the events endpoint stops refusing an event for its name or its property values
 
