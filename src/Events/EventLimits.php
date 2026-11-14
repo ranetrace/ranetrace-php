@@ -7,6 +7,7 @@ namespace Ranetrace\Php\Events;
 use Ranetrace\Php\Support\Diagnostics;
 use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\PayloadSizer;
+use Ranetrace\Php\Support\StringLimit;
 use Throwable;
 
 /**
@@ -56,12 +57,6 @@ final class EventLimits
     public const string PROPERTY_REPLACED_REASON = 'Property exceeded the events endpoint size limit and was removed';
 
     public const string PROPERTIES_REPLACED_REASON = 'Properties exceeded the events endpoint size limit and were removed';
-
-    /**
-     * The suffix {@see ItemByteBudget} puts on a cut string, counted inside
-     * the limit here.
-     */
-    private const string TRUNCATION_SUFFIX = '... (truncated)';
 
     public function __construct(private readonly Diagnostics $log) {}
 
@@ -164,7 +159,7 @@ final class EventLimits
 
         foreach ($properties as $key => $value) {
             if (is_string($value) && mb_strlen($value, '8bit') > self::MAX_PROPERTY_VALUE_BYTES) {
-                $properties[$key] = mb_strcut($value, 0, self::MAX_PROPERTY_VALUE_BYTES - mb_strlen(self::TRUNCATION_SUFFIX, '8bit'), 'UTF-8').self::TRUNCATION_SUFFIX;
+                $properties[$key] = StringLimit::cutBytesWithSuffix($value, self::MAX_PROPERTY_VALUE_BYTES);
                 $cut[] = $key;
             }
         }

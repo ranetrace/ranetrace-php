@@ -6,6 +6,7 @@ namespace Ranetrace\Php\Events;
 
 use Ranetrace\Php\Support\DataSanitizer;
 use Ranetrace\Php\Support\Scrubber;
+use Ranetrace\Php\Support\StringLimit;
 use Ranetrace\Php\Support\UserId;
 use Ranetrace\Php\Support\Utf8;
 use Ranetrace\Php\Support\Uuid;
@@ -38,15 +39,10 @@ final class EventItemBuilder
     /**
      * The events endpoint takes a `url` of at most this many characters and
      * refuses the event otherwise, as `contract/items/events.json` states.
-     * The error item's URL is held to the same length, the same way.
+     * The error item's URL is held to the same length, the same way. Counted
+     * in characters, not bytes, because that is what the endpoint counts.
      */
     private const int MAX_URL_LENGTH = 2_000;
-
-    /**
-     * Counted inside the limit: the cut URL, suffix included, is never longer
-     * than {@see MAX_URL_LENGTH}.
-     */
-    private const string TRUNCATION_SUFFIX = '... (truncated)';
 
     public function __construct(private readonly Scrubber $scrubber) {}
 
@@ -95,26 +91,12 @@ final class EventItemBuilder
             'timestamp' => Utf8::repair($timestamp),
             // Scrubbed before it is cut, so a secret that straddles the
             // boundary is redacted whole rather than leaving its head behind.
-            'url' => $url === null ? null : $this->truncateUrl((string) $this->scrubber->scrubUrlPath(
-                $this->scrubber->scrubUrl(Utf8::repair($url)),
-                $sensitivePathValues,
-            )),
+            'url' => $url === null ? null : StringLimit::cutWithSuffix(
+                (string) $this->scrubber->scrubUrlPath($this->scrubber->scrubUrl(Utf8::repair($url)), $sensitivePathValues),
+                self::MAX_URL_LENGTH,
+            ),
             'user_agent_hash' => Utf8::repairNullable($userAgentHash),
             'session_id_hash' => Utf8::repairNullable($sessionIdHash),
         ];
-    }
-
-    /**
-     * Cut to at most {@see MAX_URL_LENGTH} characters, the suffix included,
-     * as {@see \Ranetrace\Php\Errors\PayloadBuilder} cuts the error's URL.
-     * Characters, not bytes, because that is what the endpoint counts.
-     */
-    private function truncateUrl(string $url): string
-    {
-        if (mb_strlen($url) <= self::MAX_URL_LENGTH) {
-            return $url;
-        }
-
-        return mb_substr($url, 0, self::MAX_URL_LENGTH - mb_strlen(self::TRUNCATION_SUFFIX)).self::TRUNCATION_SUFFIX;
     }
 }

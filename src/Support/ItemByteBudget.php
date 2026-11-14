@@ -54,8 +54,6 @@ final class ItemByteBudget
      */
     public const int MAX_ITEM_FIELD_BYTES = 8_192; // 8 KB
 
-    private const string TRUNCATION_SUFFIX = '... (truncated)';
-
     private const string FIELD_TRUNCATION_REASON = 'Field exceeded the per-item budget and was removed';
 
     /**
@@ -131,7 +129,7 @@ final class ItemByteBudget
             }
 
             if (is_string($value) && mb_strlen($value, '8bit') > self::MAX_ITEM_FIELD_BYTES) {
-                $payload[$key] = mb_strcut($value, 0, self::MAX_ITEM_FIELD_BYTES).self::TRUNCATION_SUFFIX;
+                $payload[$key] = mb_strcut($value, 0, self::MAX_ITEM_FIELD_BYTES).StringLimit::SUFFIX;
 
                 continue;
             }

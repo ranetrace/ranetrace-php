@@ -6,6 +6,7 @@ use Ranetrace\Php\Errors\ErrorContext;
 use Ranetrace\Php\Errors\PayloadBuilder;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\SecretScrubber;
+use Ranetrace\Php\Support\StringLimit;
 
 /**
  * `exception_context` is read from the throwable itself, the way Laravel's log
@@ -255,7 +256,7 @@ test('a context string of invalid bytes past the string cap is cut inside the ca
 
     expect(mb_strlen($value))->toBe(500)
         ->and(mb_check_encoding($value, 'UTF-8'))->toBeTrue()
-        ->and($value)->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX);
+        ->and($value)->toEndWith(StringLimit::SUFFIX);
 });
 
 test('a list context is sent as a list', function (): void {

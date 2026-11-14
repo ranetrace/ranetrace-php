@@ -7,6 +7,7 @@ namespace Ranetrace\Php\Errors;
 use Ranetrace\Php\Support\Diagnostics;
 use Ranetrace\Php\Support\ProjectRootStripper;
 use Ranetrace\Php\Support\Scrubber;
+use Ranetrace\Php\Support\StringLimit;
 use Ranetrace\Php\Support\Utf8;
 use Throwable;
 use UnexpectedValueException;
@@ -68,8 +69,6 @@ final class SourceReader
      * error pays for it, and no realistic secret spans further.
      */
     private const int LOOKBEHIND_LINES = 50;
-
-    private const string TRUNCATION_SUFFIX = '... (truncated)';
 
     /**
      * @var array<string, array<int, true>>
@@ -237,7 +236,7 @@ final class SourceReader
 
         foreach (array_slice($scrubbed, $lookbehind, preserve_keys: true) as $index => $content) {
             if (mb_strlen($content) > self::MAX_LINE_LENGTH) {
-                $content = mb_substr($content, 0, self::MAX_LINE_LENGTH).self::TRUNCATION_SUFFIX;
+                $content = mb_substr($content, 0, self::MAX_LINE_LENGTH).StringLimit::SUFFIX;
             }
 
             $window[] = $content.$newlines[$index];

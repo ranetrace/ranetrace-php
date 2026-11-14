@@ -12,6 +12,7 @@ use Ranetrace\Php\Support\EnvironmentName;
 use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\SecretScrubber;
+use Ranetrace\Php\Support\StringLimit;
 use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 use Ranetrace\Php\Tests\Doubles\RecordingDiagnostics;
 
@@ -85,7 +86,7 @@ test('an error item cuts a console command over its limit, the suffix inside the
 
     expect(mb_strlen($over['console_command']))->toBe(1_000)
         ->and($over['console_command'])->toStartWith('artisan run üü')
-        ->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX)
+        ->toEndWith(StringLimit::SUFFIX)
         ->and(limitsErrorItem(context: ErrorContext::provided(isConsole: true, consoleCommand: $atLimit))['console_command'])
         ->toBe($atLimit);
 });
@@ -103,7 +104,7 @@ test('a console command that only passes its limit once scrubbed is cut after th
     expect(mb_strlen($command))->toBeLessThanOrEqual(1_000)
         ->and(mb_strlen($payload['console_command']))->toBe(1_000)
         ->and($payload['console_command'])->toStartWith('artisan run --password=[REDACTED]')
-        ->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX)
+        ->toEndWith(StringLimit::SUFFIX)
         ->not->toContain('password=x');
 });
 
@@ -146,7 +147,7 @@ test('a javascript error cuts a free-text field over its limit, the suffix insid
 
     expect(mb_strlen($over[$field]))->toBe($max)
         ->and($over[$field])->toStartWith($prefix.'üü')
-        ->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX)
+        ->toEndWith(StringLimit::SUFFIX)
         ->and(limitsJavaScriptItem([$field => $atLimit])[$field])->toBe($atLimit);
 })->with([
     'message' => ['message', 2_000, ''],
@@ -175,7 +176,7 @@ test('a breadcrumb category is cut like a name and its message like free text', 
 
     expect($over['category'])->toBe(str_repeat('ü', 100))
         ->and(mb_strlen($over['message']))->toBe(500)
-        ->and($over['message'])->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX)
+        ->and($over['message'])->toEndWith(StringLimit::SUFFIX)
         ->and($atLimit['category'])->toBe(str_repeat('ü', 100))
         ->and($atLimit['message'])->toBe(str_repeat('ü', 500));
 });
@@ -222,9 +223,9 @@ test('a javascript error that only passes its limits once scrubbed is cut after 
         ->and(mb_strlen($item['message']))->toBe(2_000)
         ->and(mb_strlen($item['stack']))->toBe(10_000)
         ->and(mb_strlen($item['url']))->toBe(2_000)
-        ->and($item['message'])->toStartWith('password=[REDACTED]')->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX)->not->toContain('password=x')
-        ->and($item['stack'])->toStartWith('password=[REDACTED]')->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX)->not->toContain('password=x')
-        ->and($item['url'])->toStartWith('https://app.test/cart?token=[REDACTED]')->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX)->not->toContain('token=x');
+        ->and($item['message'])->toStartWith('password=[REDACTED]')->toEndWith(StringLimit::SUFFIX)->not->toContain('password=x')
+        ->and($item['stack'])->toStartWith('password=[REDACTED]')->toEndWith(StringLimit::SUFFIX)->not->toContain('password=x')
+        ->and($item['url'])->toStartWith('https://app.test/cart?token=[REDACTED]')->toEndWith(StringLimit::SUFFIX)->not->toContain('token=x');
 });
 
 test('a log channel over its limit is cut to its first characters, with no suffix', function (): void {

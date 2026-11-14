@@ -9,6 +9,7 @@ use Ranetrace\Php\JavaScript\ErrorItemBuilder;
 use Ranetrace\Php\Logging\LogItemBuilder;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\SecretScrubber;
+use Ranetrace\Php\Support\StringLimit;
 
 /**
  * Every string the shared builders put in an item reaches the wire as valid
@@ -69,7 +70,7 @@ test('an error message of invalid bytes past its cap is cut inside the cap', fun
     expect(mb_strlen($message))->toBe(10_000)
         ->and(mb_check_encoding($message, 'UTF-8'))->toBeTrue()
         ->and($message)->toStartWith("\u{FFFD}")
-        ->and($message)->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX);
+        ->and($message)->toEndWith(StringLimit::SUFFIX);
 });
 
 test('an error message cut at its cap never splits a multibyte character', function (): void {

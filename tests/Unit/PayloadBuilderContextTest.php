@@ -6,6 +6,7 @@ use Ranetrace\Php\Errors\ErrorContext;
 use Ranetrace\Php\Errors\PayloadBuilder;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\SecretScrubber;
+use Ranetrace\Php\Support\StringLimit;
 
 /**
  * The framework-adapter half of the shared error builder.
@@ -144,7 +145,7 @@ test('an over-long source line is capped inside the preview and keeps its newlin
     $lines = explode("\n", (string) contextBuilder()->build($exception, ErrorContext::provided(isConsole: true))['context']);
 
     expect($lines[0])->toBe('short line')
-        ->and(mb_strlen($lines[1]))->toBe(2_000 + mb_strlen(PayloadBuilder::TRUNCATION_SUFFIX))
-        ->and($lines[1])->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX)
+        ->and(mb_strlen($lines[1]))->toBe(2_000 + mb_strlen(StringLimit::SUFFIX))
+        ->and($lines[1])->toEndWith(StringLimit::SUFFIX)
         ->and($lines[2])->toBe('last line');
 });

@@ -10,6 +10,7 @@ use Ranetrace\Php\Support\EnvironmentName;
 use Ranetrace\Php\Support\PayloadSizer;
 use Ranetrace\Php\Support\ProjectRootStripper;
 use Ranetrace\Php\Support\Scrubber;
+use Ranetrace\Php\Support\StringLimit;
 use Ranetrace\Php\Support\Utf8;
 
 /**
@@ -35,8 +36,6 @@ use Ranetrace\Php\Support\Utf8;
  */
 final class LogItemBuilder
 {
-    private const string TRUNCATION_SUFFIX = '... (truncated)';
-
     private const int MAX_MESSAGE_LENGTH = 50_000;
 
     private const int MAX_CONTEXT_BYTES = 51_200;
@@ -93,7 +92,7 @@ final class LogItemBuilder
                 self::MAX_CONTEXT_BYTES,
                 'Context exceeded 50KB limit and was removed',
             ),
-            'channel' => $this->channel($channel),
+            'channel' => StringLimit::cut(Utf8::repair($channel), self::MAX_CHANNEL_LENGTH),
             'timestamp' => Utf8::repair($timestamp),
             'extra' => $this->extra($extra, $sensitivePathValues),
         ];
@@ -105,20 +104,10 @@ final class LogItemBuilder
      */
     private function message(string $message): string
     {
-        $message = $this->scrubber->scrubString($this->projectRoot->strip(Utf8::repair($message)));
-
-        if (mb_strlen($message) <= self::MAX_MESSAGE_LENGTH) {
-            return $message;
-        }
-
-        return mb_substr($message, 0, self::MAX_MESSAGE_LENGTH - mb_strlen(self::TRUNCATION_SUFFIX)).self::TRUNCATION_SUFFIX;
-    }
-
-    private function channel(string $channel): string
-    {
-        $channel = Utf8::repair($channel);
-
-        return mb_strlen($channel) <= self::MAX_CHANNEL_LENGTH ? $channel : mb_substr($channel, 0, self::MAX_CHANNEL_LENGTH);
+        return StringLimit::cutWithSuffix(
+            $this->scrubber->scrubString($this->projectRoot->strip(Utf8::repair($message))),
+            self::MAX_MESSAGE_LENGTH,
+        );
     }
 
     /**

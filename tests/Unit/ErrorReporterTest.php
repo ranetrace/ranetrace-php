@@ -3,10 +3,10 @@
 declare(strict_types=1);
 
 use Ranetrace\Php\Errors\ErrorReporter;
-use Ranetrace\Php\Errors\PayloadBuilder;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
+use Ranetrace\Php\Support\StringLimit;
 use Ranetrace\Php\Tests\Doubles\ArrayBuffer;
 
 /**
@@ -215,7 +215,7 @@ test('it truncates the message with the suffix counted inside the limit', functi
     $payload = reportedPayload(new RuntimeException(str_repeat('a', 12_000)));
 
     expect(mb_strlen($payload['message']))->toBe(10_000)
-        ->and($payload['message'])->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX);
+        ->and($payload['message'])->toEndWith(StringLimit::SUFFIX);
 });
 
 test('it truncates the trace with the suffix counted inside the limit', function (): void {
@@ -234,7 +234,7 @@ test('it truncates the trace with the suffix counted inside the limit', function
     }
 
     expect(mb_strlen($payload['trace']))->toBe(5_000)
-        ->and($payload['trace'])->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX);
+        ->and($payload['trace'])->toEndWith(StringLimit::SUFFIX);
 });
 
 test('it reports the file relative to the configured project root', function (): void {
@@ -363,7 +363,7 @@ test('it truncates a header value at five hundred characters', function (): void
     ], isConsole: false);
 
     expect(mb_strlen($payload['headers']['user-agent'][0]))->toBe(500)
-        ->and($payload['headers']['user-agent'][0])->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX);
+        ->and($payload['headers']['user-agent'][0])->toEndWith(StringLimit::SUFFIX);
 });
 
 test('it scrubs the referer, which can carry a reset token', function (): void {
@@ -412,7 +412,7 @@ test('it truncates the URL at two thousand characters', function (): void {
     ], isConsole: false);
 
     expect(mb_strlen($payload['url']))->toBe(2_000)
-        ->and($payload['url'])->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX);
+        ->and($payload['url'])->toEndWith(StringLimit::SUFFIX);
 });
 
 test('it nulls the console fields on a request', function (): void {
@@ -458,7 +458,7 @@ test('it caps the console arguments at fifty items of five hundred characters', 
 
     expect($payload['console_arguments'])->toHaveCount(50)
         ->and(mb_strlen($payload['console_arguments'][0]))->toBe(500)
-        ->and($payload['console_arguments'][0])->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX);
+        ->and($payload['console_arguments'][0])->toEndWith(StringLimit::SUFFIX);
 });
 
 test('it reports no console command when the process has no argv', function (): void {

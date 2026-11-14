@@ -14,6 +14,7 @@ use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\ProjectRootStripper;
 use Ranetrace\Php\Support\Quietly;
 use Ranetrace\Php\Support\Scrubber;
+use Ranetrace\Php\Support\StringLimit;
 use Ranetrace\Php\Support\UserId;
 use Ranetrace\Php\Support\UserResolver;
 use Ranetrace\Php\Support\Utf8;
@@ -80,12 +81,6 @@ use Throwable;
 final class PayloadBuilder
 {
     /**
-     * Appended to fields that exceed their length limit. Counted INSIDE the
-     * limit: the final string, suffix included, is never longer than the cap.
-     */
-    public const string TRUNCATION_SUFFIX = '... (truncated)';
-
-    /**
      * Per-field caps bound the size of a SINGLE error item. The batch as a
      * whole is kept under the API's 5MB request limit by the worker's
      * pre-flight byte-budget trim. NOT user-tunable: raising any of these
@@ -131,13 +126,14 @@ final class PayloadBuilder
 
     /**
      * The command line in `console_command`, as the backend bounds it. Free
-     * text, so it is cut with {@see TRUNCATION_SUFFIX}.
+     * text, so it is cut with {@see StringLimit::SUFFIX}.
      */
     private const int MAX_CONSOLE_COMMAND_LENGTH = 1_000;
 
     /**
      * `framework` and `framework_version`, as the backend bounds each. Names,
-     * so they are cut to their first characters with no suffix.
+     * so they are cut to their first characters with no suffix: a suffix
+     * would make it a different name.
      */
     private const int MAX_FRAMEWORK_LENGTH = 50;
 
@@ -291,12 +287,12 @@ final class PayloadBuilder
         // in argument values.
         return [
             'id' => Uuid::v4(),
-            'message' => $this->truncate($this->freeText($throwable->getMessage()), self::MAX_MESSAGE_LENGTH),
+            'message' => StringLimit::cutWithSuffix($this->freeText($throwable->getMessage()), self::MAX_MESSAGE_LENGTH),
             'file' => $this->boundFilePath($file),
             'line' => $line,
             'type' => (string) $this->codeName($throwable::class, self::MAX_TYPE_LENGTH),
             'environment' => EnvironmentName::fromConfig($this->config->get('environment'), '', $this->log),
-            'trace' => $this->truncate($this->freeText($throwable->getTraceAsString()), self::MAX_TRACE_LENGTH),
+            'trace' => StringLimit::cutWithSuffix($this->freeText($throwable->getTraceAsString()), self::MAX_TRACE_LENGTH),
             'headers' => $isConsole ? null : $this->headers($context),
             'context' => $source,
             'highlight_line' => $highlightLine,
@@ -304,7 +300,7 @@ final class PayloadBuilder
             'timestamp' => Utf8::repairNullable($context->timestamp) ?? (new DateTimeImmutable)->format('c'),
             'url' => $isConsole ? null : $this->url($context),
             'method' => $isConsole ? null : $this->method($context),
-            'php_version' => $this->cutName((string) phpversion(), self::MAX_PHP_VERSION_LENGTH),
+            'php_version' => StringLimit::cut((string) phpversion(), self::MAX_PHP_VERSION_LENGTH),
             'framework' => $this->nameConfig('framework', self::MAX_FRAMEWORK_LENGTH),
             'framework_version' => $this->nameConfig('framework_version', self::MAX_FRAMEWORK_LENGTH),
             'is_console' => $isConsole,
@@ -432,7 +428,7 @@ final class PayloadBuilder
 
         return [
             'type' => (string) $this->codeName($previous::class, self::MAX_TYPE_LENGTH),
-            'message' => $this->truncate($this->freeText($previous->getMessage()), self::MAX_MESSAGE_LENGTH),
+            'message' => StringLimit::cutWithSuffix($this->freeText($previous->getMessage()), self::MAX_MESSAGE_LENGTH),
             'file' => $this->boundFilePath($location->file),
             'line' => max(0, $location->line),
             'source' => $wantsSource ? $location : null,
@@ -556,7 +552,7 @@ final class PayloadBuilder
         $name = $this->projectRoot->strip(str_replace("\0", ' ', $name));
         $name = preg_replace(self::ANONYMOUS_CLASS_COUNTER, '$1', $name) ?? $name;
 
-        return $this->truncate(Utf8::repair($name), $maxLength);
+        return StringLimit::cutWithSuffix(Utf8::repair($name), $maxLength);
     }
 
     /**
@@ -626,7 +622,7 @@ final class PayloadBuilder
             }
 
             if (is_string($value)) {
-                $values[$key] = $this->truncate($value, self::MAX_EXCEPTION_CONTEXT_STRING_LENGTH);
+                $values[$key] = StringLimit::cutWithSuffix($value, self::MAX_EXCEPTION_CONTEXT_STRING_LENGTH);
             }
         }
 
@@ -779,7 +775,7 @@ final class PayloadBuilder
             );
         }
 
-        return $this->truncate($value, self::MAX_HEADER_VALUE_LENGTH);
+        return StringLimit::cutWithSuffix($value, self::MAX_HEADER_VALUE_LENGTH);
     }
 
     /**
@@ -793,7 +789,7 @@ final class PayloadBuilder
             return null;
         }
 
-        return $this->truncate(
+        return StringLimit::cutWithSuffix(
             (string) $this->scrubber->scrubUrlPath(
                 $this->scrubber->scrubUrl(Utf8::repair($context->url)),
                 $context->sensitivePathValues,
@@ -829,7 +825,7 @@ final class PayloadBuilder
             $command = $script['resolved'].mb_substr($command, mb_strlen($script['typed'], '8bit'), null, '8bit');
         }
 
-        return $this->truncate($this->freeText($command), self::MAX_CONSOLE_COMMAND_LENGTH);
+        return StringLimit::cutWithSuffix($this->freeText($command), self::MAX_CONSOLE_COMMAND_LENGTH);
     }
 
     /**
@@ -861,7 +857,7 @@ final class PayloadBuilder
         }
 
         return array_map(
-            fn (string $argument): string => $this->truncate(
+            fn (string $argument): string => StringLimit::cutWithSuffix(
                 $this->freeText($argument),
                 self::MAX_CONSOLE_ARGV_LENGTH,
             ),
@@ -959,32 +955,10 @@ final class PayloadBuilder
         return $this->scrubber->scrubString($this->projectRoot->strip(Utf8::repair($text)));
     }
 
-    /**
-     * Truncate to at most $maxLength characters, the suffix included, so the
-     * final string never exceeds the cap.
-     */
-    private function truncate(string $value, int $maxLength): string
-    {
-        if (mb_strlen($value) <= $maxLength) {
-            return $value;
-        }
-
-        return mb_substr($value, 0, $maxLength - mb_strlen(self::TRUNCATION_SUFFIX)).self::TRUNCATION_SUFFIX;
-    }
-
-    /**
-     * A name (a version, a framework) cut to its first $maxLength characters,
-     * with no suffix: a suffix would make it a different name.
-     */
-    private function cutName(string $value, int $maxLength): string
-    {
-        return mb_strlen($value) <= $maxLength ? $value : mb_substr($value, 0, $maxLength);
-    }
-
     private function nameConfig(string $dotKey, int $maxLength): ?string
     {
         $value = $this->config->get($dotKey);
 
-        return is_scalar($value) && (string) $value !== '' ? $this->cutName(Utf8::repair((string) $value), $maxLength) : null;
+        return is_scalar($value) && (string) $value !== '' ? StringLimit::cut(Utf8::repair((string) $value), $maxLength) : null;
     }
 }

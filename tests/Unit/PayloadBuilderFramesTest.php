@@ -6,6 +6,7 @@ use Ranetrace\Php\Errors\FrameLocation;
 use Ranetrace\Php\Errors\FrameMapper;
 use Ranetrace\Php\Errors\PayloadBuilder;
 use Ranetrace\Php\Errors\SourceReader;
+use Ranetrace\Php\Support\StringLimit;
 
 /**
  * The structured frames, their source lines and the previous-exception chain,
@@ -369,7 +370,7 @@ test('a previous exception message is scrubbed and capped like the item message'
 
     expect($message)->toStartWith('login failed password=[REDACTED] ')
         ->and(mb_strlen($message))->toBe(10_000)
-        ->and($message)->toEndWith(PayloadBuilder::TRUNCATION_SUFFIX);
+        ->and($message)->toEndWith(StringLimit::SUFFIX);
 });
 
 /**
