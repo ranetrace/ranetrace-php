@@ -158,7 +158,7 @@ final readonly class TestResult
             TestOutcome::NotProcessed => 'not processed: the API ran out of time. Run the test again',
             TestOutcome::Unrecognised => "failed: the API answered 200 without counting the test item, so {$baseUrl} may not be the Ranetrace API",
             TestOutcome::Unauthorized => "refused: the API answered 401 ({$this->message}). Check ".($fromEnvironment ? 'RANETRACE_KEY' : 'the configured key'),
-            TestOutcome::Forbidden => "refused: the API answered 403 ({$this->message}). The key lacks access to this feature, the website is in maintenance mode, or the account has no access",
+            TestOutcome::Forbidden => "refused: the API answered 403 ({$this->message}). The key lacks access to this feature, the website is deactivated, or the account has no access",
             TestOutcome::RateLimited => 'rate limited: the API answered 429. Try again in '.($this->seconds === 1 ? '1 second' : "{$this->seconds} seconds"),
             TestOutcome::Unreachable => "failed: could not reach {$baseUrl} ({$this->message})",
             TestOutcome::Failed => "failed: the API answered {$this->status} ({$this->message})",

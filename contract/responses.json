@@ -24,7 +24,7 @@
             "pause_scope": "feature",
             "pause_seconds": 900,
             "drop": false,
-            "note": "The token lacks the feature's write ability, the website is in maintenance mode, or the account has no access. Treated as recoverable, so the items are kept."
+            "note": "The token lacks the feature's write ability, the website is deactivated, or the account has no access. Treated as recoverable, so the items are kept."
         },
         "413": {
             "rebuffer": false,

@@ -193,8 +193,8 @@ it('says what each answer means and whether it counts as accepted', function (Ra
 })->with([
     'a 403' => [
         sendTestResponse(403, ['error' => ['message' => 'Feature disabled']]),
-        'refused: the API answered 403 (Feature disabled). The key lacks access to this feature, the website is in maintenance mode, or the account has no access',
-        'refused: the API answered 403 (Feature disabled). The key lacks access to this feature, the website is in maintenance mode, or the account has no access',
+        'refused: the API answered 403 (Feature disabled). The key lacks access to this feature, the website is deactivated, or the account has no access',
+        'refused: the API answered 403 (Feature disabled). The key lacks access to this feature, the website is deactivated, or the account has no access',
         false,
     ],
     'a 429 with Retry-After' => [
