@@ -6,6 +6,8 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-16
+
 ### Added
 - **The wire contract describes the page visit.** `contract/items/page_visits.json` holds the field spec of the one item this package does not send, transcribed from the backend's validator, with three examples. Only `ranetrace/ranetrace-laravel` sends a page visit, and its limits were numbers copied by hand. `Contract\WireContract::item('page_visits')` reads the fixture, and the new `WireContract::describedItemTypes()` lists all five types. `WireContract::itemTypes()` is unchanged: the four types this package sends. `contract/endpoints.json` and the `wrappers` of `contract/envelope.json` name the page visit too. Nothing changes in what is captured or sent
 
