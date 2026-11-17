@@ -13,6 +13,8 @@
         "The body is the two fields below and nothing else: no wrapper key, no items. A body with any other key, a missing key or a value outside these is refused whole with a 422 and stores nothing.",
         "`sdk` names the SDK that sent the heartbeat. It is the `{SDK}` segment of that SDK's User-Agent in lower case.",
         "`sdk_version` is the version of the SDK's package as Composer installed it and spells it: `v1.7.0` for a tag, `dev-main` for a branch. An SDK cuts a longer value to 50 characters and sends `unknown` when it cannot find its version, because the field is required and a worker that ran should still be heard.",
+        "The backend trims the whitespace around both values before it judges them, so a version of only spaces counts as missing. An SDK trims the version itself and sends `unknown` for a blank one.",
+        "The route group answers two more statuses before the request reaches the endpoint, as it does for the batches: a 415 when the Content-Type is not `application/json` and a 413 for a body over 5 MB. An SDK meets neither, since it always sends that Content-Type and a body of two short fields, and would treat either like any other status below.",
         "The endpoint asks for no token ability, so every ingest key is accepted, and it answers no 403: the owner's access, the email verification and the website's active flag do not stop a heartbeat. The check that judges silence is what leaves an unwatched website out."
     ],
     "fields": {
