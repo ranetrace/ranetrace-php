@@ -194,6 +194,26 @@ final class Ranetrace
     }
 
     /**
+     * Tell Ranetrace that this application's worker ran, so that it can tell
+     * a quiet application from one that stopped reporting. At most one
+     * heartbeat goes out every five minutes, however often this is called.
+     *
+     * `vendor/bin/ranetrace-flush` calls it after each flush. A host that
+     * flushes from a scheduled job of its own calls it there, after `flush()`.
+     * Never call it from a web request: Ranetrace alerts when the heartbeats
+     * stop, and a request-driven heartbeat stops whenever the site has no
+     * visitors. Never throws.
+     */
+    public function heartbeat(): void
+    {
+        try {
+            $this->worker()->heartbeat();
+        } catch (Throwable) {
+            // As in flushQuietly(): the guarantee is restated, not assumed.
+        }
+    }
+
+    /**
      * Send one test error and one test event straight to the API and report
      * what it answered, with the state of the buffer and the pauses. This is
      * what `vendor/bin/ranetrace-test` runs; a host that configures the SDK in

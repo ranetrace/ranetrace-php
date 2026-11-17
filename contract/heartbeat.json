@@ -1,0 +1,50 @@
+{
+    "note": "The one request beside the batches. An SDK sends nothing while its buffer is empty, so the API cannot tell a quiet application from one whose worker stopped. A heartbeat says the worker ran, whether or not it had anything to send. The API stores when the last one arrived, with the SDK and version it named, and judges a website by the silence after it.",
+    "method": "POST",
+    "path": "/heartbeat",
+    "path_note": "Appended to the configured API base URL, like the paths in endpoints.json.",
+    "headers_note": "The five request headers of headers.json, with the feature segment of the User-Agent below.",
+    "user_agent_feature": "Heartbeat",
+    "interval_seconds": 300,
+    "interval_note": "An SDK sends at most one heartbeat per interval for one application. The API throttles the endpoint at 60 requests a minute per website, counted apart from the batch endpoints, so a heartbeat that goes out early is not refused for it.",
+    "strict_fields": true,
+    "notes": [
+        "Transcribed from the backend app's HeartbeatController, verified 2026-11-17.",
+        "The body is the two fields below and nothing else: no wrapper key, no items. A body with any other key, a missing key or a value outside these is refused whole with a 422 and stores nothing.",
+        "`sdk` names the SDK that sent the heartbeat. It is the `{SDK}` segment of that SDK's User-Agent in lower case.",
+        "`sdk_version` is the version of the SDK's package as Composer installed it and spells it: `v1.7.0` for a tag, `dev-main` for a branch. An SDK cuts a longer value to 50 characters and sends `unknown` when it cannot find its version, because the field is required and a worker that ran should still be heard.",
+        "The endpoint asks for no token ability, so every ingest key is accepted, and it answers no 403: the owner's access, the email verification and the website's active flag do not stop a heartbeat. The check that judges silence is what leaves an unwatched website out."
+    ],
+    "fields": {
+        "sdk": {"required": true, "type": "string", "in": ["laravel", "php"]},
+        "sdk_version": {"required": true, "type": "string", "min": 1, "max": 50}
+    },
+    "examples": {
+        "php": {"sdk": "php", "sdk_version": "v1.7.0"},
+        "laravel": {"sdk": "laravel", "sdk_version": "dev-main"}
+    },
+    "sent_when": {
+        "note": "A heartbeat is sent only where its absence means something. Each SDK sends it from its scheduled worker run and from nowhere else.",
+        "php": "From `vendor/bin/ranetrace-flush`, the cron job, after the flush. Never from the flush at the end of a web request: that one stops whenever a site has no visitors, and the API would call a quiet site stopped. An application without the cron job sends no heartbeat and is never judged.",
+        "conditions": [
+            "An API key is set.",
+            "The master switch is on.",
+            "Nothing is globally paused. A global pause means a rejected key or a pause the API asked for, and silence is right there: the application did stop reporting.",
+            "The last heartbeat this application tried to send is at least `interval_seconds` old."
+        ]
+    },
+    "client_policy": {
+        "note": "The answer changes nothing on the client. Whatever comes back, and when nothing comes back: no pause is set or lifted, no item is kept or dropped, the request is not sent again before the next interval, and the exit code of the command that sent it stays as it was. A heartbeat that was not answered with a 2xx writes one line to the SDK's internal log.",
+        "pause_scope": null,
+        "rebuffer": false,
+        "retry": false
+    },
+    "statuses": {
+        "200": {"note": "Recorded. The body is `{\"success\": true}`. A heartbeat has no items, so the answer carries no counters."},
+        "401": {"note": "The key is missing or rejected. The heartbeat itself sets no pause: the next batch gets the same answer and sets the global pause of responses.json."},
+        "422": {"note": "The body is malformed. The error body of responses.json names the field at fault. It indicates a client bug."},
+        "429": {"note": "Throttled. The client does not read Retry-After here: the next heartbeat is an interval away."},
+        "default": {"note": "A 500, or any other status. Nothing is known to be stored."},
+        "network": {"note": "No HTTP status was reached."}
+    }
+}

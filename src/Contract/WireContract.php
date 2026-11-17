@@ -115,6 +115,17 @@ final class WireContract
     }
 
     /**
+     * The heartbeat: the one request beside the batches, with its path, its
+     * two body fields and what a client does with the answer.
+     *
+     * @return array<string, mixed>
+     */
+    public static function heartbeat(): array
+    {
+        return self::read('heartbeat.json');
+    }
+
+    /**
      * Absolute path of the `contract/` directory, so a consuming repository can
      * locate the files through its own `vendor/`.
      */

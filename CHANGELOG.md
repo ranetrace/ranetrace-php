@@ -6,6 +6,15 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Added
+- **The cron flush tells Ranetrace that it runs.** The SDK sends nothing while its buffer is empty, so Ranetrace could not tell an application with nothing to report from one whose cron job stopped. `vendor/bin/ranetrace-flush` now sends a heartbeat after the flush, at most one every 5 minutes: `POST {base}/heartbeat` with `{"sdk": "php", "sdk_version": "<the installed package version>"}` and nothing else.
+  - **When.** With `RANETRACE_KEY` set, the master switch on, nothing globally paused and a buffer the command can use. A global pause means a rejected key or a pause the API asked for, and the command stays silent then. The flush at the end of a web request never sends one: it stops whenever a site has no visitors. An application without the cron job sends no heartbeat
+  - **The answer changes nothing.** No pause, no retry before the next 5 minutes, the same exit code, no output. A heartbeat that was not accepted writes one line to the internal log
+  - **A host with a scheduled job of its own** calls the new `Ranetrace::heartbeat()` after `flush()`. It never throws, and it holds itself to one request per 5 minutes through the `heartbeat` key of `state.json` in the buffer directory
+  - **For another SDK.** `Http\Heartbeat` holds the path, the body, the User-Agent (`Ranetrace-PHP/Heartbeat/1.0`) and the interval, and `Heartbeat::forPackage()` reads a package's version from Composer. `ApiClient::sendHeartbeat()` sends one. `contract/heartbeat.json` describes the request, and `Contract\WireContract::heartbeat()` reads it
+
+  Nothing to do on upgrade: a cron job that is already set up starts sending heartbeats
+
 ## [1.6.0] - 2026-11-16
 
 ### Added

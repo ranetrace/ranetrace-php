@@ -322,3 +322,214 @@ it('names the missing key before the buffer it cannot use', function (): void {
         ->and($lines[0]."\n")->toBe(missingKeyLine())
         ->and($lines[1])->toStartWith("ranetrace-flush: cannot write to the buffer in [{$directory}]");
 })->skip(flushRunsAsRoot(...), 'root ignores file modes');
+
+/**
+ * Run $run against `tests/Doubles/fake-api.php` on PHP's built-in server, and
+ * return what it returned beside every request the server received.
+ *
+ * @param  callable(array<string, string>): mixed  $run  Given the environment that points a subprocess at the server.
+ * @param  array<string, string>  $serverEnvironment
+ * @return array{result: mixed, requests: list<array{path: string, user_agent: string, body: string}>}
+ */
+function flushAgainstFakeApi(callable $run, array $serverEnvironment = []): array
+{
+    $probe = stream_socket_server('tcp://127.0.0.1:0');
+    $port = (int) mb_substr((string) mb_strrchr((string) stream_socket_get_name($probe, false), ':'), 1);
+    fclose($probe);
+
+    $record = tempDirectory().'/requests.jsonl';
+
+    $server = proc_open(
+        [PHP_BINARY, '-S', "127.0.0.1:{$port}", 'tests/Doubles/fake-api.php'],
+        [1 => ['file', '/dev/null', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+        dirname(__DIR__, 2),
+        array_merge(getenv(), ['FAKE_API_RECORD' => $record], $serverEnvironment),
+    );
+
+    try {
+        // The built-in server writes one line to stderr once it listens.
+        fgets($pipes[2]);
+
+        $result = $run(['RANETRACE_BASE_URL' => "http://127.0.0.1:{$port}/v1"]);
+    } finally {
+        if (is_resource($server)) {
+            proc_terminate($server);
+            proc_close($server);
+        }
+    }
+
+    $lines = is_file($record) ? array_filter(explode("\n", (string) file_get_contents($record))) : [];
+
+    return [
+        'result' => $result,
+        'requests' => array_values(array_map(static fn (string $line): array => json_decode($line, true), $lines)),
+    ];
+}
+
+it('sends one heartbeat from the cron flush with an empty buffer, and none on a second run within five minutes', function (): void {
+    $directory = tempDirectory();
+
+    $run = flushAgainstFakeApi(static fn (array $api): array => [
+        runFlushSubprocess(['bin/ranetrace-flush'], array_merge(flushEnvironment($directory), $api)),
+        runFlushSubprocess(['bin/ranetrace-flush'], array_merge(flushEnvironment($directory), $api)),
+    ]);
+
+    expect($run['requests'])->toBe([[
+        'path' => '/v1/heartbeat',
+        'user_agent' => 'Ranetrace-PHP/Heartbeat/1.0',
+        'body' => (string) json_encode(['sdk' => 'php', 'sdk_version' => Composer\InstalledVersions::getPrettyVersion('ranetrace/ranetrace-php')]),
+    ]])
+        ->and($run['result'][0])->toBe(['status' => 0, 'stdout' => '', 'stderr' => ''])
+        ->and($run['result'][1])->toBe(['status' => 0, 'stdout' => '', 'stderr' => ''])
+        ->and(is_file($directory.'/pauses.json'))->toBeFalse();
+});
+
+it('sends the heartbeat after the drain', function (): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+
+    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+        ['bin/ranetrace-flush'],
+        array_merge(flushEnvironment($directory), $api),
+    ));
+
+    expect(array_column($run['requests'], 'path'))->toBe(['/v1/errors/store', '/v1/heartbeat'])
+        ->and($run['result']['status'])->toBe(0);
+});
+
+it('sends a heartbeat on a run that drains one named type', function (): void {
+    $directory = tempDirectory();
+
+    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+        ['bin/ranetrace-flush', '--type=events'],
+        array_merge(flushEnvironment($directory), $api),
+    ));
+
+    expect(array_column($run['requests'], 'path'))->toBe(['/v1/heartbeat']);
+});
+
+/**
+ * The flush at the end of a web request stops whenever a site has no visitors,
+ * so a heartbeat from it would have the API call a quiet site stopped.
+ */
+it('never sends a heartbeat from the shutdown flush', function (bool $spooled, array $expected): void {
+    $directory = tempDirectory();
+
+    if ($spooled) {
+        seedSpool($directory);
+    }
+
+    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+        ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
+        array_merge(flushEnvironment($directory), $api),
+    ));
+
+    expect(array_column($run['requests'], 'path'))->toBe($expected)
+        ->and($run['result']['status'])->toBe(0);
+})->with([
+    'with an item to drain' => [true, ['/v1/errors/store']],
+    'with an empty buffer' => [false, []],
+]);
+
+it('sends no heartbeat without a key', function (): void {
+    $directory = tempDirectory();
+
+    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+        ['bin/ranetrace-flush'],
+        array_merge(keylessFlushEnvironment($directory), $api),
+    ));
+
+    expect($run['requests'])->toBe([])
+        ->and($run['result']['status'])->toBe(1)
+        ->and($run['result']['stderr'])->toBe(missingKeyLine());
+});
+
+it('sends no heartbeat while the master switch is off', function (): void {
+    $directory = tempDirectory();
+
+    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+        ['bin/ranetrace-flush'],
+        array_merge(flushEnvironment($directory), $api, ['RANETRACE_ENABLED' => 'false']),
+    ));
+
+    expect($run['requests'])->toBe([])
+        ->and($run['result'])->toBe(['status' => 0, 'stdout' => '', 'stderr' => '']);
+});
+
+it('sends no heartbeat while everything is paused', function (): void {
+    $directory = tempDirectory();
+    file_put_contents($directory.'/pauses.json', (string) json_encode([
+        'global' => ['paused_until' => new DateTimeImmutable('+10 minutes')->format('c'), 'reason' => '401'],
+        'features' => [],
+    ]));
+
+    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+        ['bin/ranetrace-flush'],
+        array_merge(flushEnvironment($directory), $api),
+    ));
+
+    expect($run['requests'])->toBe([])
+        ->and($run['result'])->toBe(['status' => 0, 'stdout' => '', 'stderr' => '']);
+});
+
+it('keeps the exit code, the spool and the pauses when the heartbeat is answered with a 500', function (): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+    $before = (string) file_get_contents($directory.'/errors.json');
+
+    // Only events are drained, so the spooled error is still there to compare.
+    $run = flushAgainstFakeApi(
+        static fn (array $api): array => runFlushSubprocess(
+            ['bin/ranetrace-flush', '--type=events'],
+            array_merge(flushEnvironment($directory), $api),
+        ),
+        ['FAKE_API_HEARTBEAT_STATUS' => '500'],
+    );
+
+    $log = subprocessInternalLog($directory);
+
+    expect(array_column($run['requests'], 'path'))->toBe(['/v1/heartbeat'])
+        ->and($run['result'])->toBe(['status' => 0, 'stdout' => '', 'stderr' => ''])
+        ->and((string) file_get_contents($directory.'/errors.json'))->toBe($before)
+        ->and(is_file($directory.'/pauses.json'))->toBeFalse()
+        ->and(mb_substr_count($log, "\n"))->toBe(1)
+        ->and($log)->toContain('Heartbeat was not accepted {"status":500,"message":"Heartbeat refused"}');
+});
+
+it('keeps the exit code and sets no pause when the heartbeat cannot reach the api', function (): void {
+    $directory = tempDirectory();
+
+    $result = runFlushSubprocess(['bin/ranetrace-flush'], flushEnvironment($directory));
+
+    $log = subprocessInternalLog($directory);
+
+    expect($result)->toBe(['status' => 0, 'stdout' => '', 'stderr' => ''])
+        ->and(is_file($directory.'/pauses.json'))->toBeFalse()
+        ->and(mb_substr_count($log, "\n"))->toBe(1)
+        ->and($log)->toContain('Heartbeat was not accepted {"status":0,');
+});
+
+/**
+ * A flush run as another user drains nothing. It is not a worker that runs,
+ * so it does not tell the API it is one.
+ */
+it('sends no heartbeat when it cannot use the buffer', function (): void {
+    $directory = tempDirectory();
+    seedSpool($directory);
+
+    touch($directory.'/errors.lock');
+    chmod($directory.'/errors.lock', 0444);
+
+    try {
+        $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+            ['bin/ranetrace-flush'],
+            array_merge(flushEnvironment($directory), $api),
+        ));
+    } finally {
+        chmod($directory.'/errors.lock', 0600);
+    }
+
+    expect($run['requests'])->toBe([])
+        ->and($run['result']['status'])->toBe(1);
+})->skip(flushRunsAsRoot(...), 'root ignores file modes');

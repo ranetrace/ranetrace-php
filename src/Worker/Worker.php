@@ -11,6 +11,7 @@ use Ranetrace\Php\Config;
 use Ranetrace\Php\Http\ApiClient;
 use Ranetrace\Php\Http\BatchOutcome;
 use Ranetrace\Php\Http\EndpointTable;
+use Ranetrace\Php\Http\Heartbeat;
 use Ranetrace\Php\Http\PauseScope;
 use Ranetrace\Php\Http\ResponsePolicy;
 use Ranetrace\Php\Support\InternalLogger;
@@ -58,6 +59,17 @@ final class Worker
      * The `{SDK}` segment of every User-Agent this package sends.
      */
     private const string SDK = 'PHP';
+
+    /**
+     * This package's Composer name, which the heartbeat reads its version by.
+     */
+    private const string PACKAGE = 'ranetrace/ranetrace-php';
+
+    /**
+     * The key of the heartbeat stamp in `state.json`, beside the last-batch
+     * stamp of each type. No buffer type has this name.
+     */
+    private const string HEARTBEAT_STATE_KEY = 'heartbeat';
 
     /**
      * The four contracted endpoints. The table is shared with
@@ -162,6 +174,75 @@ final class Worker
             $this->timeout($endpoint->timeoutKey),
             $items,
         );
+    }
+
+    /**
+     * Tell the API that this worker ran, at most once per
+     * {@see Heartbeat::INTERVAL_SECONDS}.
+     *
+     * This is for a scheduled run only, which is why {@see run()} does not call
+     * it: a flush at the end of a web request stops whenever a site has no
+     * visitors, and the API would then call a quiet site stopped.
+     *
+     * Nothing is sent without a key, with the master switch off, or while
+     * everything is paused. A global pause means a rejected key or a pause the
+     * API asked for, and staying silent is right there: the application did
+     * stop reporting.
+     *
+     * The attempt is stamped before it is sent, and the answer changes
+     * nothing: no pause, no retry, and the next attempt is one interval later
+     * whatever came back. A heartbeat that could not be stamped is not sent,
+     * since nothing would then hold the next run back from sending another.
+     * Like {@see run()}, this never throws.
+     */
+    public function heartbeat(): void
+    {
+        try {
+            if ($this->config->enabled() === false || $this->pauses->isGloballyPaused()) {
+                return;
+            }
+
+            $now = time();
+            $last = $this->lastHeartbeatAt();
+
+            // A stamp from the future is a clock that was set back, and is
+            // read as no stamp: it would otherwise silence the heartbeat until
+            // the clock caught up with it.
+            if ($last !== null && $last <= $now && $now - $last < Heartbeat::INTERVAL_SECONDS) {
+                return;
+            }
+
+            if (! $this->stamp(self::HEARTBEAT_STATE_KEY, $now)) {
+                $this->log->warning('Heartbeat not sent, its time could not be written to the state file');
+
+                return;
+            }
+
+            $result = $this->api->sendHeartbeat(Heartbeat::forPackage(self::SDK, self::PACKAGE));
+
+            if ($result['status'] >= 200 && $result['status'] < 300) {
+                $this->log->debug('Heartbeat sent', ['status' => $result['status']]);
+
+                return;
+            }
+
+            $this->log->warning('Heartbeat was not accepted', [
+                'status' => $result['status'],
+                'message' => $result['error'] ?? ResponsePolicy::errorMessage($result['data'], 'No message'),
+            ]);
+        } catch (Throwable $failure) {
+            $this->log->error('Heartbeat failed', ['exception' => $failure->getMessage()]);
+        }
+    }
+
+    /**
+     * Unix timestamp of the last heartbeat this worker tried to send, or null.
+     */
+    public function lastHeartbeatAt(): ?int
+    {
+        $stamp = $this->readState()[self::HEARTBEAT_STATE_KEY] ?? null;
+
+        return is_int($stamp) ? $stamp : null;
     }
 
     /**
@@ -457,18 +538,28 @@ final class Worker
      * same reason the buffer itself is a file: a cache store is not shared
      * across the processes that need to agree on this.
      *
-     * Deliberately unlocked, unlike the buffer and the pause store. The value is
-     * one timestamp per type that only ever moves forward, nothing reads it to
-     * decide anything, and the atomic `rename` already rules out a torn file. A
-     * lost update means a diagnostics stamp is a run behind, which is not worth
-     * a lock on the success path of every batch.
+     * Deliberately unlocked, unlike the buffer and the pause store. Each value
+     * is one timestamp, and the atomic `rename` already rules out a torn file.
+     * A lost update means a last-batch stamp is a run behind, or a heartbeat
+     * stamp is missing and one heartbeat goes out a run early, which the API's
+     * throttle has room for. Neither is worth a lock on the success path of
+     * every batch.
      */
     private function stampLastBatch(string $type): void
     {
-        $state = $this->readState();
-        $state[$type] = time();
+        $this->stamp($type, time());
+    }
 
-        JsonFile::write($this->stateFile(), $state);
+    /**
+     * Write one timestamp into `state.json`, keeping the others. False when
+     * the file could not be written.
+     */
+    private function stamp(string $key, int $time): bool
+    {
+        $state = $this->readState();
+        $state[$key] = $time;
+
+        return JsonFile::write($this->stateFile(), $state);
     }
 
     /**

@@ -10,6 +10,7 @@ use Throwable;
 
 /**
  * Speaks the Ranetrace batch API: five headers, one wrapper key, one POST.
+ * The heartbeat is the one request beside the batches, see {@see sendHeartbeat()}.
  *
  * Ported from `ranetrace/ranetrace-laravel` (`src/Services/RanetraceApiClient.php`).
  * The wire contract is strict on the server side, so the details here are not
@@ -68,31 +69,44 @@ final class ApiClient
             return self::errorResult('Failed to encode batch payload');
         }
 
-        try {
-            $response = $this->http->post(
-                $this->url($path),
-                $this->headers($key, $userAgent),
-                $body,
-                self::CONNECT_TIMEOUT,
-                $timeout > 0 ? $timeout : 10,
-            );
-        } catch (Throwable $failure) {
-            return self::errorResult($failure->getMessage());
+        $result = $this->post($path, $key, $userAgent, $body, $timeout);
+
+        if ($result['status'] !== 0) {
+            $this->log->debug('Batch request completed', [
+                'path' => $path,
+                'status' => $result['status'],
+                'items' => count($items),
+            ]);
         }
-
-        if ($response->status === 0) {
-            return self::errorResult($response->error ?? 'Network error');
-        }
-
-        $result = self::normalise($response);
-
-        $this->log->debug('Batch request completed', [
-            'path' => $path,
-            'status' => $result['status'],
-            'items' => count($items),
-        ]);
 
         return $result;
+    }
+
+    /**
+     * POST one heartbeat: the same five headers as a batch, and a body that is
+     * the heartbeat's two fields with no wrapper key.
+     *
+     * The result has the shape of a batch result so a caller reads both alike,
+     * but nothing in it is a decision: a heartbeat has no items to keep or
+     * drop, and its answer pauses nothing. See `contract/heartbeat.json`.
+     *
+     * @return array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
+     */
+    public function sendHeartbeat(Heartbeat $heartbeat): array
+    {
+        $key = $this->config->key();
+
+        if ($key === '') {
+            return self::errorResult('API key not configured');
+        }
+
+        $body = json_encode($heartbeat->body());
+
+        if (! is_string($body)) {
+            return self::errorResult('Failed to encode heartbeat payload');
+        }
+
+        return $this->post(Heartbeat::PATH, $key, $heartbeat->userAgent(), $body, Heartbeat::TIMEOUT_SECONDS);
     }
 
     /**
@@ -132,7 +146,34 @@ final class ApiClient
     }
 
     /**
-     * The five headers every batch POST carries. The set is exact: the server
+     * One POST, normalised. A request that reached no HTTP status comes back
+     * as status 0 and never as an exception.
+     *
+     * @return array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
+     */
+    private function post(string $path, string $key, string $userAgent, string $body, int $timeout): array
+    {
+        try {
+            $response = $this->http->post(
+                $this->url($path),
+                $this->headers($key, $userAgent),
+                $body,
+                self::CONNECT_TIMEOUT,
+                $timeout > 0 ? $timeout : 10,
+            );
+        } catch (Throwable $failure) {
+            return self::errorResult($failure->getMessage());
+        }
+
+        if ($response->status === 0) {
+            return self::errorResult($response->error ?? 'Network error');
+        }
+
+        return self::normalise($response);
+    }
+
+    /**
+     * The five headers every request carries. The set is exact: the server
      * authenticates on `Authorization`, versions on `Ranetrace-API-Version` and
      * attributes the SDK and feature on `User-Agent`.
      *

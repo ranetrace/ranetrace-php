@@ -38,6 +38,8 @@ Captured items are buffered locally and drained when the process shuts down. On 
 
 Run the cron job as the user your web server runs as: the buffer is for one user. The line discards the command's output, so run `vendor/bin/ranetrace-flush` once by hand as that user to check it. It prints nothing when it has a key and can use the buffer, and prints the reason and exits `1` when it cannot use the buffer or when `RANETRACE_KEY` is not set in its environment. The command reads the environment only: a key your application loads from a `.env` file or sets in its bootstrap does not reach it, so set the key in the cron job's environment. Without it the flush sends nothing.
 
+The cron job also tells Ranetrace that it runs. The SDK sends nothing while there is nothing to report, so after each flush the command sends a heartbeat, at most one every five minutes, with the SDK's name and version and nothing else. That is how Ranetrace tells an application with nothing to report from one whose cron job stopped. The flush at the end of a request never sends one, so a site without the cron job sends no heartbeat.
+
 To check the install, run `vendor/bin/ranetrace-test`. It sends one test error and one test event straight to the API, beside the buffer, and prints what came back, then the state of the buffer:
 
 ```text

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Composer\InstalledVersions;
 use Ranetrace\Php\Buffer\PauseStore;
 use Ranetrace\Php\Config;
 use Ranetrace\Php\Events\EventTracker;
@@ -637,4 +638,299 @@ it('keeps at least one encodable item when an unencodable one comes first', func
 
     expect(array_column($harness['http']->payload()['errors'], 'message'))->toBe(['big'])
         ->and($harness['buffer']->payloads('errors'))->toBe([['message' => 'next']]);
+});
+
+/**
+ * A stamp in the state file, as an earlier run would have left it.
+ *
+ * @param  array<string, int>  $state
+ */
+function seedWorkerState(string $directory, array $state): void
+{
+    file_put_contents($directory.'/state.json', (string) json_encode($state));
+}
+
+it('sends one heartbeat with the sdk and its version when the buffer is empty and none was sent before', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toHaveCount(1)
+        ->and($harness['http']->requests[0]['url'])->toBe('https://api.ranetrace.com/v1/heartbeat')
+        ->and($harness['http']->requests[0]['headers']['User-Agent'])->toBe('Ranetrace-PHP/Heartbeat/1.0')
+        ->and($harness['http']->payload())->toBe([
+            'sdk' => 'php',
+            'sdk_version' => InstalledVersions::getPrettyVersion('ranetrace/ranetrace-php'),
+        ]);
+});
+
+it('sends no second heartbeat within five minutes of the first', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+
+    $harness['worker']->heartbeat();
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toHaveCount(1);
+});
+
+it('sends a heartbeat or holds it by the age of the last one', function (int $age, int $expected): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    seedWorkerState($harness['directory'], ['heartbeat' => time() - $age]);
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toHaveCount($expected);
+})->with([
+    'four minutes old' => [240, 0],
+    'five minutes old' => [300, 1],
+    'an hour old' => [3600, 1],
+]);
+
+/**
+ * A server whose clock was set back would otherwise be silent until the clock
+ * caught up with the stamp, and the API would call it stopped.
+ */
+it('sends a heartbeat when the last one is stamped in the future', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    seedWorkerState($harness['directory'], ['heartbeat' => time() + 86400]);
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toHaveCount(1)
+        ->and($harness['worker']->lastHeartbeatAt())->toBeLessThanOrEqual(time());
+});
+
+it('sends no heartbeat without an api key', function (string $key): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200), [
+        'key' => $key,
+        'internal_logging' => ['enabled' => true, 'level' => 'debug'],
+    ]);
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toBe([])
+        ->and($harness['worker']->lastHeartbeatAt())->toBeNull()
+        ->and(workerLogContents($harness['directory']))->toBe('');
+})->with([
+    'no key' => [''],
+    'a key of whitespace' => ["  \t"],
+]);
+
+it('sends no heartbeat while the master switch is off', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200), ['enabled' => false]);
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toBe([])
+        ->and($harness['worker']->lastHeartbeatAt())->toBeNull();
+});
+
+it('sends no heartbeat while everything is paused', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    $harness['pauses']->pauseGlobal(900, '401');
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toBe([])
+        ->and($harness['worker']->lastHeartbeatAt())->toBeNull();
+});
+
+/**
+ * The order a cron run has: the drain meets the rejected key, and the
+ * heartbeat after it stays silent, so the API sees the application stop.
+ */
+it('sends no heartbeat after a drain that met a rejected key', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(401, ['error' => ['message' => 'Invalid API key']]));
+    seedBuffer($harness['buffer'], 'errors', 1);
+
+    $harness['worker']->run();
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toHaveCount(1)
+        ->and($harness['http']->requests[0]['url'])->toBe('https://api.ranetrace.com/v1/errors/store');
+});
+
+it('still sends a heartbeat while one feature is paused', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    $harness['pauses']->pauseFeature('errors', 900, '403');
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toHaveCount(1);
+});
+
+it('still sends a heartbeat when every feature is switched off', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200), [
+        'errors' => ['enabled' => false],
+        'events' => ['enabled' => false],
+    ]);
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toHaveCount(1);
+});
+
+it('never sends a heartbeat from a drain', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    seedBuffer($harness['buffer'], 'errors', 1);
+
+    $harness['worker']->run();
+    $harness['worker']->run();
+
+    expect($harness['http']->requests)->toHaveCount(1)
+        ->and($harness['http']->requests[0]['url'])->toBe('https://api.ranetrace.com/v1/errors/store')
+        ->and($harness['worker']->lastHeartbeatAt())->toBeNull();
+});
+
+it('sets no pause and leaves the buffer alone whatever a heartbeat is answered', function (FakeHttpClient $http): void {
+    $harness = workerHarness($http);
+    seedBuffer($harness['buffer'], 'errors', 2);
+    $before = $harness['buffer']->items;
+
+    $harness['worker']->heartbeat();
+
+    expect($http->requests)->toHaveCount(1)
+        ->and($harness['buffer']->items)->toBe($before)
+        ->and($harness['pauses']->globalPause())->toBeNull()
+        ->and($harness['pauses']->featurePause('errors'))->toBeNull()
+        ->and(is_file($harness['directory'].'/pauses.json'))->toBeFalse();
+})->with([
+    'a server error' => [fn (): FakeHttpClient => FakeHttpClient::respondingWith(500, ['success' => false, 'error' => ['message' => 'Server error']])],
+    'a network failure' => [fn (): FakeHttpClient => new FakeHttpClient(RawResponse::transportFailure('Could not resolve host'))],
+    'a rejected key' => [fn (): FakeHttpClient => FakeHttpClient::respondingWith(401, ['success' => false, 'error' => ['message' => 'Unauthenticated']])],
+    'the throttle' => [fn (): FakeHttpClient => FakeHttpClient::respondingWith(429, ['success' => false, 'error' => ['message' => 'Too many requests']], ['retry-after' => '30'])],
+    'a refused body' => [fn (): FakeHttpClient => FakeHttpClient::respondingWith(422, ['success' => false, 'error' => ['message' => 'The sdk field is required.']])],
+]);
+
+it('lifts no pause on a heartbeat the api accepts', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    $harness['pauses']->pauseFeature('errors', 900, '403');
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['pauses']->featurePause('errors')['reason'])->toBe('403');
+});
+
+it('does not send a failed heartbeat again before the next interval', function (): void {
+    $harness = workerHarness(new FakeHttpClient(
+        new RawResponse(500, '{"success":false}'),
+        new RawResponse(200, '{"success":true}'),
+    ));
+
+    $harness['worker']->heartbeat();
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toHaveCount(1);
+});
+
+it('writes one line to the internal log for a heartbeat that failed', function (FakeHttpClient $http, string $line): void {
+    $harness = loggingWorkerHarness($http);
+
+    $harness['worker']->heartbeat();
+
+    $log = workerLogContents($harness['directory']);
+
+    expect(mb_substr_count($log, "\n"))->toBe(1)
+        ->and($log)->toContain($line);
+})->with([
+    'a server error' => [
+        fn (): FakeHttpClient => FakeHttpClient::respondingWith(500, ['success' => false, 'error' => ['message' => 'Server error']]),
+        'ranetrace_internal.WARNING: Heartbeat was not accepted {"status":500,"message":"Server error"}',
+    ],
+    'a network failure' => [
+        fn (): FakeHttpClient => new FakeHttpClient(RawResponse::transportFailure('Could not resolve host')),
+        'ranetrace_internal.WARNING: Heartbeat was not accepted {"status":0,"message":"Could not resolve host"}',
+    ],
+    'an error body with no message' => [
+        fn (): FakeHttpClient => FakeHttpClient::respondingWith(503, 'Service Unavailable'),
+        'ranetrace_internal.WARNING: Heartbeat was not accepted {"status":503,"message":"No message"}',
+    ],
+]);
+
+it('writes one debug line for a heartbeat the api accepted', function (): void {
+    $harness = loggingWorkerHarness(FakeHttpClient::respondingWith(200));
+
+    $harness['worker']->heartbeat();
+
+    $log = workerLogContents($harness['directory']);
+
+    expect(mb_substr_count($log, "\n"))->toBe(1)
+        ->and($log)->toContain('ranetrace_internal.DEBUG: Heartbeat sent {"status":200}');
+});
+
+it('never throws when the transport throws on a heartbeat', function (): void {
+    $http = new class extends FakeHttpClient
+    {
+        public function post(string $url, array $headers, string $body, int $connectTimeout, int $timeout): RawResponse
+        {
+            throw new RuntimeException('transport exploded');
+        }
+    };
+    $harness = workerHarness($http);
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['pauses']->globalPause())->toBeNull()
+        ->and($harness['worker']->lastHeartbeatAt())->toBeInt();
+});
+
+it('keeps the last batch stamps when it stamps a heartbeat, and the heartbeat stamp when it stamps a batch', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    seedWorkerState($harness['directory'], ['errors' => 1_700_000_000]);
+
+    $harness['worker']->heartbeat();
+    $heartbeat = $harness['worker']->lastHeartbeatAt();
+    seedBuffer($harness['buffer'], 'events', 1);
+    $harness['worker']->run('events');
+
+    expect($harness['worker']->lastBatchAt('errors'))->toBe(1_700_000_000)
+        ->and($harness['worker']->lastBatchAt('events'))->toBeInt()
+        ->and($heartbeat)->toBeInt()
+        ->and($harness['worker']->lastHeartbeatAt())->toBe($heartbeat);
+});
+
+it('reads a state file that is not json as no heartbeat sent', function (): void {
+    $harness = workerHarness(FakeHttpClient::respondingWith(200));
+    file_put_contents($harness['directory'].'/state.json', '{"heartbeat": 17');
+
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toHaveCount(1)
+        ->and($harness['worker']->lastHeartbeatAt())->toBeInt();
+});
+
+/**
+ * Without the stamp nothing would hold the next run back, and a cron job
+ * every minute would send a heartbeat every minute.
+ */
+it('sends no heartbeat when its time cannot be written, and says so in the internal log', function (): void {
+    $harness = loggingWorkerHarness(FakeHttpClient::respondingWith(200));
+    // The log file exists before the directory is closed, so the line can land.
+    new InternalLogger($harness['config'])->debug('before');
+    chmod($harness['directory'], 0550);
+
+    try {
+        $harness['worker']->heartbeat();
+    } finally {
+        chmod($harness['directory'], 0700);
+    }
+
+    expect($harness['http']->requests)->toBe([])
+        ->and(workerLogContents($harness['directory']))
+        ->toContain('ranetrace_internal.WARNING: Heartbeat not sent, its time could not be written to the state file');
+})->skip(fn (): bool => ! function_exists('posix_geteuid') || posix_geteuid() === 0, 'root ignores file modes');
+
+/**
+ * A new install whose cron job runs before anything was captured: the buffer
+ * directory is not there yet, and the application is quiet, not stopped.
+ */
+it('sends a heartbeat and keeps its time when the buffer directory does not exist yet', function (): void {
+    $directory = tempDirectory().'/not-created-yet';
+    $harness = workerHarness(FakeHttpClient::respondingWith(200), ['buffer_path' => $directory]);
+
+    $harness['worker']->heartbeat();
+    $harness['worker']->heartbeat();
+
+    expect($harness['http']->requests)->toHaveCount(1)
+        ->and(json_decode((string) file_get_contents($directory.'/state.json'), true))->toHaveKey('heartbeat');
 });

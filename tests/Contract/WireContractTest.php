@@ -26,6 +26,10 @@ test('it loads the envelope, endpoints, headers and responses', function (): voi
         ->and(WireContract::responses())->toHaveKeys(['statuses', 'success_body', 'error_body']);
 });
 
+test('it loads the heartbeat', function (): void {
+    expect(WireContract::heartbeat())->toHaveKeys(['method', 'path', 'interval_seconds', 'fields', 'examples', 'client_policy', 'statuses']);
+});
+
 /**
  * A consuming repository locates the fixtures through this path, so it has to
  * resolve from wherever the package is installed rather than from a cwd.

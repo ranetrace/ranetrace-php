@@ -18,6 +18,7 @@ The contract is written down in `contract/`, which ships with the package so the
 
 - `contract/items/*.json` per capture type: the field spec transcribed from the backend's own validators, plus a minimal and a full example that really pass them.
 - `contract/envelope.json`, `endpoints.json`, `headers.json`, `responses.json`: the body shape and budgets, the paths and wrapper keys, the five headers, and the client's response matrix.
+- `contract/heartbeat.json`: the one request beside the batches. `Http\Heartbeat` holds what both SDKs share of it, and the Laravel SDK builds its own from that class.
 - `Contract\WireContract` reads them; `tests/Contract` asserts that the emitters, the worker and the API client still agree with them.
 
 So:

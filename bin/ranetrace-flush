@@ -25,6 +25,12 @@ declare(strict_types=1);
  * one the web server runs as: run as another user, this process can neither
  * drain nor log.
  *
+ * After the flush it sends a heartbeat, at most one every five minutes, so
+ * Ranetrace can tell an application with nothing to report from one whose
+ * cron job stopped. The heartbeat goes out from this command only, never
+ * from a flush at the end of a web request, and what the API answers to it
+ * changes neither the output nor the exit code.
+ *
  * Exit codes: 0 drained, or found nothing to drain. 1 could not run, has no
  * key (unless the master switch is off and nothing waits), or this process
  * cannot use the buffer (`FileBuffer::accessProblem()`). In those last two
@@ -111,6 +117,14 @@ use Ranetrace\Php\Ranetrace;
         $problem = $ranetrace->buffer()->accessProblem();
 
         $ranetrace->flush($type);
+
+        // A process that cannot use the buffer is not a worker that runs, so
+        // it does not say it is. The other conditions (a key, the master
+        // switch, no global pause, five minutes since the last one) are the
+        // worker's own.
+        if ($problem === null) {
+            $ranetrace->heartbeat();
+        }
 
         $config = $ranetrace->config();
         $keyMissing = false;

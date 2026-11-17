@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Ranetrace\Php\Http\ApiClient;
+use Ranetrace\Php\Http\Heartbeat;
 use Ranetrace\Php\Http\RawResponse;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Tests\Doubles\FakeHttpClient;
@@ -206,4 +207,80 @@ it('reads a raw response header case insensitively', function (): void {
 
     expect($response->header('Retry-After'))->toBe('30')
         ->and($response->header('X-Missing'))->toBeNull();
+});
+
+it('posts a heartbeat to the heartbeat path with its two fields as the whole body', function (): void {
+    $http = FakeHttpClient::respondingWith(200);
+
+    $result = apiClient($http, ['base_url' => 'https://api.example.test/v1/'])->sendHeartbeat(new Heartbeat('PHP', 'v1.7.0'));
+
+    expect($http->requests)->toHaveCount(1)
+        ->and($http->requests[0]['url'])->toBe('https://api.example.test/v1/heartbeat')
+        ->and($http->requests[0]['body'])->toBe('{"sdk":"php","sdk_version":"v1.7.0"}')
+        ->and($http->requests[0]['connect_timeout'])->toBe(5)
+        ->and($http->requests[0]['timeout'])->toBe(10)
+        ->and($result['status'])->toBe(200)
+        ->and($result['success'])->toBeTrue();
+});
+
+it('sends a heartbeat with the five contracted headers and its own user agent', function (): void {
+    $http = FakeHttpClient::respondingWith(200);
+
+    apiClient($http)->sendHeartbeat(new Heartbeat('Laravel', 'v1.8.0'));
+
+    expect($http->requests[0]['headers'])->toBe([
+        'Authorization' => 'Bearer test-api-key-12345',
+        'User-Agent' => 'Ranetrace-Laravel/Heartbeat/1.0',
+        'Content-Type' => 'application/json',
+        'Accept' => 'application/json',
+        'Ranetrace-API-Version' => '1.0',
+    ]);
+});
+
+it('refuses to send a heartbeat without an api key', function (string $key): void {
+    $http = FakeHttpClient::respondingWith(200);
+
+    $result = apiClient($http, ['key' => $key])->sendHeartbeat(new Heartbeat('PHP', 'v1.7.0'));
+
+    expect($http->requests)->toBe([])
+        ->and($result['status'])->toBe(0)
+        ->and($result['error'])->toBe('API key not configured');
+})->with([
+    'no key' => [''],
+    'a key of whitespace' => ["  \t"],
+]);
+
+it('turns a heartbeat the transport could not deliver into a status zero result', function (): void {
+    $http = new FakeHttpClient(RawResponse::transportFailure('Could not resolve host'));
+
+    $result = apiClient($http)->sendHeartbeat(new Heartbeat('PHP', 'v1.7.0'));
+
+    expect($result['status'])->toBe(0)
+        ->and($result['success'])->toBeFalse()
+        ->and($result['error'])->toBe('Could not resolve host');
+});
+
+it('never lets a transport that throws on a heartbeat escape', function (): void {
+    $http = new class extends FakeHttpClient
+    {
+        public function post(string $url, array $headers, string $body, int $connectTimeout, int $timeout): RawResponse
+        {
+            throw new RuntimeException('transport exploded');
+        }
+    };
+
+    $result = apiClient($http)->sendHeartbeat(new Heartbeat('PHP', 'v1.7.0'));
+
+    expect($result['status'])->toBe(0)
+        ->and($result['error'])->toBe('transport exploded');
+});
+
+it('passes the status and the error body of a refused heartbeat on unread', function (): void {
+    $http = FakeHttpClient::respondingWith(422, ['success' => false, 'error' => ['message' => 'The sdk field is required.']]);
+
+    $result = apiClient($http)->sendHeartbeat(new Heartbeat('PHP', 'v1.7.0'));
+
+    expect($result['status'])->toBe(422)
+        ->and($result['success'])->toBeFalse()
+        ->and($result['data']['error']['message'])->toBe('The sdk field is required.');
 });

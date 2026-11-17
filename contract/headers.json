@@ -1,5 +1,5 @@
 {
-    "note": "Exactly these five headers travel on every batch POST. The set is exact rather than minimal: the server authenticates on Authorization, versions on Ranetrace-API-Version, and attributes the SDK and the feature on User-Agent.",
+    "note": "Exactly these five headers travel on every request, a batch POST and a heartbeat alike. The set is exact rather than minimal: the server authenticates on Authorization, versions on Ranetrace-API-Version, and attributes the SDK and the feature on User-Agent.",
     "api_version": "1.0",
     "request": {
         "Content-Type": {"value": "application/json"},
@@ -11,10 +11,11 @@
         },
         "User-Agent": {
             "format": "Ranetrace-{SDK}/{Feature}/{version}",
-            "note": "Per SDK and per feature, so a batch can be attributed to the SDK that sent it without reading the body. {SDK} names the SDK (for example PHP, Laravel), {Feature} is the capitalised feature name (Errors, Events, Logs, JavaScriptErrors, and PageVisits from the Laravel SDK), {version} is the User-Agent's own version, currently 1.0 and independent of the package version.",
+            "note": "Per SDK and per feature, so a batch can be attributed to the SDK that sent it without reading the body. {SDK} names the SDK (for example PHP, Laravel), {Feature} is the capitalised feature name (Errors, Events, Logs, JavaScriptErrors, PageVisits from the Laravel SDK, and Heartbeat on the heartbeat of heartbeat.json), {version} is the User-Agent's own version, currently 1.0 and independent of the package version.",
             "examples": [
                 "Ranetrace-PHP/Errors/1.0",
-                "Ranetrace-PHP/JavaScriptErrors/1.0"
+                "Ranetrace-PHP/JavaScriptErrors/1.0",
+                "Ranetrace-PHP/Heartbeat/1.0"
             ]
         }
     },

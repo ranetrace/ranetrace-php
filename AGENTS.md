@@ -52,6 +52,7 @@ $logger->pushHandler($ranetrace->monologHandler());
 | `javascriptSnippet(array $options = []): string` | `<script>` tag. `endpoint` is **required** (throws without it); `nonce` optional. Empty string when the feature is off. |
 | `relay(): JavaScript\Relay` | `handle()` for superglobals (reads `php://input` + `$_SERVER`, echoes JSON), `handleRequest(array $server, array $payload): RelayResponse` for a framework. |
 | `flush(?string $type = null): void` | Drain the buffer now. `flushQuietly()` is the never-throw variant. |
+| `heartbeat(): void` | Tell Ranetrace the worker ran. Sends at most one request every 5 minutes, however often it is called. For a scheduled job only, never a web request. `vendor/bin/ranetrace-flush` calls it. Never throws. |
 | `sendTest(): Worker\TestReport` | Send one test error and one test event straight to the API, beside the buffer. `accepted()` says whether the API took at least one, `render()` is the text `vendor/bin/ranetrace-test` prints. |
 | `config(): Config`, `buffer(): Buffer\FileBuffer`, `pauses(): Buffer\PauseStore` | Diagnostics. |
 | `withHttpClient(HttpClientInterface $http): self` | Replace the transport (proxy, mTLS, tests). |
@@ -117,6 +118,14 @@ Two things are not automatic. Without either, the SDK captures or delivers nothi
 The line discards the command's output, so run `vendor/bin/ranetrace-flush` once by hand as the user of the cron job, with the cron job's environment, to check it: it prints nothing and exits `0` when it has a key and can use the buffer. It prints one line on stderr per problem and exits `1` when `RANETRACE_KEY` is not set in its environment, or when it cannot use the buffer.
 
 Every minute matches the API's 60 requests per minute per endpoint for each website (all keys of one website share it); one run sends at most one batch per type. The binary is configured **entirely from the environment** (a cron entry has no bootstrap), so a key the application loads from a `.env` file or sets in its bootstrap does not reach it. It sets `flush_on_shutdown => false` for itself, prints nothing on success, exits `1` when it could not run, when `RANETRACE_KEY` is not set (unless `RANETRACE_ENABLED=false` and nothing waits, which stays quiet) or when it cannot use the buffer (run as a user other than the web server's), and takes `--type=errors|events|logs|javascript_errors`. Shutdown flush and cron compose safely: the spool is locked and drained atomically.
+
+**The cron job also tells Ranetrace that the worker runs.** The SDK sends nothing while the buffer is empty, so without a signal Ranetrace cannot tell an application with nothing to report from one whose cron job stopped. After each flush `vendor/bin/ranetrace-flush` sends a heartbeat to `POST {base}/heartbeat`, at most one every 5 minutes. It carries the SDK's name and the package version (`{"sdk": "php", "sdk_version": "v1.7.0"}`) and nothing else.
+
+- It is sent when `RANETRACE_KEY` is set, `RANETRACE_ENABLED` is not `false`, nothing is globally paused (a rejected key, or a pause the API asked for) and the command can use the buffer. `--type` makes no difference.
+- The flush at the end of a web request (`flush_on_shutdown`) never sends one. It stops whenever a site has no visitors, which would read as an application that stopped. So an application without the cron job sends no heartbeat and is never judged by one.
+- What the API answers changes nothing: no pause, no retry before the next 5 minutes, the same exit code and no output. A heartbeat that was not accepted writes one `Heartbeat was not accepted` line to the internal log; an accepted one writes `Heartbeat sent` at debug level.
+- The time of the last attempt is the `heartbeat` key of `{buffer_path}/state.json`.
+- A host that flushes from a scheduled job of its own, because its key is set in its bootstrap, calls `$ranetrace->heartbeat()` there after `$ranetrace->flush()`. Do not call it from a request, a shutdown function or anything else that only runs while the site has visitors.
 
 A spool that nothing drains is kept until it is delivered, up to `batch.max_buffer_size` items per type, with the oldest dropped first beyond that. So with no cron and almost no traffic, captured data waits on disk for the next flush, however long that takes, and nothing is lost below the cap.
 

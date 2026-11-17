@@ -6,7 +6,9 @@ use Ranetrace\Php\Buffer\PauseStore;
 use Ranetrace\Php\Contract\WireContract;
 use Ranetrace\Php\Http\ApiClient;
 use Ranetrace\Php\Http\EndpointTable;
+use Ranetrace\Php\Http\Heartbeat;
 use Ranetrace\Php\Http\PauseScope;
+use Ranetrace\Php\Http\RawResponse;
 use Ranetrace\Php\Http\ResponsePolicy;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\ItemByteBudget;
@@ -277,3 +279,108 @@ test('the api client wraps a batch under the single contracted key', function ()
     expect(array_keys($http->payload()))->toBe([$wrapper])
         ->and($http->payload()[$wrapper])->toHaveCount(1);
 });
+
+test('the heartbeat names the path, the feature, the interval and the version limit the contract does', function (): void {
+    $contract = WireContract::heartbeat();
+
+    expect(Heartbeat::PATH)->toBe($contract['path'])
+        ->and(Heartbeat::FEATURE)->toBe($contract['user_agent_feature'])
+        ->and(Heartbeat::INTERVAL_SECONDS)->toBe($contract['interval_seconds'])
+        ->and(Heartbeat::MAX_VERSION_LENGTH)->toBe($contract['fields']['sdk_version']['max'])
+        ->and($contract['method'])->toBe(WireContract::endpoints()['method']);
+});
+
+/**
+ * The endpoint matches the body strictly, so the keys are compared as a set
+ * and an example is sent back out through the class that builds the body.
+ */
+test('the heartbeat body is exactly the contracted fields for whichever SDK sends it', function (string $sdk, string $example): void {
+    $contract = WireContract::heartbeat();
+    $expected = $contract['examples'][$example];
+
+    $body = new Heartbeat($sdk, $expected['sdk_version'])->body();
+
+    expect($contract['strict_fields'])->toBeTrue()
+        ->and(array_keys($body))->toBe(array_keys($contract['fields']))
+        ->and($body)->toBe($expected)
+        ->and($contract['fields']['sdk']['in'])->toContain($body['sdk']);
+})->with([
+    'this package' => ['PHP', 'php'],
+    'the laravel package' => ['Laravel', 'laravel'],
+]);
+
+test('the heartbeat never sends a version the contract would refuse', function (string $version): void {
+    $rule = WireContract::heartbeat()['fields']['sdk_version'];
+
+    $sent = new Heartbeat('PHP', $version)->body()['sdk_version'];
+
+    expect(mb_strlen($sent))->toBeGreaterThanOrEqual($rule['min'])->toBeLessThanOrEqual($rule['max']);
+})->with([
+    'no version' => [''],
+    'a long branch name' => ['dev-'.str_repeat('feature-', 20)],
+]);
+
+test('the heartbeat user agent fills the contracted format', function (): void {
+    $contract = WireContract::headers();
+
+    $agent = new Heartbeat('PHP', 'v1.7.0')->userAgent();
+
+    expect($agent)->toBe(str_replace(
+        ['{SDK}', '{Feature}', '{version}'],
+        ['PHP', WireContract::heartbeat()['user_agent_feature'], $contract['api_version']],
+        $contract['request']['User-Agent']['format'],
+    ))->and($contract['request']['User-Agent']['examples'])->toContain($agent);
+});
+
+test('the api client sends a heartbeat with exactly the contracted headers and the contracted path', function (): void {
+    $config = testConfig(['buffer_path' => tempDirectory(), 'internal_logging' => ['enabled' => false]]);
+    $http = FakeHttpClient::respondingWith(200);
+
+    (new ApiClient($config, $http, new InternalLogger($config)))->sendHeartbeat(new Heartbeat('PHP', 'v1.7.0'));
+
+    $contract = WireContract::headers();
+    $sent = $http->requests[0]['headers'];
+
+    expect(array_keys($sent))->toEqualCanonicalizing(array_keys($contract['request']))
+        ->and($sent['Content-Type'])->toBe($contract['request']['Content-Type']['value'])
+        ->and($sent['Accept'])->toBe($contract['request']['Accept']['value'])
+        ->and($sent['Ranetrace-API-Version'])->toBe($contract['api_version'])
+        ->and($sent['Authorization'])->toBe(str_replace('{api key}', 'test-api-key-12345', $contract['request']['Authorization']['format']))
+        ->and($http->requests[0]['url'])->toBe(WireContract::endpoints()['base_url_default'].WireContract::heartbeat()['path']);
+});
+
+/**
+ * The fixture says the answer changes nothing. Every status it names is put
+ * to the worker, with an item waiting, and nothing may have moved afterwards.
+ */
+test('the worker does nothing with a heartbeat answer, as the contract states', function (string $status): void {
+    $policy = WireContract::heartbeat()['client_policy'];
+
+    expect(WireContract::heartbeat()['statuses'])->toHaveKey($status)
+        ->and($policy['pause_scope'])->toBeNull()
+        ->and($policy['rebuffer'])->toBeFalse()
+        ->and($policy['retry'])->toBeFalse();
+
+    $config = testConfig(['buffer_path' => tempDirectory(), 'internal_logging' => ['enabled' => false]]);
+    $http = match ($status) {
+        'network' => new FakeHttpClient(RawResponse::transportFailure('Connection refused'), new RawResponse(200, '{"success":true}')),
+        default => new FakeHttpClient(
+            new RawResponse($status === 'default' ? 503 : (int) $status, '{"success":false,"error":{"message":"No"}}', ['retry-after' => '1']),
+            new RawResponse(200, '{"success":true}'),
+        ),
+    };
+    $log = new InternalLogger($config);
+    $buffer = new ArrayBuffer;
+    $pauses = new PauseStore($config);
+    $envelope = ['id' => 'waiting', 'data' => WireContract::item('events')['examples']['minimal'], 'timestamp' => time() - 60];
+    $buffer->items['events'] = [$envelope];
+    $worker = new Worker($config, $buffer, $pauses, new ApiClient($config, $http, $log), $log);
+
+    $worker->heartbeat();
+    $worker->heartbeat();
+
+    expect($http->requests)->toHaveCount(1)
+        ->and($buffer->items['events'])->toBe([$envelope])
+        ->and($pauses->globalPause())->toBeNull()
+        ->and($pauses->featurePause('events'))->toBeNull();
+})->with(['200', '401', '422', '429', 'default', 'network']);
