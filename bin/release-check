@@ -4,9 +4,9 @@
 declare(strict_types=1);
 
 /**
- * The release gate: send one item of every type this package emits to the API
- * and say, per type, whether the API took it. Run it from the checkout at the
- * commit about to be tagged, before the tag:
+ * The release gate: send one item of every type this package emits to the API,
+ * and the heartbeat, and say for each whether the API took it. Run it from the
+ * checkout at the commit about to be tagged, before the tag:
  *
  *     php bin/release-check
  *
@@ -22,6 +22,12 @@ declare(strict_types=1);
  * run never touches the buffer or the pauses of an application on this
  * machine.
  *
+ * The heartbeat is the one the cron flush sends, body and headers, so a 2xx
+ * says the deployed API has the endpoint and takes this commit's body. It is
+ * a real one: it counts as a heartbeat of the release check website. The app
+ * watches a website only once heartbeats have kept arriving for a while, so
+ * the one heartbeat of a check does not make that website read as stopped.
+ *
  * The key is an ingest key of a website kept for this check, read from a file
  * so that it is never typed into a command line: the file named as the first
  * argument, else by RANETRACE_RELEASE_KEY_FILE, else
@@ -30,8 +36,8 @@ declare(strict_types=1);
  *
  * Maintainers only: the file is not part of the distributed package.
  *
- * Exit codes: 0 when the API took the item of every type. 1 when it refused
- * or did not take one, or the check could not run.
+ * Exit codes: 0 when the API took the item of every type and the heartbeat. 1
+ * when it refused or did not take one of them, or the check could not run.
  */
 
 use Monolog\Level;
@@ -39,6 +45,8 @@ use Monolog\LogRecord;
 use Ranetrace\Php\Contract\WireContract;
 use Ranetrace\Php\Http\ApiClient;
 use Ranetrace\Php\Http\CurlHttpClient;
+use Ranetrace\Php\Http\Heartbeat;
+use Ranetrace\Php\Http\ResponsePolicy;
 use Ranetrace\Php\Ranetrace;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Worker\TestResult;
@@ -145,7 +153,8 @@ require dirname(__DIR__).'/vendor/autoload.php';
         );
 
         $log = new InternalLogger($config);
-        $worker = new Worker($config, $ranetrace->buffer(), $ranetrace->pauses(), new ApiClient($config, new CurlHttpClient, $log), $log);
+        $api = new ApiClient($config, new CurlHttpClient, $log);
+        $worker = new Worker($config, $ranetrace->buffer(), $ranetrace->pauses(), $api, $log);
 
         $baseUrl = $config->baseUrl();
         $taken = 0;
@@ -168,15 +177,24 @@ require dirname(__DIR__).'/vendor/autoload.php';
 
             fwrite(STDOUT, sprintf("  %-{$width}s  %s\n", $type, $result->line($type, $baseUrl, false)));
         }
+
+        $answer = $api->sendHeartbeat(Heartbeat::forPackage(Worker::SDK, Worker::PACKAGE));
+        $heartbeatTaken = $answer['status'] >= 200 && $answer['status'] < 300;
+
+        fwrite(STDOUT, sprintf("  %-{$width}s  %s\n", 'heartbeat', match (true) {
+            $heartbeatTaken => 'accepted',
+            $answer['status'] === 0 => "failed: could not reach {$baseUrl} (".($answer['error'] ?? 'unknown network error').')',
+            default => "refused: the API answered {$answer['status']} (".ResponsePolicy::errorMessage($answer['data'], 'no message').')',
+        }));
     } catch (Throwable $failure) {
         $fail($failure->getMessage());
     }
 
-    $every = $taken === count($types);
+    $every = $taken === count($types) && $heartbeatTaken;
 
     fwrite(STDOUT, $every
-        ? "\nThe API took the item of every type.\n"
-        : "\nThe API did not take every item. Do not tag: find out which side is behind first.\n");
+        ? "\nThe API took the item of every type, and the heartbeat.\n"
+        : "\nThe API did not take everything this commit sends. Do not tag: find out which side is behind first.\n");
 
     exit($every ? 0 : 1);
 })($argv ?? []);

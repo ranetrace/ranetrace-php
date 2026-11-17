@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+use Ranetrace\Php\Http\Heartbeat;
+use Ranetrace\Php\Worker\Worker;
+
 /**
  * `bin/release-check` in a real subprocess, as a release session runs it. The
  * API it asks is either unreachable or `tests/Doubles/fake-api.php` on PHP's
@@ -47,11 +50,13 @@ function releaseCheckKeyFile(string $contents = "test-api-key-12345\n"): string
 
 /**
  * Run the release check against the fake API, which refuses the item sent to
- * the endpoint path $refuses, or none.
+ * the endpoint path $refuses, or none, and answers the heartbeat with
+ * $heartbeatStatus. With $record it writes every request it received to that
+ * file.
  *
  * @return array{status: int, stdout: string, stderr: string}
  */
-function runReleaseCheckAgainstFakeApi(string $refuses = ''): array
+function runReleaseCheckAgainstFakeApi(string $refuses = '', int $heartbeatStatus = 200, string $record = ''): array
 {
     $probe = stream_socket_server('tcp://127.0.0.1:0');
     $port = (int) mb_substr((string) mb_strrchr((string) stream_socket_get_name($probe, false), ':'), 1);
@@ -62,7 +67,11 @@ function runReleaseCheckAgainstFakeApi(string $refuses = ''): array
         [1 => ['file', '/dev/null', 'w'], 2 => ['pipe', 'w']],
         $pipes,
         dirname(__DIR__, 2),
-        array_merge(getenv(), ['FAKE_API_REFUSES' => $refuses]),
+        array_merge(getenv(), [
+            'FAKE_API_REFUSES' => $refuses,
+            'FAKE_API_HEARTBEAT_STATUS' => (string) $heartbeatStatus,
+            'FAKE_API_RECORD' => $record,
+        ]),
     );
 
     try {
@@ -78,7 +87,7 @@ function runReleaseCheckAgainstFakeApi(string $refuses = ''): array
     }
 }
 
-it('exits 0 and names every item type when the api takes them all', function (): void {
+it('exits 0 and names every item type and the heartbeat when the api takes them all', function (): void {
     $result = runReleaseCheckAgainstFakeApi();
 
     expect($result['stderr'])->toBe('')
@@ -88,7 +97,8 @@ it('exits 0 and names every item type when the api takes them all', function ():
         ->toContain("  events             accepted\n")
         ->toContain("  logs               accepted\n")
         ->toContain("  javascript_errors  accepted\n")
-        ->toEndWith("\nThe API took the item of every type.\n")
+        ->toContain("  heartbeat          accepted\n")
+        ->toEndWith("\nThe API took the item of every type, and the heartbeat.\n")
         ->and($result['status'])->toBe(0);
 });
 
@@ -98,8 +108,8 @@ it('exits 1 and says not to tag when the api refuses the item of one type', func
     expect($result['status'])->toBe(1)
         ->and($result['stdout'])
         ->toMatch('/^  '.$type.' +refused: the API did not store the test item/m')
-        ->toEndWith("\nThe API did not take every item. Do not tag: find out which side is behind first.\n")
-        ->and(mb_substr_count($result['stdout'], ' accepted'))->toBe(3);
+        ->toEndWith("\nThe API did not take everything this commit sends. Do not tag: find out which side is behind first.\n")
+        ->and(mb_substr_count($result['stdout'], ' accepted'))->toBe(4);
 })->with([
     'errors' => ['/errors/store', 'errors'],
     'events' => ['/events/store', 'events'],
@@ -107,14 +117,42 @@ it('exits 1 and says not to tag when the api refuses the item of one type', func
     'javascript errors' => ['/javascript-errors/store', 'javascript_errors'],
 ]);
 
-it('exits 1 for every type when the api cannot be reached, and leaves no spool behind', function (): void {
+it('exits 1 and says not to tag when the api does not take the heartbeat', function (int $status): void {
+    $result = runReleaseCheckAgainstFakeApi(heartbeatStatus: $status);
+
+    expect($result['status'])->toBe(1)
+        ->and($result['stdout'])
+        ->toContain("  heartbeat          refused: the API answered {$status} (Heartbeat refused)\n")
+        ->toEndWith("\nThe API did not take everything this commit sends. Do not tag: find out which side is behind first.\n")
+        ->and(mb_substr_count($result['stdout'], ' accepted'))->toBe(4);
+})->with([
+    'an api without the endpoint' => [404],
+    'an api that refuses the body' => [422],
+]);
+
+it('sends the heartbeat the cron flush sends', function (): void {
+    $record = tempDirectory().'/requests.jsonl';
+
+    runReleaseCheckAgainstFakeApi(record: $record);
+
+    $heartbeats = array_values(array_filter(
+        array_map(fn (string $line): array => json_decode($line, true), file($record, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: []),
+        fn (array $request): bool => $request['path'] === '/v1/heartbeat',
+    ));
+
+    expect($heartbeats)->toHaveCount(1)
+        ->and($heartbeats[0]['user_agent'])->toBe('Ranetrace-PHP/Heartbeat/1.0')
+        ->and(json_decode($heartbeats[0]['body'], true))->toBe(Heartbeat::forPackage(Worker::SDK, Worker::PACKAGE)->body());
+});
+
+it('exits 1 for every type and the heartbeat when the api cannot be reached, and leaves no spool behind', function (): void {
     $before = glob(sys_get_temp_dir().'/ranetrace-release-check-*') ?: [];
 
     // Port 1 refuses instantly.
     $result = runReleaseCheck([releaseCheckKeyFile()], ['RANETRACE_BASE_URL' => 'http://127.0.0.1:1/v1']);
 
     expect($result['status'])->toBe(1)
-        ->and(mb_substr_count($result['stdout'], 'failed: could not reach http://127.0.0.1:1/v1'))->toBe(4)
+        ->and(mb_substr_count($result['stdout'], 'failed: could not reach http://127.0.0.1:1/v1'))->toBe(5)
         ->and($result['stdout'])->toContain('Do not tag')
         ->and(array_diff(glob(sys_get_temp_dir().'/ranetrace-release-check-*') ?: [], $before))->toBe([]);
 });

@@ -48,22 +48,22 @@ final class Worker
     public const int MAX_ITEMS_PER_RUN = 1000;
 
     /**
+     * The `{SDK}` segment of every User-Agent this package sends.
+     */
+    public const string SDK = 'PHP';
+
+    /**
+     * This package's Composer name, which the heartbeat reads its version by.
+     */
+    public const string PACKAGE = 'ranetrace/ranetrace-php';
+
+    /**
      * Soft byte budget for one request. The API hard-limits bodies to 5MB; we
      * trim to 4.5MB and re-buffer the tail, leaving headroom for the JSON
      * envelope so an oversize 413 (whole-batch discard plus a 15-minute pause)
      * cannot happen by accident.
      */
     private const int MAX_BATCH_BYTES = 4_500_000;
-
-    /**
-     * The `{SDK}` segment of every User-Agent this package sends.
-     */
-    private const string SDK = 'PHP';
-
-    /**
-     * This package's Composer name, which the heartbeat reads its version by.
-     */
-    private const string PACKAGE = 'ranetrace/ranetrace-php';
 
     /**
      * The key of the heartbeat stamp in `state.json`, beside the last-batch
