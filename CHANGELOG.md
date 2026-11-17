@@ -6,6 +6,8 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-17
+
 ### Added
 - **The cron flush tells Ranetrace that it runs.** The SDK sends nothing while its buffer is empty, so Ranetrace could not tell an application with nothing to report from one whose cron job stopped. `vendor/bin/ranetrace-flush` now sends a heartbeat after the flush, at most one every 5 minutes: `POST {base}/heartbeat` with `{"sdk": "php", "sdk_version": "<the installed package version>"}` and nothing else.
   - **When.** With `RANETRACE_KEY` set, the master switch on, nothing globally paused and a buffer the command can use. A global pause means a rejected key or a pause the API asked for, and the command stays silent then. The flush at the end of a web request never sends one: it stops whenever a site has no visitors. An application without the cron job sends no heartbeat
