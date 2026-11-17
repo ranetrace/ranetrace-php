@@ -1466,8 +1466,10 @@ test('the growth check fails a scrub whose time grows far faster than its input'
 test('the growth check passes a scrub whose time grows in step with its input', function (): void {
     $shape = fn (int $scale): array => [str_repeat('a', 12_500 * $scale), str_repeat('a', 12_500 * $scale)];
 
+    // Enough scans to stay well over the floor on a fast machine, where 200 of
+    // them land at about the floor itself.
     $linear = function (string $value): string {
-        for ($scan = 0; $scan < 200; $scan++) {
+        for ($scan = 0; $scan < 1_000; $scan++) {
             preg_match('/[^a]/', $value);
         }
 
