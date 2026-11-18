@@ -23,6 +23,8 @@ use Throwable;
  * omitted the header, mirroring the Laravel client and preserving the gotcha the
  * worker has to defend against: `(int) '' === 0`, so a bare cast would produce a
  * zero-second rate-limit pause. The floor lives in `Worker\Worker`.
+ *
+ * @phpstan-type ApiResult array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
  */
 final class ApiClient
 {
@@ -49,7 +51,7 @@ final class ApiClient
      * @param  string  $userAgent  Per-feature agent, e.g. `Ranetrace-PHP/Errors/1.0`.
      * @param  int  $timeout  Total request timeout in seconds.
      * @param  array<int, array<string, mixed>>  $items
-     * @return array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
+     * @return ApiResult
      */
     public function sendBatch(string $path, string $wrapperKey, string $userAgent, int $timeout, array $items): array
     {
@@ -90,7 +92,7 @@ final class ApiClient
      * but nothing in it is a decision: a heartbeat has no items to keep or
      * drop, and its answer pauses nothing. See `contract/heartbeat.json`.
      *
-     * @return array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
+     * @return ApiResult
      */
     public function sendHeartbeat(Heartbeat $heartbeat): array
     {
@@ -110,7 +112,7 @@ final class ApiClient
     }
 
     /**
-     * @return array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
+     * @return ApiResult
      */
     private static function normalise(RawResponse $response): array
     {
@@ -132,7 +134,7 @@ final class ApiClient
      * batch, or a dead connection. Status 0 is what the worker's response matrix
      * treats as "re-buffer and back off".
      *
-     * @return array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
+     * @return ApiResult
      */
     private static function errorResult(string $message): array
     {
@@ -149,7 +151,7 @@ final class ApiClient
      * One POST, normalised. A request that reached no HTTP status comes back
      * as status 0 and never as an exception.
      *
-     * @return array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
+     * @return ApiResult
      */
     private function post(string $path, string $key, string $userAgent, string $body, int $timeout): array
     {

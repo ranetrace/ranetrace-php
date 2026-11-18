@@ -39,6 +39,8 @@ use Throwable;
  * The response matrix is the contract, not an implementation detail: which
  * statuses re-buffer, which drop, and which pause globally are all things the
  * server relies on the client doing. See `handle()`.
+ *
+ * @phpstan-import-type ApiResult from ApiClient
  */
 final class Worker
 {
@@ -159,7 +161,7 @@ final class Worker
      * the answer for the other.
      *
      * @param  array<int, array<string, mixed>>  $items  Payloads, not envelopes.
-     * @return array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
+     * @return ApiResult
      *
      * @throws InvalidArgumentException When the type has no endpoint.
      */
@@ -396,7 +398,7 @@ final class Worker
      * therefore read by the Laravel job and deliberately ignored here.
      *
      * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
-     * @param  array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}  $result
+     * @param  ApiResult  $result
      */
     private function handle(string $type, array $items, array $result): void
     {
@@ -429,7 +431,7 @@ final class Worker
 
     /**
      * @param  array<int, array{id: string, data: array<string, mixed>, timestamp: int}>  $items
-     * @param  array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}  $result
+     * @param  ApiResult  $result
      */
     private function logOutcome(string $type, array $items, array $result, BatchOutcome $outcome): void
     {
