@@ -581,7 +581,7 @@ final class PayloadBuilder
             }
 
             $scrubbed = $this->scrubber->scrubDeep(
-                $this->projectRoot->stripDeep(Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($raw))),
+                Utf8::repairDeep($this->projectRoot->stripDeep(DataSanitizer::sanitizeForSerialization($raw))),
                 $context->refererPathValues(...),
             );
         } catch (Throwable $failure) {
@@ -945,14 +945,16 @@ final class PayloadBuilder
     }
 
     /**
-     * A free-form text from the throwable or the host as it may leave: valid
-     * UTF-8, the project root taken off the paths in it, then secret-scrubbed.
-     * The root goes first, from the text as it was written, so nothing the
-     * scrubber puts in can come between the root and the path under it.
+     * A free-form text from the throwable or the host as it may leave: the
+     * project root taken off the paths in it, made valid UTF-8, then
+     * secret-scrubbed. The root goes first, from the text as it was written,
+     * so a root holding invalid bytes still matches the text that shares them,
+     * and nothing the scrubber puts in can come between the root and the path
+     * under it.
      */
     private function freeText(string $text): string
     {
-        return $this->scrubber->scrubString($this->projectRoot->strip(Utf8::repair($text)));
+        return $this->scrubber->scrubString(Utf8::repair($this->projectRoot->strip($text)));
     }
 
     private function nameConfig(string $dotKey, int $maxLength): ?string

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Ranetrace\Php\Contract\WireContract;
 use Ranetrace\Php\Errors\ErrorContext;
+use Ranetrace\Php\Support\ProjectRootStripper;
 use Ranetrace\Php\Tests\Contract\DescriptorValidator;
 
 /**
@@ -130,6 +131,77 @@ test('a path in the exception context loses the project root', function (): void
 
     expect(framePayload(frameBuilder($root), $exception)['exception_context'])
         ->toBe(['file' => 'storage/import.csv', 'rows' => 12, 'nested' => ['directory' => 'storage']]);
+});
+
+/**
+ * A root that holds a byte that is not valid UTF-8 matches only the text as
+ * it was written: once the text is repaired, that byte is U+FFFD and the root
+ * is no longer in it. The directory cannot be made on every filesystem, so the
+ * root is configured without existing.
+ */
+test('a root holding invalid bytes is taken off the message and the command line before they are repaired', function (): void {
+    $root = "/srv/caf\xB1";
+
+    $payload = frameBuilder(frameProject(), ['project_root' => $root])->build(
+        new RuntimeException("Bad \xB1 byte in {$root}/storage/import.csv with password=hunter2"),
+        ErrorContext::provided(
+            isConsole: true,
+            consoleCommand: "php import --file={$root}/storage/import.csv",
+            consoleArguments: ['php', 'import', "--file={$root}/storage/import.csv"],
+        ),
+    );
+
+    expect($payload['message'])->toBe("Bad \u{FFFD} byte in storage/import.csv with password=[REDACTED]")
+        ->and($payload['console_command'])->toBe('php import --file=storage/import.csv')
+        ->and($payload['console_arguments'])->toBe(['php', 'import', '--file=storage/import.csv']);
+});
+
+test('a root holding invalid bytes is taken off the exception context before it is repaired', function (): void {
+    $root = "/srv/caf\xB1";
+
+    $exception = new class("{$root}/storage/import.csv") extends RuntimeException
+    {
+        /**
+         * @return array<string, mixed>
+         */
+        public function context(): array
+        {
+            return ['file' => $this->getMessage(), "column\xB1" => "row \xB1 of {$this->getMessage()}"];
+        }
+    };
+
+    expect(framePayload(frameBuilder(frameProject(), ['project_root' => $root]), $exception)['exception_context'])
+        ->toBe(['file' => 'storage/import.csv', "column\u{FFFD}" => "row \u{FFFD} of storage/import.csv"]);
+});
+
+/**
+ * The lines are stripped with their newline still on, so a root that ends a
+ * line is followed by the newline rather than by the end of the text.
+ */
+test('a root holding invalid bytes is taken off a source line before it is repaired', function (): void {
+    $root = "/srv/caf\xB1";
+    $project = frameProject();
+
+    $throw = require writeProjectFile($project, 'app/Importer.php', <<<PHP
+        <?php
+
+        return static function (): never {
+            // Bad \xB1 byte, reading {$root}/storage/import.csv
+            // Deployed to {$root}
+            throw new RuntimeException('Import failed');
+        };
+        PHP);
+
+    try {
+        $throw();
+    } catch (RuntimeException $exception) {
+    }
+
+    $payload = framePayload(frameBuilder($project, ['project_root' => $root]), $exception);
+
+    expect($payload['context'])->toContain("// Bad \u{FFFD} byte, reading storage/import.csv\n")
+        ->and($payload['context'])->toContain('// Deployed to '.ProjectRootStripper::ROOT_MARKER."\n")
+        ->and(json_encode($payload['context'], JSON_THROW_ON_ERROR))->not->toContain('/srv/caf');
 });
 
 test('no field of a view error holds the project root, and the backend still accepts the item', function (): void {

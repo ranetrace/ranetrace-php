@@ -32,9 +32,10 @@ use UnexpectedValueException;
  * into exceptions must not see the SDK's file checks. A scrubber that throws
  * costs that one window too.
  *
- * Every line is repaired to valid UTF-8 and loses the project root from any
- * path it names (a compiled Blade view ends in a comment naming its template
- * by absolute path), then the window is scrubbed for secrets as a whole
+ * Every line loses the project root from any path it names (a compiled Blade
+ * view ends in a comment naming its template by absolute path) and is then
+ * repaired to valid UTF-8, so a root holding invalid bytes still matches the
+ * line that shares them. Then the window is scrubbed for secrets as a whole
  * together with the lines above it (see {@see LOOKBEHIND_LINES}), so one that
  * spans lines is caught, and only then is each line capped, so a secret
  * cannot survive by straddling the cap.
@@ -203,8 +204,9 @@ final class SourceReader
     }
 
     /**
-     * Repair the lines of a window and the $lookbehind lines given above it,
-     * scrub them together, then drop the lookbehind and cap each window line,
+     * Take the project root off the lines of a window and the $lookbehind
+     * lines given above it, repair them, scrub them together, then drop the
+     * lookbehind and cap each window line,
      * preserving every trailing newline so the line structure survives. The
      * cap guards against a minified or generated line bloating the item.
      *
@@ -220,13 +222,13 @@ final class SourceReader
         $contents = [];
         $newlines = [];
 
-        foreach ($lines as $line) {
+        foreach ($this->projectRoot->stripLines($lines) as $line) {
             $line = Utf8::repair($line);
             $newlines[] = str_ends_with($line, "\n") ? "\n" : '';
             $contents[] = mb_rtrim($line, "\n");
         }
 
-        $scrubbed = array_values($this->scrubber->scrubSource($this->projectRoot->stripLines($contents)));
+        $scrubbed = array_values($this->scrubber->scrubSource($contents));
 
         if (count($scrubbed) !== count($contents)) {
             throw new UnexpectedValueException('The scrubber returned '.count($scrubbed).' lines for a window of '.count($contents));
