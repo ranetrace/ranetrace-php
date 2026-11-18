@@ -88,6 +88,51 @@ final readonly class Heartbeat
     }
 
     /**
+     * Whether the API took the heartbeat: any 2xx, as `contract/heartbeat.json`
+     * says, whatever the body. `success` is not read, because it also asks for
+     * a JSON body.
+     *
+     * Takes the normalised result of either SDK's client: this package's, or
+     * the Laravel client's, whose `headers` may be empty and which has no
+     * `error` key on success. A status that is not an integer reads as 0, a
+     * request that reached no status.
+     *
+     * @param  array{status?: int, data?: array<string, mixed>, headers?: array<string, mixed>, error?: ?string}  $result
+     */
+    public static function accepted(array $result): bool
+    {
+        $status = self::statusOf($result);
+
+        return $status >= 200 && $status < 300;
+    }
+
+    /**
+     * The release check's line for the API's answer to a heartbeat:
+     * `accepted`, `failed` when no status came back, or `refused` with the
+     * status and the API's message. Takes the same results as
+     * {@see accepted()}.
+     *
+     * @param  array{status?: int, data?: array<string, mixed>, headers?: array<string, mixed>, error?: ?string}  $result
+     * @param  string  $baseUrl  The API the heartbeat was sent to, named when it could not be reached.
+     */
+    public static function answerLine(array $result, string $baseUrl): string
+    {
+        if (self::accepted($result)) {
+            return 'accepted';
+        }
+
+        $status = self::statusOf($result);
+
+        if ($status === 0) {
+            return "failed: could not reach {$baseUrl} (".($result['error'] ?? 'unknown network error').')';
+        }
+
+        $body = is_array($result['data'] ?? null) ? $result['data'] : [];
+
+        return "refused: the API answered {$status} (".ResponsePolicy::errorMessage($body, 'no message').')';
+    }
+
+    /**
      * The request body. The API matches it strictly: exactly these two keys.
      *
      * @return array{sdk: string, sdk_version: string}
@@ -109,5 +154,15 @@ final readonly class Heartbeat
     public function userAgent(): string
     {
         return EndpointTable::userAgent($this->sdk, self::FEATURE);
+    }
+
+    /**
+     * @param  array{status?: int, data?: array<string, mixed>, headers?: array<string, mixed>, error?: ?string}  $result
+     */
+    private static function statusOf(array $result): int
+    {
+        $status = $result['status'] ?? null;
+
+        return is_int($status) ? $status : 0;
     }
 }

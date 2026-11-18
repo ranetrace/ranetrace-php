@@ -46,7 +46,6 @@ use Ranetrace\Php\Contract\WireContract;
 use Ranetrace\Php\Http\ApiClient;
 use Ranetrace\Php\Http\CurlHttpClient;
 use Ranetrace\Php\Http\Heartbeat;
-use Ranetrace\Php\Http\ResponsePolicy;
 use Ranetrace\Php\Ranetrace;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Worker\TestResult;
@@ -179,13 +178,9 @@ require dirname(__DIR__).'/vendor/autoload.php';
         }
 
         $answer = $api->sendHeartbeat(Heartbeat::forPackage(Worker::SDK, Worker::PACKAGE));
-        $heartbeatTaken = $answer['status'] >= 200 && $answer['status'] < 300;
+        $heartbeatTaken = Heartbeat::accepted($answer);
 
-        fwrite(STDOUT, sprintf("  %-{$width}s  %s\n", 'heartbeat', match (true) {
-            $heartbeatTaken => 'accepted',
-            $answer['status'] === 0 => "failed: could not reach {$baseUrl} (".($answer['error'] ?? 'unknown network error').')',
-            default => "refused: the API answered {$answer['status']} (".ResponsePolicy::errorMessage($answer['data'], 'no message').')',
-        }));
+        fwrite(STDOUT, sprintf("  %-{$width}s  %s\n", 'heartbeat', Heartbeat::answerLine($answer, $baseUrl)));
     } catch (Throwable $failure) {
         $fail($failure->getMessage());
     }

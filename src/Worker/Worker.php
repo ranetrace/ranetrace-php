@@ -222,7 +222,7 @@ final class Worker
 
             $result = $this->api->sendHeartbeat(Heartbeat::forPackage(self::SDK, self::PACKAGE));
 
-            if ($result['status'] >= 200 && $result['status'] < 300) {
+            if (Heartbeat::accepted($result)) {
                 $this->log->debug('Heartbeat sent', ['status' => $result['status']]);
 
                 return;
