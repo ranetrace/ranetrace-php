@@ -176,7 +176,7 @@ test('a breadcrumb category is cut like a name and its message like free text', 
 
 /**
  * A payload that skipped the relay's validation can carry anything here, and
- * the item has always passed such a value through as it came.
+ * the item passes such a value through as it came.
  */
 test('a breadcrumb category or message that is not a string is passed through uncut', function (): void {
     $crumb = limitsJavaScriptItem(['breadcrumbs' => [['category' => 42, 'message' => ['nested' => str_repeat('ü', 600)]]]])['breadcrumbs'][0];
