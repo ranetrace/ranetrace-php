@@ -139,13 +139,12 @@ test('the emitted browser info keys are exactly the ones the fixture declares', 
 
 test('the emitted javascript error satisfies the field spec, its id and the browser name and version included', function (): void {
     $payload = contractEmittedPayloads()['javascript_errors'];
-    $spec = WireContract::item('javascript_errors');
 
     expect($payload)->toHaveKey('id')
         ->and($payload['browser_info'])
         ->name->toBe('Chrome')
         ->version->toBe('140')
-        ->and(DescriptorValidator::violations($spec['fields'], $payload, false))->toBe([]);
+        ->and(DescriptorValidator::violationsOf('javascript_errors', $payload))->toBe([]);
 });
 
 /**
@@ -156,7 +155,7 @@ test('the emitted event satisfies the field spec, its id included', function ():
     $payload = contractEmittedPayloads()['events'];
 
     expect($payload)->toHaveKey('id')
-        ->and(DescriptorValidator::violations(WireContract::item('events')['fields'], $payload))->toBe([]);
+        ->and(DescriptorValidator::violationsOf('events', $payload))->toBe([]);
 });
 
 /**
@@ -167,7 +166,7 @@ test('the emitted error satisfies the strict field spec, its id included', funct
     $payload = contractEmittedPayloads()['errors'];
 
     expect($payload)->toHaveKey('id')
-        ->and(DescriptorValidator::violations(WireContract::item('errors')['fields'], $payload, true))->toBe([]);
+        ->and(DescriptorValidator::violationsOf('errors', $payload))->toBe([]);
 });
 
 /**
@@ -203,7 +202,7 @@ test('an event emitted past the endpoint limits satisfies its field spec and bot
 
     expect(mb_strlen((string) json_encode($payload), '8bit'))->toBeLessThanOrEqual($checks['max_item_bytes']['value'])
         ->and($longest)->toBeLessThanOrEqual($checks['max_property_value_chars']['value'])
-        ->and(DescriptorValidator::violations(WireContract::item('events')['fields'], $payload))->toBe([]);
+        ->and(DescriptorValidator::violationsOf('events', $payload))->toBe([]);
 });
 
 /**
@@ -305,7 +304,7 @@ test('a string field at its endpoint limit is sent whole and one past it is cut 
 
     expect(contractFieldValue(contractEmittedWith($type, $field, $atLimit), $field))->toBe($atLimit)
         ->and(mb_strlen(contractFieldValue($pastLimit, $field)))->toBe($max)
-        ->and(DescriptorValidator::violations($fields, $pastLimit, $type === 'errors'))->toBe([]);
+        ->and(DescriptorValidator::violationsOf($type, $pastLimit))->toBe([]);
 })->with([
     'errors environment' => ['errors', 'environment'],
     'errors framework' => ['errors', 'framework'],
@@ -369,10 +368,9 @@ test('the emitted error context satisfies the field spec, bounds included', func
     $reporter->report($throwable);
 
     $payload = $buffer->payloads('errors')[0];
-    $spec = WireContract::item('errors');
 
     expect($payload['exception_context'])->toBeArray()->not->toBeEmpty()
-        ->and(DescriptorValidator::violations($spec['fields'], $payload, true))->toBe([]);
+        ->and(DescriptorValidator::violationsOf('errors', $payload))->toBe([]);
 });
 
 /**
@@ -408,5 +406,5 @@ test('the emitted error frames and previous chain satisfy the field spec', funct
     expect($payload['frames'])->not->toBeEmpty()
         ->and($payload['previous'])->toHaveCount(5)
         ->and(array_filter(array_column($payload['frames'], 'source')))->not->toBeEmpty()
-        ->and(DescriptorValidator::violations(WireContract::item('errors')['fields'], $payload, true))->toBe([]);
+        ->and(DescriptorValidator::violationsOf('errors', $payload))->toBe([]);
 });

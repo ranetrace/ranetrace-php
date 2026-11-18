@@ -20,11 +20,7 @@ test('every example satisfies the field spec it ships with', function (string $t
     $violations = [];
 
     foreach ($spec['examples'] as $name => $example) {
-        foreach (DescriptorValidator::violations(
-            $spec['fields'],
-            $example,
-            ($spec['strict_fields'] ?? false) === true,
-        ) as $violation) {
+        foreach (DescriptorValidator::violationsOf($type, $example) as $violation) {
             $violations[] = "{$type}.{$name}: {$violation}";
         }
     }

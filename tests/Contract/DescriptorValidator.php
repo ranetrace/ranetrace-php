@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Ranetrace\Php\Tests\Contract;
 
+use Ranetrace\Php\Contract\WireContract;
+
 /**
  * Checks a fixture example against the field descriptors in the same fixture.
  *
@@ -84,6 +86,20 @@ final class DescriptorValidator
         }
 
         return $violations;
+    }
+
+    /**
+     * Every way an item breaks the field spec of its type, a key outside the
+     * spec included exactly when the fixture sets `strict_fields`.
+     *
+     * @param  array<string, mixed>  $item
+     * @return list<string>
+     */
+    public static function violationsOf(string $type, array $item): array
+    {
+        $spec = WireContract::item($type);
+
+        return self::violations($spec['fields'], $item, ($spec['strict_fields'] ?? false) === true);
     }
 
     /**

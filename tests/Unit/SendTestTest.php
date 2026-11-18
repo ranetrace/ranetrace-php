@@ -87,7 +87,9 @@ it('sends one error and one event straight to the api, the way a drain sends the
         ->and($error['type'])->toBe('Exception')
         ->and($event['event_name'])->toBe('test_event')
         ->and($event['properties'])->toBe(['source' => 'ranetrace-test'])
-        ->and(DescriptorValidator::violations(WireContract::item('errors')['fields'], $error, true))->toBe([])
+        ->and(DescriptorValidator::violationsOf('errors', $error))->toBe([])
+        // Stricter than the events contract on purpose: the SDK alone builds the
+        // test event, so any key outside the field spec is a bug.
         ->and(DescriptorValidator::violations(WireContract::item('events')['fields'], $event, true))->toBe([]);
 });
 
