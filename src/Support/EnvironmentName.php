@@ -20,8 +20,9 @@ use Throwable;
  *
  * A name that long is cut and not refused as a configuration error: monitoring
  * must not stop over a name. The cost is that two names alike in their first
- * {@see MAX_LENGTH} characters arrive as one environment, which is why the cut
- * is written to the internal log.
+ * {@see MAX_LENGTH} characters arrive as one environment, which is why an
+ * error item's cut is written to the internal log. The JavaScript error and log
+ * builders have no diagnostics sink, so their cut is silent.
  */
 final class EnvironmentName
 {
@@ -29,18 +30,24 @@ final class EnvironmentName
     public const int MAX_LENGTH = 50;
 
     /**
+     * The name sent for a configured value that is not a scalar, the same name
+     * the configuration falls back to when the host sets none.
+     */
+    public const string FALLBACK = 'production';
+
+    /**
      * The name as sent: a scalar cast to a string, made valid UTF-8 by
      * {@see Utf8::repair()}, then cut to {@see MAX_LENGTH} characters. Any
-     * other value, a missing one included, is sent as `$fallback`.
+     * other value, a missing one included, is sent as {@see FALLBACK}.
      *
      * With `$log`, a name that had to be cut writes one warning naming the
      * configured name, the name as sent and the limit. A sink that fails costs
      * the warning, never the item.
      */
-    public static function fromConfig(mixed $configured, string $fallback = '', ?Diagnostics $log = null): string
+    public static function fromConfig(mixed $configured, ?Diagnostics $log = null): string
     {
         if (! is_scalar($configured)) {
-            return $fallback;
+            return self::FALLBACK;
         }
 
         $name = Utf8::repair((string) $configured);

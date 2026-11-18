@@ -144,7 +144,7 @@ final class ErrorItemBuilder
                 self::MAX_URL_LENGTH,
             ),
             'timestamp' => $this->timestamp($payload, $timestampFallback),
-            'environment' => EnvironmentName::fromConfig($this->config->get('environment', 'production'), 'production'),
+            'environment' => EnvironmentName::fromConfig($this->config->get('environment')),
             'user_id' => UserId::accepted($userId),
             'session_id' => Utf8::repairNullable($sessionId),
             'breadcrumbs' => $this->breadcrumbs($payload['breadcrumbs'] ?? [], $sensitivePathValues),

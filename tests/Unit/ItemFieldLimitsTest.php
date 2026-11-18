@@ -246,10 +246,13 @@ test('an overlong environment arrives as the same name in the error, javascript 
         ->and(limitsLogItem(overrides: $configured)['extra']['environment'])->toBe(str_repeat('é', 50));
 });
 
-test('an environment that is not a scalar keeps each item its own fallback', function (): void {
-    $configured = ['environment' => ['production']];
+test('an environment that is not a scalar arrives as production in the error, javascript error and log items', function (mixed $environment): void {
+    $configured = ['environment' => $environment];
 
-    expect(limitsErrorItem($configured)['environment'])->toBe('')
+    expect(limitsErrorItem($configured)['environment'])->toBe('production')
         ->and(limitsJavaScriptItem([], $configured)['environment'])->toBe('production')
-        ->and(limitsLogItem(overrides: $configured)['extra']['environment'])->toBe('');
-});
+        ->and(limitsLogItem(overrides: $configured)['extra']['environment'])->toBe('production');
+})->with([
+    'a list' => [['staging']],
+    'null' => [null],
+]);

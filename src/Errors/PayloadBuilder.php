@@ -291,7 +291,7 @@ final class PayloadBuilder
             'file' => $this->boundFilePath($file),
             'line' => $line,
             'type' => (string) $this->codeName($throwable::class, self::MAX_TYPE_LENGTH),
-            'environment' => EnvironmentName::fromConfig($this->config->get('environment'), '', $this->log),
+            'environment' => EnvironmentName::fromConfig($this->config->get('environment'), $this->log),
             'trace' => StringLimit::cutWithSuffix($this->freeText($throwable->getTraceAsString()), self::MAX_TRACE_LENGTH),
             'headers' => $isConsole ? null : $this->headers($context),
             'context' => $source,
