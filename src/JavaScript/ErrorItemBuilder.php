@@ -64,6 +64,31 @@ final class ErrorItemBuilder
     ];
 
     /**
+     * The backend's bounds on the free-text fields, in characters. The relay
+     * checks the browser's payload against these constants, but the builder
+     * scrubs afterwards and a scrub can lengthen a string, and the Laravel SDK
+     * calls this builder from its own controller, so the builder holds them
+     * itself. Each is cut with {@see StringLimit::SUFFIX}, after the scrub.
+     */
+    public const int MAX_MESSAGE_LENGTH = 2_000;
+
+    public const int MAX_STACK_LENGTH = 10_000;
+
+    public const int MAX_URL_LENGTH = 2_000;
+
+    public const int MAX_BREADCRUMB_MESSAGE_LENGTH = 500;
+
+    /**
+     * The backend's bounds on the name fields, in characters. A name is cut
+     * to its first characters with no suffix.
+     */
+    public const int MAX_TYPE_LENGTH = 100;
+
+    public const int MAX_FILENAME_LENGTH = 500;
+
+    public const int MAX_BREADCRUMB_CATEGORY_LENGTH = 100;
+
+    /**
      * Maximum serialized context size (JSON-encoded bytes). Oversize context is
      * replaced with a truncation marker rather than truncated mid-structure,
      * because partial JSON is not JSON.
@@ -74,31 +99,6 @@ final class ErrorItemBuilder
      * Maximum serialized data size per breadcrumb (JSON-encoded bytes).
      */
     private const int MAX_BREADCRUMB_DATA_BYTES = 5_120;
-
-    /**
-     * The backend's bounds on the free-text fields, in characters. The relay
-     * checks the browser's payload against the same numbers, but the builder
-     * scrubs afterwards and a scrub can lengthen a string, and the Laravel SDK
-     * calls this builder from its own controller, so the builder holds them
-     * itself. Each is cut with {@see StringLimit::SUFFIX}, after the scrub.
-     */
-    private const int MAX_MESSAGE_LENGTH = 2_000;
-
-    private const int MAX_STACK_LENGTH = 10_000;
-
-    private const int MAX_URL_LENGTH = 2_000;
-
-    private const int MAX_BREADCRUMB_MESSAGE_LENGTH = 500;
-
-    /**
-     * The backend's bounds on the name fields, in characters. A name is cut
-     * to its first characters with no suffix.
-     */
-    private const int MAX_TYPE_LENGTH = 100;
-
-    private const int MAX_FILENAME_LENGTH = 500;
-
-    private const int MAX_BREADCRUMB_CATEGORY_LENGTH = 100;
 
     public function __construct(
         private readonly Config $config,

@@ -352,13 +352,13 @@ final class Relay
     {
         $errors = [];
 
-        $this->assertString($errors, $payload, 'message', true, 2000);
-        $this->assertString($errors, $payload, 'stack', false, 10000);
-        $this->assertString($errors, $payload, 'type', false, 100);
-        $this->assertString($errors, $payload, 'filename', false, 500);
+        $this->assertString($errors, $payload, 'message', true, ErrorItemBuilder::MAX_MESSAGE_LENGTH);
+        $this->assertString($errors, $payload, 'stack', false, ErrorItemBuilder::MAX_STACK_LENGTH);
+        $this->assertString($errors, $payload, 'type', false, ErrorItemBuilder::MAX_TYPE_LENGTH);
+        $this->assertString($errors, $payload, 'filename', false, ErrorItemBuilder::MAX_FILENAME_LENGTH);
         $this->assertInteger($errors, $payload, 'line');
         $this->assertInteger($errors, $payload, 'column');
-        $this->assertString($errors, $payload, 'url', true, 2000);
+        $this->assertString($errors, $payload, 'url', true, ErrorItemBuilder::MAX_URL_LENGTH);
         $this->assertString($errors, $payload, 'timestamp', false, 64);
         $this->assertArrayValue($errors, $payload, 'breadcrumbs');
         $this->assertArrayValue($errors, $payload, 'context');
@@ -371,8 +371,8 @@ final class Relay
                 $crumb = is_array($breadcrumb) ? $breadcrumb : [];
 
                 $this->assertString($errors, $crumb, "breadcrumbs.{$index}.timestamp", true, 64, 'timestamp');
-                $this->assertString($errors, $crumb, "breadcrumbs.{$index}.category", true, 100, 'category');
-                $this->assertString($errors, $crumb, "breadcrumbs.{$index}.message", true, 500, 'message');
+                $this->assertString($errors, $crumb, "breadcrumbs.{$index}.category", true, ErrorItemBuilder::MAX_BREADCRUMB_CATEGORY_LENGTH, 'category');
+                $this->assertString($errors, $crumb, "breadcrumbs.{$index}.message", true, ErrorItemBuilder::MAX_BREADCRUMB_MESSAGE_LENGTH, 'message');
                 $this->assertArrayValue($errors, $crumb, "breadcrumbs.{$index}.data", 'data');
             }
         }
