@@ -409,7 +409,7 @@ final class Worker
         $this->logOutcome($type, $items, $result, $outcome);
 
         if ($outcome->stampLastBatch) {
-            $this->stampLastBatch($type);
+            $this->stamp($type, time());
         }
 
         if ($outcome->rebuffer) {
@@ -534,9 +534,12 @@ final class Worker
     }
 
     /**
-     * Record a successful drain. Kept in `state.json` beside the buffer, for the
-     * same reason the buffer itself is a file: a cache store is not shared
-     * across the processes that need to agree on this.
+     * Write one timestamp into `state.json`, keeping the others. False when
+     * the file could not be written.
+     *
+     * The stamps are kept in a file beside the buffer, for the same reason the
+     * buffer itself is a file: a cache store is not shared across the
+     * processes that need to agree on them.
      *
      * Deliberately unlocked, unlike the buffer and the pause store. Each value
      * is one timestamp, and the atomic `rename` already rules out a torn file.
@@ -544,15 +547,6 @@ final class Worker
      * stamp is missing and one heartbeat goes out a run early, which the API's
      * throttle has room for. Neither is worth a lock on the success path of
      * every batch.
-     */
-    private function stampLastBatch(string $type): void
-    {
-        $this->stamp($type, time());
-    }
-
-    /**
-     * Write one timestamp into `state.json`, keeping the others. False when
-     * the file could not be written.
      */
     private function stamp(string $key, int $time): bool
     {
