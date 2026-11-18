@@ -102,14 +102,30 @@ test('the text trace names its files relative to the project root', function ():
         ->and($payload['trace'])->not->toContain($root);
 });
 
+/**
+ * The item a builder rooted at $root makes of a plain error, raised by the
+ * console command typed as $command with $arguments.
+ *
+ * @param  list<string>  $arguments
+ * @return array<string, mixed>
+ */
+function consolePayload(string $root, string $command, array $arguments): array
+{
+    return frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
+        isConsole: true,
+        consoleCommand: $command,
+        consoleArguments: $arguments,
+    ));
+}
+
 test('a console command started by its absolute path is sent by its relative one', function (): void {
     $root = frameProject();
 
-    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
-        isConsole: true,
-        consoleCommand: "{$root}/artisan import:run --file={$root}/storage/import.csv",
-        consoleArguments: ["{$root}/artisan", 'import:run', "--file={$root}/storage/import.csv"],
-    ));
+    $payload = consolePayload(
+        $root,
+        "{$root}/artisan import:run --file={$root}/storage/import.csv",
+        ["{$root}/artisan", 'import:run', "--file={$root}/storage/import.csv"],
+    );
 
     expect($payload['console_command'])->toBe('artisan import:run --file=storage/import.csv')
         ->and($payload['console_arguments'])->toBe(['artisan', 'import:run', '--file=storage/import.csv']);
@@ -282,11 +298,7 @@ function symlinkedDeployment(): array
 test('a console command started through a symlinked deployment is sent relative to the release it runs', function (): void {
     ['root' => $root, 'current' => $current] = symlinkedDeployment();
 
-    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
-        isConsole: true,
-        consoleCommand: "{$current}/artisan schedule:run",
-        consoleArguments: ["{$current}/artisan", 'schedule:run'],
-    ));
+    $payload = consolePayload($root, "{$current}/artisan schedule:run", ["{$current}/artisan", 'schedule:run']);
 
     expect($payload['console_command'])->toBe('artisan schedule:run')
         ->and($payload['console_arguments'])->toBe(['artisan', 'schedule:run']);
@@ -295,11 +307,11 @@ test('a console command started through a symlinked deployment is sent relative 
 test('only the leading script path of the command line is resolved', function (): void {
     ['root' => $root, 'current' => $current] = symlinkedDeployment();
 
-    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
-        isConsole: true,
-        consoleCommand: "{$current}/artisan import:run {$current}/artisan",
-        consoleArguments: ["{$current}/artisan", 'import:run', "{$current}/artisan"],
-    ));
+    $payload = consolePayload(
+        $root,
+        "{$current}/artisan import:run {$current}/artisan",
+        ["{$current}/artisan", 'import:run', "{$current}/artisan"],
+    );
 
     expect($payload['console_command'])->toBe("artisan import:run {$current}/artisan")
         ->and($payload['console_arguments'])->toBe(['artisan', 'import:run', "{$current}/artisan"]);
@@ -308,11 +320,7 @@ test('only the leading script path of the command line is resolved', function ()
 test('a command line that does not start with the script path keeps it as typed', function (): void {
     ['root' => $root, 'current' => $current] = symlinkedDeployment();
 
-    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
-        isConsole: true,
-        consoleCommand: "{$current}/artisanx schedule:run",
-        consoleArguments: ["{$current}/artisan", 'schedule:run'],
-    ));
+    $payload = consolePayload($root, "{$current}/artisanx schedule:run", ["{$current}/artisan", 'schedule:run']);
 
     expect($payload['console_command'])->toBe("{$current}/artisanx schedule:run")
         ->and($payload['console_arguments'])->toBe(['artisan', 'schedule:run']);
@@ -321,11 +329,7 @@ test('a command line that does not start with the script path keeps it as typed'
 test('a script path that does not exist is sent as typed', function (): void {
     ['root' => $root, 'current' => $current] = symlinkedDeployment();
 
-    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
-        isConsole: true,
-        consoleCommand: "{$current}/missing schedule:run",
-        consoleArguments: ["{$current}/missing", 'schedule:run'],
-    ));
+    $payload = consolePayload($root, "{$current}/missing schedule:run", ["{$current}/missing", 'schedule:run']);
 
     expect($payload['console_command'])->toBe("{$current}/missing schedule:run")
         ->and($payload['console_arguments'])->toBe(["{$current}/missing", 'schedule:run']);
@@ -339,11 +343,7 @@ test('a relative script path is sent as typed, since the working directory may h
     chdir(dirname($current));
 
     try {
-        $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
-            isConsole: true,
-            consoleCommand: 'current/artisan schedule:run',
-            consoleArguments: ['current/artisan', 'schedule:run'],
-        ));
+        $payload = consolePayload($root, 'current/artisan schedule:run', ['current/artisan', 'schedule:run']);
     } finally {
         chdir($workingDirectory);
     }
