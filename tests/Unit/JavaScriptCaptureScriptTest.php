@@ -36,8 +36,9 @@ test('it registers both capture listeners, the error one in the capture phase', 
 /**
  * The capture phase hands the listener the `error` event of every resource that
  * failed to load, fired on its element and carrying nothing. Reported under a
- * name the script made up, a blocked tag manager alone filled the error list.
- * `JavaScriptCaptureScriptBehaviourTest` runs both paths where node is present.
+ * made-up name, every blocked tag manager or broken image would become an error
+ * with nothing in it to act on. `JavaScriptCaptureScriptBehaviourTest` runs both
+ * paths where node is present.
  */
 test('the error listener leaves an event fired on an element alone and makes up no message', function (): void {
     $script = captureScript();
