@@ -103,6 +103,45 @@ test('a log record names a file under the project root by its relative path, in 
         ->and(json_encode($item, JSON_UNESCAPED_SLASHES))->not->toContain('/var/www/app');
 });
 
+test('a project root holding an invalid byte is still taken off the message, the context and the extra', function (): void {
+    // A path names the root in the same raw bytes the configured root holds.
+    // Repaired first, the path holds U+FFFD where the root holds the byte, and
+    // the two no longer match.
+    $config = testConfig(['project_root' => "/srv/caf\xB1/app"]);
+
+    $item = (new LogItemBuilder($config, new SecretScrubber($config, new InternalLogger($config))))->build(
+        'error',
+        "Import failed for /srv/caf\xB1/app/storage/import.csv",
+        ['file' => "/srv/caf\xB1/app/storage/import.csv", 'nested' => ['script' => "/srv/caf\xB1/app/artisan"]],
+        'stack',
+        '2026-08-19T10:00:00+00:00',
+        ['script' => "/srv/caf\xB1/app/artisan"],
+    );
+
+    expect($item['message'])->toBe('Import failed for storage/import.csv')
+        ->and($item['context'])->toBe(['file' => 'storage/import.csv', 'nested' => ['script' => 'artisan']])
+        ->and($item['extra']['script'])->toBe('artisan')
+        ->and(json_encode($item, JSON_UNESCAPED_SLASHES))->not->toContain('/srv/caf');
+});
+
+test('an invalid byte outside the project root is still repaired once the root is off', function (): void {
+    $config = testConfig(['project_root' => "/srv/caf\xB1/app"]);
+
+    $item = (new LogItemBuilder($config, new SecretScrubber($config, new InternalLogger($config))))->build(
+        'error',
+        "Bad \xB1 byte in /srv/caf\xB1/app/data.csv",
+        ["key\xB1" => "Bad \xB1 byte in /srv/caf\xB1/app/data.csv"],
+        'stack',
+        '2026-08-19T10:00:00+00:00',
+        ['note' => "Bad \xB1 byte"],
+    );
+
+    expect($item['message'])->toBe("Bad \u{FFFD} byte in data.csv")
+        ->and($item['context'])->toBe(["key\u{FFFD}" => "Bad \u{FFFD} byte in data.csv"])
+        ->and($item['extra']['note'])->toBe("Bad \u{FFFD} byte")
+        ->and(json_encode($item))->not->toBeFalse();
+});
+
 test('a root strip that cannot run costs the strip, never the log record or its secret scrub', function (): void {
     $config = testConfig(['project_root' => str_repeat('/segment', 10_000), 'internal_logging' => ['enabled' => false]]);
     $builder = new LogItemBuilder($config, new SecretScrubber($config, new InternalLogger($config)));

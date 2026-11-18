@@ -96,25 +96,28 @@ final class LogItemBuilder
 
     /**
      * Scrub key=value secrets BEFORE truncating, so a secret cannot survive by
-     * being split across the length boundary.
+     * being split across the length boundary. The root is stripped from the
+     * raw message, before the repair, so a root holding invalid bytes still
+     * matches the paths that share them.
      */
     private function message(string $message): string
     {
         return StringLimit::cutWithSuffix(
-            $this->scrubber->scrubString($this->projectRoot->strip(Utf8::repair($message))),
+            $this->scrubber->scrubString(Utf8::repair($this->projectRoot->strip($message))),
             self::MAX_MESSAGE_LENGTH,
         );
     }
 
     /**
-     * Free-form record data made serializable and valid UTF-8, with the
-     * project root off the paths in its string values, ready to be scrubbed.
+     * Free-form record data made serializable, with the project root off the
+     * paths in its string values, then made valid UTF-8, ready to be scrubbed.
+     * The root is stripped before the repair, as in {@see message()}.
      *
      * @param  array<array-key, mixed>  $data
      */
     private function withoutProjectRoot(array $data): mixed
     {
-        return $this->projectRoot->stripDeep(Utf8::repairDeep(DataSanitizer::sanitizeForSerialization($data)));
+        return Utf8::repairDeep($this->projectRoot->stripDeep(DataSanitizer::sanitizeForSerialization($data)));
     }
 
     /**
