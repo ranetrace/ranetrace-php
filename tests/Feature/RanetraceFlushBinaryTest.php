@@ -8,9 +8,15 @@ declare(strict_types=1);
  * shutdown function cannot be observed from inside the request that registered
  * it, and the binary's whole job is to bootstrap itself.
  *
- * Every subprocess points at an unroutable base URL, so the send fails at
- * connect time. That failure is the assertion: a network error is logged and the
- * feature is paused, which is only possible if a drain actually ran.
+ * A run that should fail to send points at port 1 on localhost, which refuses
+ * at once, and its network error and pause are the proof a drain ran. A run
+ * whose requests are asserted points at `tests/Doubles/fake-api.php` instead
+ * (see `againstFakeApi()`).
+ */
+
+/**
+ * The environment of a keyed run on the buffer in $directory, with the
+ * internal log on.
  *
  * @return array<string, string>
  */

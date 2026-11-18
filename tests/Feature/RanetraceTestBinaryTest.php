@@ -4,8 +4,14 @@ declare(strict_types=1);
 
 /**
  * `bin/ranetrace-test` in a real subprocess, because its whole job is to
- * bootstrap itself from the environment. Every run points at an unroutable base
- * URL, so the sends fail at connect time and nothing reaches a real host.
+ * bootstrap itself from the environment. Every run points at a localhost port
+ * that refuses the connection, so the sends fail at connect time and nothing
+ * reaches a real host.
+ */
+
+/**
+ * The environment of a keyed run on the buffer in $directory, with the
+ * internal log on.
  *
  * @return array<string, string>
  */
