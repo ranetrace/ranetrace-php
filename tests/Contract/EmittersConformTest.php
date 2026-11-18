@@ -145,7 +145,7 @@ test('the emitted javascript error satisfies the field spec, its id and the brow
         ->and($payload['browser_info'])
         ->name->toBe('Chrome')
         ->version->toBe('140')
-        ->and(DescriptorValidator::violations($spec['fields'], $payload, false, []))->toBe([]);
+        ->and(DescriptorValidator::violations($spec['fields'], $payload, false))->toBe([]);
 });
 
 /**
@@ -167,7 +167,7 @@ test('the emitted error satisfies the strict field spec, its id included', funct
     $payload = contractEmittedPayloads()['errors'];
 
     expect($payload)->toHaveKey('id')
-        ->and(DescriptorValidator::violations(WireContract::item('errors')['fields'], $payload, true, []))->toBe([]);
+        ->and(DescriptorValidator::violations(WireContract::item('errors')['fields'], $payload, true))->toBe([]);
 });
 
 /**

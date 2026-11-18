@@ -57,15 +57,14 @@ final class DescriptorValidator
      * @param  array<string, mixed>  $fields  The fixture's `fields` map.
      * @param  array<string, mixed>  $item  The example item.
      * @param  bool  $strictFields  Whether a key outside the spec rejects the item.
-     * @param  list<string>  $legacyFields  Extra top-level keys the endpoint still tolerates.
      * @return list<string>
      */
-    public static function violations(array $fields, array $item, bool $strictFields = false, array $legacyFields = []): array
+    public static function violations(array $fields, array $item, bool $strictFields = false): array
     {
         $violations = [];
 
         if ($strictFields) {
-            $allowed = array_merge(self::topLevelKeys($fields), $legacyFields);
+            $allowed = self::topLevelKeys($fields);
 
             foreach (array_keys($item) as $key) {
                 if (! in_array((string) $key, $allowed, true)) {

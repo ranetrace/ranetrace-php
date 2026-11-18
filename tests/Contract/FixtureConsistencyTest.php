@@ -24,7 +24,6 @@ test('every example satisfies the field spec it ships with', function (string $t
             $spec['fields'],
             $example,
             ($spec['strict_fields'] ?? false) === true,
-            array_keys($spec['legacy_fields'] ?? []),
         ) as $violation) {
             $violations[] = "{$type}.{$name}: {$violation}";
         }
