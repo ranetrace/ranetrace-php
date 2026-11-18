@@ -109,7 +109,7 @@ final class InternalLogger implements Diagnostics
     public function log(string $level, string $message, array $context = []): void
     {
         try {
-            if ($this->config->get('internal_logging.enabled', true) !== true) {
+            if (! $this->isEnabled()) {
                 return;
             }
 
@@ -127,6 +127,15 @@ final class InternalLogger implements Diagnostics
         } catch (Throwable $failure) {
             $this->writeToStderr($level, $message, $context, $failure);
         }
+    }
+
+    /**
+     * Whether this logger writes anything at all, so a caller names the log
+     * file only when a record can be in it.
+     */
+    public function isEnabled(): bool
+    {
+        return $this->config->get('internal_logging.enabled', true) === true;
     }
 
     /**

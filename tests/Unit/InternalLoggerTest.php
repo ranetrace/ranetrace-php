@@ -96,6 +96,14 @@ test('nothing is written while internal logging is disabled', function (): void 
     expect(glob($directory.'/internal-*.log'))->toBe([]);
 });
 
+test('it says it is enabled unless internal logging is switched off', function (array $overrides, bool $enabled): void {
+    expect(loggerIn(tempDirectory(), $overrides)->isEnabled())->toBe($enabled);
+})->with([
+    'by default' => [[], true],
+    'switched on' => [['internal_logging' => ['enabled' => true]], true],
+    'switched off' => [['internal_logging' => ['enabled' => false]], false],
+]);
+
 test('it falls back to stderr when the log file cannot be written', function (): void {
     $errorLog = captureErrorLog();
 

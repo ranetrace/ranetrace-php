@@ -125,9 +125,7 @@ final class TestRun
         $item = $this->capture($type);
 
         if ($item === null) {
-            $logging = $this->config->get('internal_logging.enabled', true) === true;
-
-            return TestResult::notCaptured($logging ? $this->log->currentLogFile() : '');
+            return TestResult::notCaptured($this->log->isEnabled() ? $this->log->currentLogFile() : '');
         }
 
         $tested = TestResult::fromResponse($this->worker->send($type, [$item]));
