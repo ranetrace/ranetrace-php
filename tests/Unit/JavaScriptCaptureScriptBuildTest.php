@@ -236,11 +236,10 @@ test('a hostile config still yields one valid script', function (): void {
  * a machine without node still gets the structural guard above.
  */
 test('a hostile config leaves the rendered script parseable javascript', function (): void {
-    $path = (string) tempnam(sys_get_temp_dir(), 'ranetrace-capture-').'.js';
+    $path = tempDirectory('ranetrace-capture-').'/capture.js';
     file_put_contents($path, CaptureScript::withConfig(hostileCaptureConfig()));
 
     exec('node --check '.escapeshellarg($path).' 2>&1', $output, $status);
-    @unlink($path);
 
     expect($status)->toBe(0, implode("\n", $output));
 })->skip(
