@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Ranetrace\Php\Buffer;
 
+use Ranetrace\Php\Support\Uuid;
+
 /**
  * A buffer that lives in this object only and is gone with it.
  *
@@ -40,7 +42,7 @@ final class MemoryBuffer implements BufferInterface
 
         foreach ($items as $data) {
             $this->items[$type][] = [
-                'id' => bin2hex(random_bytes(16)),
+                'id' => Uuid::v4(),
                 'data' => $data,
                 'timestamp' => time(),
             ];
