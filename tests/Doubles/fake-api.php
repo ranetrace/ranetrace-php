@@ -38,8 +38,10 @@ if (str_ends_with($path, '/heartbeat')) {
 }
 
 $refused = getenv('FAKE_API_REFUSES');
-$counter = is_string($refused) && $refused !== '' && str_ends_with($path, $refused) ? 'failed' : 'processed';
+$items = is_string($refused) && $refused !== '' && str_ends_with($path, $refused)
+    ? ['received' => 1, 'processed' => 0, 'failed' => 1]
+    : ['received' => 1, 'processed' => 1];
 
 header('Content-Type: application/json');
 
-echo json_encode(['success' => true, 'items' => ['received' => 1, 'processed' => 0, $counter => 1]]);
+echo json_encode(['success' => true, 'items' => $items]);
