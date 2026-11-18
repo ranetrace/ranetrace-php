@@ -37,7 +37,7 @@ it('wraps each payload in an id, data and timestamp envelope', function (): void
         ->and(array_keys($taken[0]))->toBe(['id', 'data', 'timestamp'])
         ->and($taken[0]['data'])->toBe(['message' => 'boom'])
         ->and($taken[0]['timestamp'])->toBeInt()
-        ->and($taken[0]['id'])->toMatch('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/');
+        ->and($taken[0]['id'])->toMatch(UUID_V4_PATTERN);
 });
 
 it('gives every envelope its own id', function (): void {

@@ -46,11 +46,6 @@ function errorPayloadKeys(): array
 }
 
 /**
- * What the errors endpoint's `uuid` rule accepts for the item's `id`.
- */
-const ERROR_ID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D';
-
-/**
  * @param  array<string, mixed>  $overrides
  */
 function errorReporter(ArrayBuffer $buffer, array $overrides = []): ErrorReporter
@@ -132,8 +127,8 @@ test('two errors reported alike in every field each carry their own uuid', funct
 
     [$first, $second] = $buffer->payloads('errors');
 
-    expect($first['id'])->toMatch(ERROR_ID_PATTERN)
-        ->and($second['id'])->toMatch(ERROR_ID_PATTERN)
+    expect($first['id'])->toMatch(UUID_V4_PATTERN)
+        ->and($second['id'])->toMatch(UUID_V4_PATTERN)
         ->and($second['id'])->not->toBe($first['id']);
 });
 

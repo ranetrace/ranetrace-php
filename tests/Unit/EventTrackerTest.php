@@ -29,11 +29,6 @@ const EVENT_KEYS = [
 ];
 
 /**
- * What the events endpoint's `uuid` rule accepts for the item's `id`.
- */
-const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D';
-
-/**
  * @param  array<string, mixed>  $overrides
  */
 function eventTracker(ArrayBuffer $buffer, array $overrides = []): EventTracker
@@ -82,8 +77,8 @@ test('two events tracked alike in every field each carry their own uuid', functi
 
     [$first, $second] = $buffer->payloads('events');
 
-    expect($first['id'])->toMatch(UUID_PATTERN)
-        ->and($second['id'])->toMatch(UUID_PATTERN)
+    expect($first['id'])->toMatch(UUID_V4_PATTERN)
+        ->and($second['id'])->toMatch(UUID_V4_PATTERN)
         ->and($second['id'])->not->toBe($first['id']);
 });
 
@@ -92,7 +87,7 @@ test('a property named id does not replace the id of the event', function (): vo
 
     eventTracker($buffer)->track('order_shipped', ['id' => 'ORD-4821']);
 
-    expect(firstEvent($buffer)['id'])->toMatch(UUID_PATTERN)
+    expect(firstEvent($buffer)['id'])->toMatch(UUID_V4_PATTERN)
         ->and(firstEvent($buffer)['properties'])->toBe(['id' => 'ORD-4821']);
 });
 

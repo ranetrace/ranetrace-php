@@ -9,6 +9,11 @@ use Ranetrace\Php\Tests\TestCase;
 uses(TestCase::class)->in('Unit', 'Feature', 'Contract');
 
 /**
+ * What the endpoints' `uuid` rule accepts for an item's `id`.
+ */
+const UUID_V4_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D';
+
+/**
  * Environment variables a test set, so they can be removed again afterwards.
  * Config reads `$_ENV`, `$_SERVER` and `getenv()`, so all three are cleared.
  *

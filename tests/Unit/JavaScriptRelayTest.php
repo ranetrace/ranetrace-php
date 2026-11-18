@@ -34,11 +34,6 @@ const JAVASCRIPT_ERROR_KEYS = [
 ];
 
 /**
- * What the javascript-errors endpoint's `uuid` rule accepts for the item's `id`.
- */
-const JAVASCRIPT_ERROR_ID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D';
-
-/**
  * @param  array<string, mixed>  $overrides  Merged into `javascript_errors`.
  * @param  array<string, mixed>  $root  Merged into the root config.
  */
@@ -345,8 +340,8 @@ test('two reports alike in every field each carry their own uuid', function (): 
 
     [$first, $second] = $buffer->payloads('javascript_errors');
 
-    expect($first['id'])->toMatch(JAVASCRIPT_ERROR_ID_PATTERN)
-        ->and($second['id'])->toMatch(JAVASCRIPT_ERROR_ID_PATTERN)
+    expect($first['id'])->toMatch(UUID_V4_PATTERN)
+        ->and($second['id'])->toMatch(UUID_V4_PATTERN)
         ->and($second['id'])->not->toBe($first['id']);
 });
 
@@ -360,7 +355,7 @@ test('it never takes the id from the browser payload', function (): void {
 
     relay($buffer)->handleRequest(relayServer(), relayPayload(['id' => $claimed]));
 
-    expect(firstJavascriptError($buffer)['id'])->toMatch(JAVASCRIPT_ERROR_ID_PATTERN)
+    expect(firstJavascriptError($buffer)['id'])->toMatch(UUID_V4_PATTERN)
         ->not->toBe($claimed);
 });
 
