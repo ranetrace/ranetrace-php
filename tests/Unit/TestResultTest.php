@@ -67,6 +67,24 @@ it('says an answer that reached no status and named no error could not reach the
         ->toBe('failed: could not reach https://api.example.test/v1 (unknown network error)');
 });
 
+it('holds the log file of an item not captured apart from the message', function (string $logFile, string $line): void {
+    $result = TestResult::notCaptured($logFile);
+
+    expect($result->outcome)->toBe(TestOutcome::NotCaptured)
+        ->and($result->logFile)->toBe($logFile)
+        ->and($result->message)->toBe('')
+        ->and($result->line('errors', 'https://api.example.test/v1', false))->toBe($line);
+})->with([
+    'with internal logging on' => [
+        '/var/spool/ranetrace/internal-2026-11-18.log',
+        'not captured: the SDK could not build the test item. The reason is in /var/spool/ranetrace/internal-2026-11-18.log',
+    ],
+    'with internal logging off' => [
+        '',
+        'not captured: the SDK could not build the test item. Turn internal logging on to see why',
+    ],
+]);
+
 it('lifts a feature pause after a 200 unless it answered one batch or a rate limit', function (string $reason, bool $lifts): void {
     expect(TestResult::liftsFeaturePause($reason))->toBe($lifts);
 })->with([

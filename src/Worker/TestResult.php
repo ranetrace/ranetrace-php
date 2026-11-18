@@ -31,11 +31,16 @@ final readonly class TestResult
      */
     private const array PAUSES_A_200_KEEPS = ['429', '413', '422'];
 
+    /**
+     * @param  string  $message  The API's or the transport's error message.
+     * @param  string  $logFile  For {@see TestOutcome::NotCaptured} only: where the capture path wrote why, or `''` when internal logging is off.
+     */
     private function __construct(
         public TestOutcome $outcome,
         public int $status = 0,
         public string $message = '',
         public int $seconds = 0,
+        public string $logFile = '',
     ) {}
 
     /**
@@ -83,7 +88,7 @@ final readonly class TestResult
      */
     public static function notCaptured(string $logFile): self
     {
-        return new self(TestOutcome::NotCaptured, message: $logFile);
+        return new self(TestOutcome::NotCaptured, logFile: $logFile);
     }
 
     /**
@@ -164,9 +169,9 @@ final readonly class TestResult
             TestOutcome::Failed => "failed: the API answered {$this->status} ({$this->message})",
             TestOutcome::NotSent => 'not sent: the key was refused',
             TestOutcome::Skipped => 'skipped: '.($fromEnvironment ? 'RANETRACE_'.mb_strtoupper($type).'_ENABLED' : $type.'.enabled').' is false',
-            TestOutcome::NotCaptured => $this->message === ''
+            TestOutcome::NotCaptured => $this->logFile === ''
                 ? 'not captured: the SDK could not build the test item. Turn internal logging on to see why'
-                : "not captured: the SDK could not build the test item. The reason is in {$this->message}",
+                : "not captured: the SDK could not build the test item. The reason is in {$this->logFile}",
         };
     }
 
