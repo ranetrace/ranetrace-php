@@ -268,6 +268,7 @@ final class PayloadBuilder
         $file = $throwSite->file;
         $line = $throwSite->line;
         $isConsole = $context->isConsole;
+        $script = $isConsole ? $this->resolvedScript($context) : null;
 
         // Every location is announced to the reader before any is read, so
         // each file is read once however many frames share it.
@@ -304,8 +305,8 @@ final class PayloadBuilder
             'framework' => $this->nameConfig('framework', self::MAX_FRAMEWORK_LENGTH),
             'framework_version' => $this->nameConfig('framework_version', self::MAX_FRAMEWORK_LENGTH),
             'is_console' => $isConsole,
-            'console_command' => $isConsole ? $this->consoleCommand($context) : null,
-            'console_arguments' => $isConsole ? $this->consoleArguments($context) : null,
+            'console_command' => $isConsole ? $this->consoleCommand($context, $script) : null,
+            'console_arguments' => $isConsole ? $this->consoleArguments($context, $script) : null,
             'exception_context' => $this->exceptionContext($throwable, $context),
             'frames' => $this->resolveFrameSources($frames, $reader),
             'frames_omitted' => $framesOmitted,
@@ -810,16 +811,16 @@ final class PayloadBuilder
      * style secrets, then cut to {@see MAX_CONSOLE_COMMAND_LENGTH}. A script
      * path it starts with is first replaced by the path it resolves to: see
      * {@see resolvedScript()}.
+     *
+     * @param  array{typed: string, resolved: string}|null  $script
      */
-    private function consoleCommand(ErrorContext $context): ?string
+    private function consoleCommand(ErrorContext $context, ?array $script): ?string
     {
         $command = $context->consoleCommand;
 
         if ($command === null) {
             return null;
         }
-
-        $script = $this->resolvedScript($context);
 
         if ($script !== null && ($command === $script['typed'] || str_starts_with($command, $script['typed'].' '))) {
             $command = $script['resolved'].mb_substr($command, mb_strlen($script['typed'], '8bit'), null, '8bit');
@@ -832,17 +833,16 @@ final class PayloadBuilder
      * The same command line as an array, count- and length-bounded, with the
      * script path, the first argument, resolved: see {@see resolvedScript()}.
      *
+     * @param  array{typed: string, resolved: string}|null  $script
      * @return array<int, string>|null
      */
-    private function consoleArguments(ErrorContext $context): ?array
+    private function consoleArguments(ErrorContext $context, ?array $script): ?array
     {
         $arguments = $context->consoleArguments;
 
         if ($arguments === null) {
             return null;
         }
-
-        $script = $this->resolvedScript($context);
 
         if ($script !== null) {
             $arguments[array_key_first($arguments)] = $script['resolved'];
