@@ -49,12 +49,6 @@ final class TestRun
      */
     public const array TYPES = ['errors', 'events'];
 
-    /**
-     * An item waiting at least this long gets a line of its own in the status
-     * block: a cron flush that runs every minute never lets one get this old.
-     */
-    public const int STALE_SECONDS = 600;
-
     public function __construct(
         private readonly Config $config,
         private readonly FileBuffer $buffer,

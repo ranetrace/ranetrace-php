@@ -24,6 +24,12 @@ final readonly class TestReport
     private const int LABEL_WIDTH = 9;
 
     /**
+     * An item waiting at least this long gets a line of its own in the status
+     * block: a cron flush that runs every minute never lets one get this old.
+     */
+    private const int STALE_SECONDS = 600;
+
+    /**
      * @param  ?string  $keyPreview  The key's first four characters and `...`, or null when no key is set.
      * @param  array<string, TestResult>  $types  Per tested type, empty when nothing was sent.
      * @param  array<string, int>  $waiting  Items waiting in the spool, only for the types holding any.
@@ -178,7 +184,7 @@ final readonly class TestReport
         } else {
             $lines[] = self::row('Waiting', $this->waitingSummary());
 
-            if ($this->oldestWaitSeconds !== null && $this->oldestWaitSeconds >= TestRun::STALE_SECONDS) {
+            if ($this->oldestWaitSeconds !== null && $this->oldestWaitSeconds >= self::STALE_SECONDS) {
                 $minutes = intdiv($this->oldestWaitSeconds, 60);
                 $stale = "The oldest has waited {$minutes} minutes.";
 
