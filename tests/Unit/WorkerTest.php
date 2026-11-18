@@ -18,20 +18,22 @@ use Ranetrace\Php\Worker\Worker;
 
 /**
  * A worker wired to an in-memory buffer and a fake transport, plus the pieces a
- * test needs to assert on.
+ * test needs to assert on. Pass the buffer and the directory of an earlier
+ * harness to run a second worker on the same spool and pause store.
  *
+ * @param  array<string, mixed>  $overrides
  * @return array{worker: Worker, buffer: ArrayBuffer, pauses: PauseStore, http: FakeHttpClient, config: Config, directory: string}
  */
-function workerHarness(FakeHttpClient $http, array $overrides = []): array
+function workerHarness(FakeHttpClient $http, array $overrides = [], ?ArrayBuffer $buffer = null, ?string $directory = null): array
 {
-    $directory = tempDirectory();
+    $directory ??= tempDirectory();
 
     $config = testConfig(array_replace_recursive([
         'buffer_path' => $directory,
         'internal_logging' => ['enabled' => false],
     ], $overrides));
 
-    $buffer = new ArrayBuffer;
+    $buffer ??= new ArrayBuffer;
     $pauses = new PauseStore($config);
     $log = new InternalLogger($config);
 
@@ -559,18 +561,14 @@ it('drains normally on a keyed run after a keyless one', function (): void {
 
     $keyless['worker']->run();
 
-    $config = testConfig(['buffer_path' => $keyless['directory'], 'internal_logging' => ['enabled' => false]]);
-    $http = new FakeHttpClient(new RawResponse(200, '{}'), new RawResponse(200, '{}'));
-    $log = new InternalLogger($config);
-    $pauses = new PauseStore($config);
+    $keyed = workerHarness(FakeHttpClient::respondingWith(200), [], $keyless['buffer'], $keyless['directory']);
+    $keyed['worker']->run();
 
-    new Worker($config, $keyless['buffer'], $pauses, new ApiClient($config, $http, $log), $log)->run();
-
-    expect($http->requests)->toHaveCount(2)
+    expect($keyed['http']->requests)->toHaveCount(2)
         ->and($keyless['buffer']->count('errors'))->toBe(0)
         ->and($keyless['buffer']->count('events'))->toBe(0)
-        ->and($pauses->featurePause('errors'))->toBeNull()
-        ->and($pauses->globalPause())->toBeNull();
+        ->and($keyed['pauses']->featurePause('errors'))->toBeNull()
+        ->and($keyed['pauses']->globalPause())->toBeNull();
 });
 
 it('never throws when the buffer refuses to take items back', function (): void {
