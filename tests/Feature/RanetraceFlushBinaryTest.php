@@ -143,7 +143,7 @@ it('leaves the buffer alone on shutdown when the flush is disabled', function ()
         ->and(internalLogContents($directory))->not->toContain('Network error during batch send');
 });
 
-function missingKeyLine(): string
+function flushMissingKeyLine(): string
 {
     return "ranetrace-flush: RANETRACE_KEY is not set in this command's environment, so nothing is sent. "
         .'This command reads the environment only: a key your application loads from a .env file or sets in its bootstrap does not reach it. '
@@ -171,7 +171,7 @@ it('exits 1 with one line and leaves the spool and the pauses alone when items w
     $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_KEY' => $key]));
 
     expect($result['status'])->toBe(1)
-        ->and($result['stderr'])->toBe(missingKeyLine())
+        ->and($result['stderr'])->toBe(flushMissingKeyLine())
         ->and($result['stdout'])->toBe('')
         ->and((string) file_get_contents($directory.'/errors.json'))->toBe($before)
         ->and(is_file($directory.'/pauses.json'))->toBeFalse()
@@ -187,7 +187,7 @@ it('says the key is missing when the master switch is on and nothing waits', fun
     $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment(tempDirectory()));
 
     expect($result['status'])->toBe(1)
-        ->and($result['stderr'])->toBe(missingKeyLine());
+        ->and($result['stderr'])->toBe(flushMissingKeyLine());
 });
 
 it('stays quiet without a key when the site is switched off and nothing waits', function (): void {
@@ -207,7 +207,7 @@ it('says the key is missing when the site is switched off but items wait', funct
     $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_ENABLED' => 'false']));
 
     expect($result['status'])->toBe(1)
-        ->and($result['stderr'])->toBe(missingKeyLine())
+        ->and($result['stderr'])->toBe(flushMissingKeyLine())
         ->and(json_decode((string) file_get_contents($directory.'/errors.json'), true))->toHaveCount(1);
 });
 
@@ -221,7 +221,7 @@ it('says the key is missing when the site is switched off and items of another t
     );
 
     expect($result['status'])->toBe(1)
-        ->and($result['stderr'])->toBe(missingKeyLine());
+        ->and($result['stderr'])->toBe(flushMissingKeyLine());
 });
 
 it('sends at once on a keyed flush after a keyless one', function (): void {
@@ -259,7 +259,7 @@ it('names the missing key before the buffer it cannot use', function (): void {
 
     expect($result['status'])->toBe(1)
         ->and($lines)->toHaveCount(2)
-        ->and($lines[0]."\n")->toBe(missingKeyLine())
+        ->and($lines[0]."\n")->toBe(flushMissingKeyLine())
         ->and($lines[1])->toStartWith("ranetrace-flush: cannot write to the buffer in [{$directory}]");
 })->skip(runsAsRoot(...), 'root ignores file modes');
 
@@ -338,7 +338,7 @@ it('sends no heartbeat without a key', function (): void {
 
     expect($run['requests'])->toBe([])
         ->and($run['result']['status'])->toBe(1)
-        ->and($run['result']['stderr'])->toBe(missingKeyLine());
+        ->and($run['result']['stderr'])->toBe(flushMissingKeyLine());
 });
 
 it('sends no heartbeat while the master switch is off', function (): void {
