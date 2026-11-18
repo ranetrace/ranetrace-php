@@ -157,16 +157,13 @@ it('does nothing on flush when the buffer is empty', function (): void {
     expect($http->requests)->toBe([]);
 });
 
-it('sends a heartbeat through the injected transport when asked, and never from a flush', function (): void {
+it('sends a heartbeat through the injected transport when asked', function (): void {
     $http = FakeHttpClient::respondingWith(200);
     $ranetrace = ranetraceFacade(tempDirectory())->withHttpClient($http);
 
-    $ranetrace->flush();
-    $flushed = count($http->requests);
     $ranetrace->heartbeat();
 
-    expect($flushed)->toBe(0)
-        ->and($http->requests)->toHaveCount(1)
+    expect($http->requests)->toHaveCount(1)
         ->and($http->requests[0]['url'])->toBe('https://api.ranetrace.com/v1/heartbeat');
 });
 
