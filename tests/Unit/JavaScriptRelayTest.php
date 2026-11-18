@@ -471,10 +471,12 @@ test('it redacts host declared sensitive path segments from breadcrumb and conte
         ->and($item['breadcrumbs'][0]['data']['url'])->toBe('/reset/[REDACTED]?next=/account');
 });
 
+/**
+ * A breadcrumb message is free text the page wrote, its own call to
+ * `Ranetrace.addBreadcrumb()` or whatever it logged, so it can carry the same
+ * secrets as the error message.
+ */
 test('it redacts the secrets in a breadcrumb message, as it does in the error message', function (string $message, string $expected): void {
-    // A breadcrumb message is free text the page wrote: its own call to
-    // Ranetrace.addBreadcrumb(), or whatever it logged. Its data was scrubbed
-    // and its message was not, so the same secret left in one and not the other.
     $buffer = new ArrayBuffer;
 
     relay($buffer)->handleRequest(relayServer(), relayPayload([
