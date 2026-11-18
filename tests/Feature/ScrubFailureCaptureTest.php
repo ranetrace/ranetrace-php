@@ -19,16 +19,12 @@ use Ranetrace\Php\Tests\Doubles\FakeHttpClient;
  * what leaves the scrubber is an ErrorException. These tests pin that the
  * capture is still sent, with every string the scrubber could not read
  * replaced by the placeholder and every other field as it was.
+ *
+ * @param  array<string, mixed>  $overrides
  */
 function scrubFailureSdk(FakeHttpClient $http, array $overrides = []): Ranetrace
 {
-    return new Ranetrace(array_replace_recursive([
-        'key' => 'test-api-key-12345',
-        'buffer_path' => tempDirectory(),
-        'flush_on_shutdown' => false,
-        'internal_logging' => ['enabled' => false],
-        'scrubbing' => ['extra_keys' => uncompilableExtraKeys()],
-    ], $overrides))->withHttpClient($http);
+    return capturingSdk($http, array_replace_recursive(['scrubbing' => ['extra_keys' => uncompilableExtraKeys()]], $overrides));
 }
 
 /**

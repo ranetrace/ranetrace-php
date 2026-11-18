@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use Monolog\Logger;
-use Ranetrace\Php\Ranetrace;
 use Ranetrace\Php\Tests\Doubles\FakeHttpClient;
 
 /**
@@ -17,19 +16,9 @@ use Ranetrace\Php\Tests\Doubles\FakeHttpClient;
  * pin that the item arrives with the float spelled as a string and that the
  * valid item captured beside it arrives untouched.
  */
-function nonFiniteSdk(FakeHttpClient $http, array $overrides = []): Ranetrace
-{
-    return new Ranetrace(array_replace_recursive([
-        'key' => 'test-api-key-12345',
-        'buffer_path' => tempDirectory(),
-        'flush_on_shutdown' => false,
-        'internal_logging' => ['enabled' => false],
-    ], $overrides))->withHttpClient($http);
-}
-
 test('a log record with INF in its context is sent with the string INF, beside a valid one', function (): void {
     $http = FakeHttpClient::respondingWith(200);
-    $sdk = nonFiniteSdk($http, ['logging' => ['enabled' => true]]);
+    $sdk = capturingSdk($http, ['logging' => ['enabled' => true]]);
     $logger = new Logger('app', [$sdk->monologHandler()]);
 
     $logger->error('Conversion ratio computed', ['ratio' => INF, 'nested' => ['drift' => -INF]]);
@@ -48,7 +37,7 @@ test('a log record with INF in its context is sent with the string INF, beside a
 
 test('a log record with NAN in its extra is sent with the string NAN', function (): void {
     $http = FakeHttpClient::respondingWith(200);
-    $sdk = nonFiniteSdk($http, ['logging' => ['enabled' => true]]);
+    $sdk = capturingSdk($http, ['logging' => ['enabled' => true]]);
     $logger = new Logger('app', [$sdk->monologHandler()]);
     $logger->pushProcessor(static function (Monolog\LogRecord $record): Monolog\LogRecord {
         return $record->with(extra: ['score' => NAN]);
@@ -64,7 +53,7 @@ test('a log record with NAN in its extra is sent with the string NAN', function 
 
 test('an event with NAN and -INF properties is sent with the strings, beside a valid one', function (): void {
     $http = FakeHttpClient::respondingWith(200);
-    $sdk = nonFiniteSdk($http);
+    $sdk = capturingSdk($http);
 
     $sdk->trackEvent('report_generated', ['average' => NAN, 'trend' => -INF]);
     $sdk->trackEvent('report_generated', ['average' => 1.5]);

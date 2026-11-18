@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use Monolog\Logger;
-use Ranetrace\Php\Ranetrace;
 use Ranetrace\Php\Tests\Doubles\FakeHttpClient;
 
 /**
@@ -15,19 +14,9 @@ use Ranetrace\Php\Tests\Doubles\FakeHttpClient;
  * string in it is not UTF-8, so these tests pin that the item arrives with the
  * byte replaced and that the valid item captured beside it arrives untouched.
  */
-function invalidUtf8Sdk(FakeHttpClient $http, array $overrides = []): Ranetrace
-{
-    return new Ranetrace(array_replace_recursive([
-        'key' => 'test-api-key-12345',
-        'buffer_path' => tempDirectory(),
-        'flush_on_shutdown' => false,
-        'internal_logging' => ['enabled' => false],
-    ], $overrides))->withHttpClient($http);
-}
-
 test('an error whose message holds an invalid byte is sent with the byte replaced, beside a valid one', function (): void {
     $http = FakeHttpClient::respondingWith(200);
-    $sdk = invalidUtf8Sdk($http);
+    $sdk = capturingSdk($http);
 
     $sdk->report(new RuntimeException("SQLSTATE[HY000]: Incorrect string value: '\xB1' for column 'name'"));
     $sdk->report(new RuntimeException('A valid message'));
@@ -44,7 +33,7 @@ test('an error whose message holds an invalid byte is sent with the byte replace
 
 test('a log record with an invalid byte in its message and deep in its context is sent repaired', function (): void {
     $http = FakeHttpClient::respondingWith(200);
-    $sdk = invalidUtf8Sdk($http, ['logging' => ['enabled' => true]]);
+    $sdk = capturingSdk($http, ['logging' => ['enabled' => true]]);
     $logger = new Logger('app', [$sdk->monologHandler()]);
 
     $logger->error("Import failed on row \xB1", ['row' => ['fields' => ['name' => "Jos\xE9", "k\xB1" => 'value']]]);
@@ -61,7 +50,7 @@ test('a log record with an invalid byte in its message and deep in its context i
 
 test('an event with an invalid byte in a property key and value is sent repaired', function (): void {
     $http = FakeHttpClient::respondingWith(200);
-    $sdk = invalidUtf8Sdk($http);
+    $sdk = capturingSdk($http);
 
     $sdk->trackEvent('order_placed', ["customer\xB1" => "Jos\xE9"]);
     $sdk->trackEvent('order_placed', ['customer' => 'valid']);
@@ -77,7 +66,7 @@ test('an event with an invalid byte in a property key and value is sent repaired
 
 test('a browser error relayed with invalid bytes is sent repaired', function (): void {
     $http = FakeHttpClient::respondingWith(200);
-    $sdk = invalidUtf8Sdk($http, ['javascript_errors' => ['enabled' => true]]);
+    $sdk = capturingSdk($http, ['javascript_errors' => ['enabled' => true]]);
 
     $response = $sdk->relay()->handleRequest(['HTTP_USER_AGENT' => "Agent\xB1"], [
         'message' => "Bad \xB1 input",

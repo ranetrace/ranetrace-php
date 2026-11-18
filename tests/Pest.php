@@ -104,6 +104,22 @@ function withEnv(string $name, ?string $value): void
 }
 
 /**
+ * An SDK that buffers into a fresh temp directory and sends through $http, with
+ * the shutdown flush and internal logging off.
+ *
+ * @param  array<string, mixed>  $overrides  Merged recursively over those defaults.
+ */
+function capturingSdk(Ranetrace\Php\Tests\Doubles\FakeHttpClient $http, array $overrides = []): Ranetrace\Php\Ranetrace
+{
+    return new Ranetrace\Php\Ranetrace(array_replace_recursive([
+        'key' => 'test-api-key-12345',
+        'buffer_path' => tempDirectory(),
+        'flush_on_shutdown' => false,
+        'internal_logging' => ['enabled' => false],
+    ], $overrides))->withHttpClient($http);
+}
+
+/**
  * A fresh, empty directory under the system temp dir, removed after the test.
  */
 function tempDirectory(string $prefix = 'ranetrace-test-'): string
