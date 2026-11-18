@@ -82,7 +82,7 @@ test('a windows root is found under either separator, single or doubled', functi
     'doubled in a string literal' => ["require 'C:\\\\inetpub\\\\app\\\\src\\\\Foo.php';", "require 'src\\\\Foo.php';"],
 ]);
 
-test('a root that says nothing, or is the filesystem root, strips nothing', function (string $root): void {
+test('a root that is empty, relative or the filesystem root strips nothing', function (string $root): void {
     expect(stripper($root)->strip('The app in /var/www/app/app/Foo.php'))->toBe('The app in /var/www/app/app/Foo.php');
 })->with([
     'no root' => [''],
