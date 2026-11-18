@@ -405,7 +405,11 @@ test('a failure inside the capture work is swallowed', function (): void {
     $buffer = new ArrayBuffer;
     $buffer->throwOnWrite = true;
 
-    expect(fn () => eventTracker($buffer)->track('page_view'))->not->toThrow(Throwable::class);
+    // Exception and Error are named apart: Pest reads a name that is not a
+    // class, such as the Throwable interface, as a message to look for.
+    expect(fn () => eventTracker($buffer)->track('page_view'))
+        ->not->toThrow(Exception::class)
+        ->not->toThrow(Error::class);
 });
 
 test('the standard event name constants are the thirteen agreed names', function (): void {
