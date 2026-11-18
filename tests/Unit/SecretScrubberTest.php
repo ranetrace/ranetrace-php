@@ -1438,9 +1438,19 @@ test('the growth check tells fourfold growth from sixteenfold', function (int $s
     'the same ratio at the floor' => [100_000, 5_000_000, false],
 ]);
 
-test('the growth check fails a scrub whose time grows far faster than its input', function (): void {
-    $shape = fn (int $scale): array => [str_repeat('a', 12_500 * $scale), str_repeat('a', 12_500 * $scale)];
+/**
+ * The shape the growth self-tests measure: a run of the letter a as both the
+ * input and the expected output, which their stand-in scrubs scan whole and
+ * return unchanged.
+ *
+ * @return array{0: string, 1: string}
+ */
+function unchangedRunOfA(int $scale): array
+{
+    return [str_repeat('a', 12_500 * $scale), str_repeat('a', 12_500 * $scale)];
+}
 
+test('the growth check fails a scrub whose time grows far faster than its input', function (): void {
     // The scans grow with the square of the length and each scan with the
     // length, so the full size takes 64 times as long as a quarter of it:
     // far enough over the bound that a slow quarter-size run on a busy
@@ -1455,7 +1465,7 @@ test('the growth check fails a scrub whose time grows far faster than its input'
         return $value;
     };
 
-    expect(fn (): array => expectScrubStaysLinear('a cubic scrub', $shape, $cubic))
+    expect(fn (): array => expectScrubStaysLinear('a cubic scrub', unchangedRunOfA(...), $cubic))
         ->toThrow(function (ExpectationFailedException $exception): void {
             expect($exception->getMessage())->toMatch(
                 '/^a cubic scrub: the full size took \d+\.\d ms to scrub, more than 8 times the \d+\.\d ms of a quarter of it/'
@@ -1464,8 +1474,6 @@ test('the growth check fails a scrub whose time grows far faster than its input'
 });
 
 test('the growth check passes a scrub whose time grows in step with its input', function (): void {
-    $shape = fn (int $scale): array => [str_repeat('a', 12_500 * $scale), str_repeat('a', 12_500 * $scale)];
-
     // Enough scans to stay well over the floor on a fast machine, where 200 of
     // them land at about the floor itself.
     $linear = function (string $value): string {
@@ -1476,7 +1484,7 @@ test('the growth check passes a scrub whose time grows in step with its input', 
         return $value;
     };
 
-    $times = expectScrubStaysLinear('a linear scrub', $shape, $linear);
+    $times = expectScrubStaysLinear('a linear scrub', unchangedRunOfA(...), $linear);
 
     // Over the floor, so the pass comes from the ratio and not from the floor.
     expect($times['large'])->toBeGreaterThanOrEqual(SCRUB_GROWTH_FLOOR);
