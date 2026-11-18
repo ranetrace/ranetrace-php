@@ -162,7 +162,7 @@ use Ranetrace\Php\Ranetrace;
 
         fwrite(STDERR, sprintf(
             "ranetrace-flush: cannot write to the buffer in [%s]%s: %s. Run this command as the user your web server runs as.\n",
-            $ranetrace->config()->bufferPath(),
+            $config->bufferPath(),
             $user,
             $problem,
         ));
