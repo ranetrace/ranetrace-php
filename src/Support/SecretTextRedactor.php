@@ -253,15 +253,15 @@ final class SecretTextRedactor
      *
      * Every repeat is possessive, and the scan stays linear for a reason per
      * branch. A short token is entered only where a run of token characters
-     * starts: without `-` in that lookbehind, `eyJa-eyJa-...` was entered at
-     * every `eyJ`. A long body is entered at every prefix, but once it holds
-     * 20 characters nothing after it can make it fail, so an attempt either
-     * gives up within 20 characters or takes everything it read. The glued
-     * JWT is the one shape that can read far and still fail, for want of its
-     * second part, so its first part is bounded to
-     * {@see MAX_GLUED_JWT_HEAD} characters there: at most that many are
-     * read per attempt, and at most a fixed number of attempts share the
-     * parts after it.
+     * starts; the `-` in that lookbehind keeps `eyJa-eyJa-...` from being
+     * entered at every `eyJ`. A long body is entered at every prefix, but once
+     * it holds {@see MIN_GLUED_TOKEN_BODY} characters nothing after it can
+     * make it fail, so an attempt either gives up within that many characters
+     * or takes everything it read. The glued JWT is the one shape that can
+     * read far and still fail, for want of its second part, so its first part
+     * is bounded to {@see MAX_GLUED_JWT_HEAD} characters there: at most that
+     * many are read per attempt, and at most a fixed number of attempts share
+     * the parts after it.
      */
     private const string PREFIXED_TOKEN = '~(?:(?<![\w$.\-])|(?<=%[0-9A-Fa-f]{2})(?<!%5[Ff]|%2[DdEe]))(?:'
         .'[sr]k(?:_|%5[Ff])live(?:_|%5[Ff])[A-Za-z0-9]{6,}+'
