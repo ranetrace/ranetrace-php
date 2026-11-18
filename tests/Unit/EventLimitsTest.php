@@ -200,8 +200,6 @@ test('a cut writes one warning naming the event, the properties and the limits t
     ]]);
 });
 
-// Hardening: shapes a host can hand over that the tests above do not.
-
 test('properties given as a list keep their integer keys through a cut and a replacement', function (): void {
     $log = new RecordingDiagnostics;
 
