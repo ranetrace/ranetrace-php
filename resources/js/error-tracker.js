@@ -15,7 +15,7 @@
  *
  * This script automatically captures JavaScript errors and sends them to Ranetrace.
  * It includes support for:
- * - Global error handling (window.onerror)
+ * - Global error handling (a capture-phase `error` listener)
  * - Unhandled promise rejections
  * - Console error capturing (optional)
  * - Breadcrumbs for debugging context
