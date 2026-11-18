@@ -23,10 +23,7 @@ function testBinaryEnvironment(string $directory): array
 
 it('exits 1 and names the base url it could not reach, leaving the spool and the pauses alone', function (): void {
     $directory = tempDirectory();
-    $spooled = (string) json_encode([
-        ['id' => 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', 'data' => ['message' => 'spooled'], 'timestamp' => time()],
-    ]);
-    file_put_contents($directory.'/errors.json', $spooled);
+    $spooled = spoolItem($directory);
 
     $result = runPhp(['bin/ranetrace-test'], testBinaryEnvironment($directory));
 

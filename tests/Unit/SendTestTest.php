@@ -436,19 +436,9 @@ it('counts the items waiting, per type that holds any', function (): void {
     expect($sdk->sendTest()->render())->toContain("  Waiting  3 errors, 1 event\n");
 });
 
-/**
- * Spool one item of a type, captured the given number of seconds ago.
- */
-function sendTestSeedOld(string $directory, string $type, int $age): void
-{
-    file_put_contents($directory.'/'.$type.'.json', (string) json_encode([
-        ['id' => 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', 'data' => ['message' => 'old'], 'timestamp' => time() - $age],
-    ]));
-}
-
 it('says how long the oldest item has waited, and that nothing drained it when nothing is paused', function (): void {
     $directory = tempDirectory();
-    sendTestSeedOld($directory, 'logs', 15 * 60 + 5);
+    spoolItem($directory, 'logs', 'old', 15 * 60 + 5);
 
     $output = sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)))->sendTest()->render();
 
@@ -460,7 +450,7 @@ it('says how long the oldest item has waited, and that nothing drained it when n
 
 it('does not blame the cron line for a wait while a pause is active', function (): void {
     $directory = tempDirectory();
-    sendTestSeedOld($directory, 'logs', 15 * 60 + 5);
+    spoolItem($directory, 'logs', 'old', 15 * 60 + 5);
     $sdk = sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)));
     $sdk->pauses()->pauseFeature('logs', 900, '429');
 
@@ -472,7 +462,7 @@ it('does not blame the cron line for a wait while a pause is active', function (
 
 it('says nothing about a wait under 10 minutes', function (): void {
     $directory = tempDirectory();
-    sendTestSeedOld($directory, 'errors', 9 * 60);
+    spoolItem($directory, 'errors', 'old', 9 * 60);
 
     $output = sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)))->sendTest()->render();
 

@@ -27,16 +27,9 @@ function flushEnvironment(string $directory): array
     ];
 }
 
-function seedSpool(string $directory): void
-{
-    file_put_contents($directory.'/errors.json', (string) json_encode([
-        ['id' => 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', 'data' => ['message' => 'spooled'], 'timestamp' => time()],
-    ]));
-}
-
 it('drains the buffer from the command line', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
 
     $result = runPhp(['bin/ranetrace-flush'], flushEnvironment($directory));
 
@@ -48,7 +41,7 @@ it('drains the buffer from the command line', function (): void {
 
 it('drains only the type it is given', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
 
     $result = runPhp(['bin/ranetrace-flush', '--type=events'], flushEnvironment($directory));
 
@@ -82,7 +75,7 @@ it('prints usage on help', function (): void {
 
 it('exits 1 and names the directory when the buffer belongs to another user', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
     $before = (string) file_get_contents($directory.'/errors.json');
 
     chmod($directory.'/errors.json', 0444);
@@ -105,7 +98,7 @@ it('exits 1 and names the directory when the buffer belongs to another user', fu
 
 it('exits 1 when only a lock file belongs to another user', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
     $before = (string) file_get_contents($directory.'/errors.json');
 
     $result = withForeignLockFile($directory, fn (): array => runPhp(['bin/ranetrace-flush'], flushEnvironment($directory)));
@@ -118,7 +111,7 @@ it('exits 1 when only a lock file belongs to another user', function (): void {
 
 it('drains on shutdown by default', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
 
     $result = runPhp(
         ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
@@ -131,7 +124,7 @@ it('drains on shutdown by default', function (): void {
 
 it('leaves the buffer alone on shutdown when the flush is disabled', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
 
     $result = runPhp(
         ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
@@ -164,7 +157,7 @@ function keylessFlushEnvironment(string $directory, array $overrides = []): arra
 
 it('exits 1 with one line and leaves the spool and the pauses alone when items wait and no key is set', function (string $key): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
     $before = (string) file_get_contents($directory.'/errors.json');
 
     $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_KEY' => $key]));
@@ -201,7 +194,7 @@ it('stays quiet without a key when the site is switched off and nothing waits', 
 
 it('says the key is missing when the site is switched off but items wait', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
 
     $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_ENABLED' => 'false']));
 
@@ -212,7 +205,7 @@ it('says the key is missing when the site is switched off but items wait', funct
 
 it('says the key is missing when items of another type than the one named wait', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
 
     $result = runPhp(
         ['bin/ranetrace-flush', '--type=events'],
@@ -225,7 +218,7 @@ it('says the key is missing when items of another type than the one named wait',
 
 it('sends at once on a keyed flush after a keyless one', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
 
     runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory));
     $result = runPhp(['bin/ranetrace-flush'], flushEnvironment($directory));
@@ -237,7 +230,7 @@ it('sends at once on a keyed flush after a keyless one', function (): void {
 
 it('leaves the spool and the pauses alone on a shutdown flush without a key', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
     $before = (string) file_get_contents($directory.'/errors.json');
 
     $result = runPhp(
@@ -253,7 +246,7 @@ it('leaves the spool and the pauses alone on a shutdown flush without a key', fu
 
 it('names the missing key before the buffer it cannot use', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
 
     $result = withForeignLockFile($directory, fn (): array => runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory)));
 
@@ -285,7 +278,7 @@ it('sends one heartbeat from the cron flush with an empty buffer, and none on a 
 
 it('sends the heartbeat after the drain', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
 
     $run = againstFakeApi(static fn (array $api): array => runPhp(
         ['bin/ranetrace-flush'],
@@ -315,7 +308,7 @@ it('never sends a heartbeat from the shutdown flush', function (bool $spooled, a
     $directory = tempDirectory();
 
     if ($spooled) {
-        seedSpool($directory);
+        spoolItem($directory);
     }
 
     $run = againstFakeApi(static fn (array $api): array => runPhp(
@@ -373,7 +366,7 @@ it('sends no heartbeat while everything is paused', function (): void {
 
 it('keeps the exit code, the spool and the pauses when the heartbeat is answered with a 500', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
     $before = (string) file_get_contents($directory.'/errors.json');
 
     // Only events are drained, so the spooled error is still there to compare.
@@ -414,7 +407,7 @@ it('keeps the exit code and sets no pause when the heartbeat cannot reach the ap
  */
 it('sends no heartbeat when it cannot use the buffer', function (): void {
     $directory = tempDirectory();
-    seedSpool($directory);
+    spoolItem($directory);
 
     $run = withForeignLockFile($directory, fn (): array => againstFakeApi(static fn (array $api): array => runPhp(
         ['bin/ranetrace-flush'],

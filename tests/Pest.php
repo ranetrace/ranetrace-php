@@ -71,6 +71,21 @@ function withForeignLockFile(string $directory, callable $run): mixed
 }
 
 /**
+ * Spool one item of $type into the buffer in $directory, captured $age seconds
+ * ago, and return the JSON written to its file.
+ */
+function spoolItem(string $directory, string $type = 'errors', string $message = 'spooled', int $age = 0): string
+{
+    $spooled = (string) json_encode([
+        ['id' => 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', 'data' => ['message' => $message], 'timestamp' => time() - $age],
+    ]);
+
+    file_put_contents($directory.'/'.$type.'.json', $spooled);
+
+    return $spooled;
+}
+
+/**
  * Set an environment variable for the duration of one test.
  */
 function withEnv(string $name, ?string $value): void
