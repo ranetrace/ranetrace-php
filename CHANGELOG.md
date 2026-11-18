@@ -6,6 +6,17 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Added
+- **`Http\Heartbeat` reads the API's answer to a heartbeat.** `Heartbeat::accepted()` says whether the API took one, any 2xx as `contract/heartbeat.json` states, and `Heartbeat::answerLine()` gives the line the release check prints for the answer. The worker and `bin/release-check` each decided this in their own place. Both methods take the result of either SDK's client, so the Laravel SDK can read a heartbeat answer the same way. Nothing changes in what is sent, logged or printed
+
+### Changed
+- **An `environment` that is not a scalar is sent as `production` in every item.** With `environment` configured as `null` or as an array, an error and a log record carried an empty name and a JavaScript error carried `production`, so one application reported two spellings. All three now send `production`, the name the configuration falls back to when none is set. A configured name is sent exactly as before. Nothing to do on upgrade
+- **A test result for an item that could not be captured holds its log file in `logFile`.** `Worker\TestResult::notCaptured()` stored the path of the internal log in `message`, which holds the API's or the transport's message for every other outcome. The path is now in the new `logFile` property and `message` is empty. The line `vendor/bin/ranetrace-test` prints is unchanged. Only code that reads `->message` of such a result has to read `->logFile`
+- **`contract/heartbeat.json` says a global pause comes only from a rejected key.** Its `sent_when` named "a pause the API asked for" as a second cause. A pause the API asks for pauses one feature, never everything. Documentation only
+
+### Fixed
+- **The project's absolute path no longer leaves the host when `project_root` holds a byte that is not valid UTF-8.** The root is matched byte for byte, but a message, a trace, a command line, an exception's context, a source line and a log record were made valid UTF-8 first. That turned such a byte into U+FFFD, the root then matched nothing, and the path was sent as written. A root ending in a slash or a backslash lost the byte the same way when it was trimmed, which also left the root on the file of an error and its frames and kept the vendor frames from being recognised. The root is now taken off before the repair, and trimmed and cut byte for byte. An invalid byte further on in a file path arrives as U+FFFD, where it arrived as `?`. A root of valid UTF-8 is handled exactly as before. Nothing to do on upgrade
+
 ## [1.7.0] - 2026-11-17
 
 ### Added
