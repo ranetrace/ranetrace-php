@@ -21,10 +21,7 @@ use Throwable;
  * event it was. Both SDKs run every event through {@see fit()} right after
  * {@see EventItemBuilder::build()}: this package in {@see EventTracker}, the
  * Laravel SDK before it queues the capture job, so the queued payload is
- * already small. It is a class of its own rather than a step inside the
- * builder because it needs a diagnostics sink the builder does not take, and
- * a Laravel SDK release that builds events with an older constructor keeps
- * working when this package is updated under it.
+ * already small. It takes a diagnostics sink, which the builder does not.
  *
  * It runs before {@see ItemByteBudget}, whose budget is far larger, so the
  * general budget has nothing left to do for an event.
