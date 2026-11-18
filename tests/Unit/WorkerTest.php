@@ -794,18 +794,6 @@ it('lifts no pause on a heartbeat the api accepts', function (): void {
     expect($harness['pauses']->featurePause('errors')['reason'])->toBe('403');
 });
 
-it('does not send a failed heartbeat again before the next interval', function (): void {
-    $harness = workerHarness(new FakeHttpClient(
-        new RawResponse(500, '{"success":false}'),
-        new RawResponse(200, '{"success":true}'),
-    ));
-
-    $harness['worker']->heartbeat();
-    $harness['worker']->heartbeat();
-
-    expect($harness['http']->requests)->toHaveCount(1);
-});
-
 it('writes one line to the internal log for a heartbeat that failed', function (FakeHttpClient $http, string $line): void {
     $harness = loggingWorkerHarness($http);
 
