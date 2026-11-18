@@ -38,7 +38,7 @@ function serverMeasuredBytes(array $item): int
 }
 
 /**
- * A products list as a shop passes it to `sale()`, about 150 bytes a product.
+ * A products list as a shop passes it to `sale()`, 121 to 123 bytes a product.
  *
  * @return list<array<string, mixed>>
  */
