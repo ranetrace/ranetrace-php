@@ -2147,8 +2147,8 @@ test('it leaves a url without a password readable', function (string $value): vo
 ]);
 
 /*
- * Tokens of a real length. Each is joined from two parts, so that this file
- * holds no string a secret scanner takes for a live key.
+ * Tokens of a real length. Each is joined from two parts, because the push
+ * check refuses a commit that holds some of these shapes written whole.
  */
 const LONG_STRIPE_KEY = 'sk_'.'live_51HabcDEF0123456789abcdefgh';
 
@@ -2375,8 +2375,8 @@ test('a token of a real length is redacted whatever stands right after it', func
 ]);
 
 test('scrubString redacts a gitlab token of every prefix gitlab issues', function (string $prefix): void {
-    // Joined here, so that this file holds no string a secret scanner takes
-    // for a live token.
+    // Joined here, because the push check refuses a commit that holds some of
+    // these shapes written whole.
     $token = $prefix.'AbCdEf0123456789_-xy';
 
     expect(scrubber()->scrubString("gitlab said no to {$token}."))->toBe('gitlab said no to [REDACTED].')
