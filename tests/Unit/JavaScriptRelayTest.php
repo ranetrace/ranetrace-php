@@ -739,6 +739,25 @@ test('a javascript error over the per-item byte budget is shrunk before it is bu
         ->and(mb_strlen((string) json_encode($item), '8bit'))->toBeLessThanOrEqual(ItemByteBudget::MAX_ITEM_BYTES);
 });
 
+test('a resolved id reaches the browser error as the backend takes it, or not at all', function (mixed $resolved, int|string|null $userId): void {
+    $buffer = new ArrayBuffer;
+
+    relay($buffer, [], ['user_resolver' => fn (): mixed => $resolved])
+        ->handleRequest(relayServer(), relayPayload());
+
+    expect(firstJavascriptError($buffer)['user_id'])->toBe($userId);
+})->with([
+    'an int' => [['id' => 7], 7],
+    'a string' => [['id' => 'u-7'], 'u-7'],
+    'an empty string' => [['id' => ''], ''],
+    'a string with an invalid byte' => [['id' => "u\xB17"], "u\u{FFFD}7"],
+    'a float' => [['id' => 7.0], null],
+    'a null id' => [['id' => null], null],
+    'an array id' => [['id' => [7]], null],
+    'no id' => [['email' => 'a@b.test'], null],
+    'not an array' => ['7', null],
+]);
+
 test('the user id is null when the resolver reports a string the backend would reject for its length', function (): void {
     $buffer = new ArrayBuffer;
 

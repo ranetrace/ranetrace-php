@@ -12,6 +12,7 @@ use Ranetrace\Php\Support\FingerprintGenerator;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\ItemByteBudget;
 use Ranetrace\Php\Support\SecretScrubber;
+use Ranetrace\Php\Support\UserId;
 use Ranetrace\Php\Support\UserResolver;
 use Throwable;
 
@@ -330,14 +331,9 @@ final class EventTracker
         }
 
         $resolved = UserResolver::resolve($this->config, $this->log);
+        $id = is_array($resolved) ? UserId::accepted($resolved['id'] ?? null) : null;
 
-        if (! is_array($resolved) || ! isset($resolved['id'])) {
-            return null;
-        }
-
-        $id = $resolved['id'];
-
-        return is_int($id) || is_string($id) ? ['id' => $id] : null;
+        return $id === null ? null : ['id' => $id];
     }
 
     /**

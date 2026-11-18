@@ -162,6 +162,24 @@ test('the user is null when the id is a string the backend would reject for its 
     'resolved id' => [['user_resolver' => fn (): array => ['id' => str_repeat('a', 256)]], null],
 ]);
 
+test('a resolved id reaches the event as the backend takes it, or not at all', function (mixed $resolved, ?array $user): void {
+    $buffer = new ArrayBuffer;
+
+    eventTracker($buffer, ['user_resolver' => fn (): mixed => $resolved])->track('user_logged_in');
+
+    expect(firstEvent($buffer)['user'])->toBe($user);
+})->with([
+    'an int' => [['id' => 7], ['id' => 7]],
+    'a string' => [['id' => 'u-7'], ['id' => 'u-7']],
+    'an empty string' => [['id' => ''], ['id' => '']],
+    'a string with an invalid byte' => [['id' => "u\xB17"], ['id' => "u\u{FFFD}7"]],
+    'a float' => [['id' => 7.0], null],
+    'a null id' => [['id' => null], null],
+    'an array id' => [['id' => [7]], null],
+    'no id' => [['email' => 'a@b.test'], null],
+    'not an array' => ['7', null],
+]);
+
 test('an id at the backend bound of 255 characters is sent as it is', function (): void {
     $buffer = new ArrayBuffer;
     $id = str_repeat('é', 255);
