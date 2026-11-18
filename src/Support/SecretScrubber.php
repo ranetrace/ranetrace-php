@@ -150,9 +150,9 @@ final class SecretScrubber implements Scrubber
      * of a Slack or Discord webhook URL. It lives here rather than in
      * {@see scrub()}, which stays the key primitive, because every capture
      * path (log context and extra, event properties, breadcrumbs, an
-     * exception's context()) comes through this method. It costs two linear
-     * regex passes per string, over data {@see DataSanitizer} has already
-     * bounded. A value whose pass fails becomes the placeholder, for the
+     * exception's context()) comes through this method. It costs one linear
+     * pass per pattern of that value pass for each string, over data
+     * {@see DataSanitizer} has already bounded. A value whose pass fails becomes the placeholder, for the
      * reason {@see scrubString()} fails closed, and the rest of the data is
      * scrubbed as usual.
      *
