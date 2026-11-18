@@ -244,7 +244,7 @@ test('a hostile config leaves the rendered script parseable javascript', functio
 
     expect($status)->toBe(0, implode("\n", $output));
 })->skip(
-    mb_trim((string) shell_exec('command -v node 2>/dev/null')) === '',
+    nodeIsMissing(),
     'node is not on PATH. bin/build-capture-script runs the same check where node is guaranteed.',
 );
 

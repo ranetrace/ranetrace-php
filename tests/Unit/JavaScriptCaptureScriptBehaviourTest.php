@@ -52,7 +52,7 @@ function reportsPostedFor(array $events): array
 }
 
 beforeEach(function (): void {
-    if (mb_trim((string) shell_exec('command -v node 2>/dev/null')) === '') {
+    if (nodeIsMissing()) {
         $this->markTestSkipped('node is not on PATH. The text guards in JavaScriptCaptureScriptTest and JavaScriptCaptureScriptBuildTest still run.');
     }
 });

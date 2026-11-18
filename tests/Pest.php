@@ -178,6 +178,15 @@ function testConfig(array $overrides = []): Config
 }
 
 /**
+ * Whether node is missing from PATH. The suite needs it only for the tests that
+ * run the capture script, which skip without it.
+ */
+function nodeIsMissing(): bool
+{
+    return mb_trim((string) shell_exec('command -v node 2>/dev/null')) === '';
+}
+
+/**
  * The runtime config object out of a rendered capture script.
  *
  * The script ships minified, so the variable the config is assigned to is a
