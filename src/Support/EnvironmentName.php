@@ -52,11 +52,11 @@ final class EnvironmentName
 
         $name = Utf8::repair((string) $configured);
 
-        if (mb_strlen($name) <= self::MAX_LENGTH) {
+        $sent = StringLimit::cut($name, self::MAX_LENGTH);
+
+        if ($sent === $name) {
             return $name;
         }
-
-        $sent = mb_substr($name, 0, self::MAX_LENGTH);
 
         try {
             $log?->warning('Ranetrace environment name exceeded the endpoint limit and was cut', [
