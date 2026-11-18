@@ -17,20 +17,6 @@ function snippet(array $overrides = [], array $root = []): Snippet
     ], $root)));
 }
 
-/**
- * The runtime config object the rendered script carries.
- *
- * The script ships minified, so the variable the config is assigned to has a
- * one-letter name no test may key on. `capturedScriptConfig()` locates the
- * literal by the template around it instead.
- *
- * @return array<string, mixed>
- */
-function renderedConfig(string $rendered): array
-{
-    return capturedScriptConfig($rendered);
-}
-
 test('it renders nothing when javascript error tracking is off', function (array $overrides, array $root): void {
     expect(snippet($overrides, $root)->render(['endpoint' => '/ranetrace/js-errors']))->toBe('');
 })->with([
@@ -78,7 +64,7 @@ test('it injects the endpoint and the configured runtime values', function (): v
         'max_breadcrumbs' => 5,
     ])->render(['endpoint' => 'https://app.test/ranetrace/js-errors']);
 
-    expect(renderedConfig($rendered))->toBe([
+    expect(capturedScriptConfig($rendered))->toBe([
         'endpoint' => 'https://app.test/ranetrace/js-errors',
         'enabled' => true,
         'sampleRate' => 0.25,
@@ -89,7 +75,7 @@ test('it injects the endpoint and the configured runtime values', function (): v
 });
 
 test('it defaults to the shared ignored error list so the script and the relay filter alike', function (): void {
-    $config = renderedConfig(snippet()->render(['endpoint' => '/e']));
+    $config = capturedScriptConfig(snippet()->render(['endpoint' => '/e']));
 
     expect($config['ignoredErrors'])->toBe(Config::DEFAULT_IGNORED_JAVASCRIPT_ERRORS)
         ->and($config['ignoredErrors'])->toHaveCount(15)
@@ -101,7 +87,7 @@ test('it defaults to the shared ignored error list so the script and the relay f
 test('a configured ignored error list replaces the defaults in the script', function (): void {
     $rendered = snippet(['ignored_errors' => ['Only this one']])->render(['endpoint' => '/e']);
 
-    expect(renderedConfig($rendered)['ignoredErrors'])->toBe(['Only this one']);
+    expect(capturedScriptConfig($rendered)['ignoredErrors'])->toBe(['Only this one']);
 });
 
 /**
@@ -112,12 +98,12 @@ test('a configured ignored error list replaces the defaults in the script', func
 test('it carries no csrf token, because the relay checks the origin instead', function (): void {
     $rendered = snippet()->render(['endpoint' => '/e']);
 
-    expect(renderedConfig($rendered))->not->toHaveKey('csrfToken');
+    expect(capturedScriptConfig($rendered))->not->toHaveKey('csrfToken');
 });
 
 test('a closing script tag inside a config value cannot terminate the tag early', function (): void {
     $rendered = snippet(['ignored_errors' => ['</script><script>alert(1)</script>']])->render(['endpoint' => '/e']);
 
     expect(mb_substr_count($rendered, '</script>'))->toBe(1)
-        ->and(renderedConfig($rendered)['ignoredErrors'])->toBe(['</script><script>alert(1)</script>']);
+        ->and(capturedScriptConfig($rendered)['ignoredErrors'])->toBe(['</script><script>alert(1)</script>']);
 });
