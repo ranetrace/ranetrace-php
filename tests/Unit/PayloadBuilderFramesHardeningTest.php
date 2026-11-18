@@ -19,15 +19,7 @@ use Ranetrace\Php\Tests\Contract\DescriptorValidator;
  */
 function hardenedPayload(string $root, Throwable $throwable, ?Scrubber $scrubber = null): array
 {
-    set_error_handler(static function (int $level, string $message): never {
-        throw new ErrorException($message, 0, $level);
-    });
-
-    try {
-        return framePayload(frameBuilder($root, [], [], $scrubber), $throwable);
-    } finally {
-        restore_error_handler();
-    }
+    return underThrowingErrorHandler(fn (): array => framePayload(frameBuilder($root, [], [], $scrubber), $throwable));
 }
 
 /**
@@ -319,15 +311,7 @@ test('a frame whose file is a directory or a stream wrapper path is not read', f
         }
     };
 
-    set_error_handler(static function (int $level, string $message): never {
-        throw new ErrorException($message, 0, $level);
-    });
-
-    try {
-        $payload = framePayload(frameBuilder($root, [], [$mapper]), new RuntimeException('boom'));
-    } finally {
-        restore_error_handler();
-    }
+    $payload = underThrowingErrorHandler(fn (): array => framePayload(frameBuilder($root, [], [$mapper]), new RuntimeException('boom')));
 
     expect($payload['frames'][0]['source'])->toBeNull()
         ->and($payload['frames'][1]['source'])->toBeNull();

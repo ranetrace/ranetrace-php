@@ -267,6 +267,22 @@ function uncompilableRoot(): string
 }
 
 /**
+ * Run $capture under an error handler that throws on every warning.
+ */
+function underThrowingErrorHandler(Closure $capture): mixed
+{
+    set_error_handler(static function (int $level, string $message): never {
+        throw new ErrorException($message, 0, $level);
+    });
+
+    try {
+        return $capture();
+    } finally {
+        restore_error_handler();
+    }
+}
+
+/**
  * Run $callback in a project file that recurses $depth times before throwing,
  * and return what it threw.
  */

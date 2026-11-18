@@ -254,15 +254,7 @@ test('a root strip that cannot run costs the strip, never the error report or it
     $root = frameProject();
     $builder = frameBuilder($root, ['project_root' => uncompilableRoot()]);
 
-    set_error_handler(static function (int $level, string $message): never {
-        throw new ErrorException($message, 0, $level);
-    });
-
-    try {
-        $payload = framePayload($builder, new RuntimeException("Could not open {$root}/storage/import.csv with password=hunter2"));
-    } finally {
-        restore_error_handler();
-    }
+    $payload = underThrowingErrorHandler(fn (): array => framePayload($builder, new RuntimeException("Could not open {$root}/storage/import.csv with password=hunter2")));
 
     expect($payload['message'])->toBe("Could not open {$root}/storage/import.csv with password=[REDACTED]")
         ->and($payload['type'])->toBe(RuntimeException::class)

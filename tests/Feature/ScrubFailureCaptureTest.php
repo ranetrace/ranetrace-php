@@ -42,22 +42,6 @@ function uncompilableExtraKeys(): array
     return array_map(static fn (int $number): string => "customer_secret_field_number_{$number}", range(1, 2_000));
 }
 
-/**
- * Run $capture under an error handler that throws on every warning.
- */
-function underThrowingErrorHandler(Closure $capture): mixed
-{
-    set_error_handler(static function (int $level, string $message): never {
-        throw new ErrorException($message, 0, $level);
-    });
-
-    try {
-        return $capture();
-    } finally {
-        restore_error_handler();
-    }
-}
-
 test('an error whose scrub fails is sent with its free-form strings redacted and the rest intact', function (): void {
     $http = FakeHttpClient::respondingWith(200);
     $sdk = scrubFailureSdk($http);

@@ -15,20 +15,12 @@ use Ranetrace\Php\Support\SecretScrubber;
 test('a line or column no integer can represent is sent as null', function (mixed $value): void {
     $config = testConfig(['internal_logging' => ['enabled' => false]]);
 
-    set_error_handler(static function (int $level, string $message): never {
-        throw new ErrorException($message, 0, $level);
-    });
-
-    try {
-        $item = (new ErrorItemBuilder($config, new SecretScrubber($config, new InternalLogger($config))))->build([
-            'message' => 'Chart failed',
-            'url' => 'https://example.test/report',
-            'line' => $value,
-            'column' => $value,
-        ], null, null, null);
-    } finally {
-        restore_error_handler();
-    }
+    $item = underThrowingErrorHandler(fn (): array => (new ErrorItemBuilder($config, new SecretScrubber($config, new InternalLogger($config))))->build([
+        'message' => 'Chart failed',
+        'url' => 'https://example.test/report',
+        'line' => $value,
+        'column' => $value,
+    ], null, null, null));
 
     expect($item['line'])->toBeNull()
         ->and($item['column'])->toBeNull();
