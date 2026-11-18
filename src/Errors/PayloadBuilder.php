@@ -519,7 +519,7 @@ final class PayloadBuilder
     private function isVendor(string $file): bool
     {
         $root = $this->config->get('project_root');
-        $root = is_scalar($root) ? mb_rtrim(str_replace('\\', '/', (string) $root), '/') : '';
+        $root = is_scalar($root) ? str_replace('\\', '/', ProjectRootStripper::withoutTrailingSeparators((string) $root)) : '';
 
         if ($root === '') {
             return false;
@@ -700,18 +700,19 @@ final class PayloadBuilder
 
         // Compared byte for byte against the raw path, so the root is read
         // unrepaired: a repaired copy would no longer prefix a raw path that
-        // shares its invalid bytes.
+        // shares its invalid bytes. The root is cut off and the separators
+        // trimmed byte for byte too, since a multibyte cut or trim that
+        // changes a string writes each such byte as `?` before the repair
+        // can make it U+FFFD.
         $root = $this->config->get('project_root');
         $root = is_scalar($root) ? (string) $root : '';
 
         if ($root !== '') {
-            $root = mb_rtrim($root, '/\\');
+            $root = ProjectRootStripper::withoutTrailingSeparators($root);
 
-            // The separator after the root is ASCII, so the root ends on a
-            // whole character in the path and the character offset below
-            // matches the byte prefix compared here.
             if (str_starts_with($file, $root.'/') || str_starts_with($file, $root.'\\')) {
-                $file = mb_ltrim(mb_substr($file, mb_strlen($root)), '/\\');
+                $relative = mb_substr($file, mb_strlen($root, '8bit'), null, '8bit');
+                $file = preg_replace('#^[/\\\\]++#', '', $relative) ?? $relative;
             }
         }
 

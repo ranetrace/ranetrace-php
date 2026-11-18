@@ -72,6 +72,16 @@ final class ProjectRootStripper
         private readonly ?Diagnostics $log = null,
     ) {}
 
+    /**
+     * The root without the `/` and `\` it ends in, trimmed byte for byte. A
+     * multibyte trim that removes something writes a byte that is not valid
+     * UTF-8 as `?`, and the root would then match no path that shares it.
+     */
+    public static function withoutTrailingSeparators(string $root): string
+    {
+        return preg_replace('#[/\\\\]++\z#', '', $root) ?? $root;
+    }
+
     public function strip(string $text): string
     {
         if ($text === '' || $this->pattern === false) {
@@ -155,7 +165,7 @@ final class ProjectRootStripper
     private function buildPattern(): string|false
     {
         $root = $this->config->get('project_root');
-        $root = is_scalar($root) ? mb_rtrim((string) $root, '/\\') : '';
+        $root = is_scalar($root) ? self::withoutTrailingSeparators((string) $root) : '';
 
         // Nothing left, or a bare drive letter, is the filesystem root. A
         // relative root (`app`) would be found in every text that holds the

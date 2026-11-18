@@ -131,6 +131,13 @@ test('a text with invalid bytes in it still loses the root', function (): void {
     expect(stripper()->strip("Bad \xB1 byte in /var/www/app/data.csv"))->toBe("Bad \xB1 byte in data.csv");
 });
 
+test('a root holding invalid bytes and a trailing separator still strips the paths that share those bytes', function (string $root): void {
+    expect(stripper($root)->strip("Failed in /srv/caf\xB1/app/x.php"))->toBe('Failed in app/x.php');
+})->with([
+    'a slash' => ["/srv/caf\xB1/"],
+    'a backslash' => ["/srv/caf\xB1\\"],
+]);
+
 test('a root holding pattern characters is matched literally', function (): void {
     expect(stripper('/srv/app (v2)+')->strip('/srv/app (v2)+/src/Foo.php and /srv/app (v2)/src'))
         ->toBe('src/Foo.php and /srv/app (v2)/src');

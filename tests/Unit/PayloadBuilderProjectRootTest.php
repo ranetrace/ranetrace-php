@@ -204,6 +204,27 @@ test('a root holding invalid bytes is taken off a source line before it is repai
         ->and(json_encode($payload['context'], JSON_THROW_ON_ERROR))->not->toContain('/srv/caf');
 });
 
+/**
+ * The file and the frames are compared against the root byte for byte, so
+ * the root and the path after it are trimmed of separators byte for byte too.
+ */
+test('a root holding invalid bytes is taken off the file and the frames, and still finds the vendor directory', function (string $root): void {
+    $exception = new RuntimeException('Import failed');
+    (new ReflectionProperty(Exception::class, 'file'))->setValue($exception, "/srv/caf\xB1/app/Importer\xB1.php");
+    (new ReflectionProperty(Exception::class, 'trace'))->setValue($exception, [
+        ['file' => "/srv/caf\xB1/vendor/acme/Runner.php", 'line' => 4, 'function' => 'run'],
+    ]);
+
+    $payload = framePayload(frameBuilder(frameProject(), ['project_root' => $root]), $exception);
+
+    expect($payload['file'])->toBe("app/Importer\u{FFFD}.php")
+        ->and($payload['frames'][0])->toMatchArray(['file' => 'vendor/acme/Runner.php', 'is_vendor' => true]);
+})->with([
+    'no trailing separator' => ["/srv/caf\xB1"],
+    'a trailing slash' => ["/srv/caf\xB1/"],
+    'a trailing backslash' => ["/srv/caf\xB1\\"],
+]);
+
 test('no field of a view error holds the project root, and the backend still accepts the item', function (): void {
     $root = frameProject();
 
