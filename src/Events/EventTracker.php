@@ -176,7 +176,11 @@ final class EventTracker
                 $this->sensitivePathValues,
             ));
 
-            $item = $item === null ? null : $this->budget->cap(self::BUFFER_TYPE, $item);
+            if ($item === null) {
+                return;
+            }
+
+            $item = $this->budget->cap(self::BUFFER_TYPE, $item);
 
             if ($item === null) {
                 return;
