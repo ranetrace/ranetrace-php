@@ -409,8 +409,8 @@ test('scrubString never splits => into a separator and a redacted value', functi
 });
 
 test('scrubString leaves class constants and static calls on a sensitive name alone', function (string $line): void {
-    // `::` is not a key/value separator. Treating its first colon as one turned
-    // every `PersonalAccessToken::` in a source line into a redaction.
+    // `::` is not a key/value separator, so a sensitive name before it is a
+    // class or a static call, not a key.
     expect(scrubber()->scrubString($line))->toBe($line);
 })->with([
     'class constant' => ['VerifyCsrfToken::class,'],
