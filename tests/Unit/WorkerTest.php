@@ -518,11 +518,19 @@ it('leaves the pauses it finds as they are without an api key', function (): voi
         ->and((string) file_get_contents($harness['directory'].'/pauses.json'))->toBe($before);
 });
 
+/**
+ * A worker harness whose internal log is on at debug level.
+ *
+ * @param  array<string, mixed>  $overrides
+ * @return array{worker: Worker, buffer: ArrayBuffer, pauses: PauseStore, http: FakeHttpClient, config: Config, directory: string}
+ */
+function loggingWorkerHarness(FakeHttpClient $http, array $overrides = []): array
+{
+    return workerHarness($http, array_replace_recursive(['internal_logging' => ['enabled' => true, 'level' => 'debug']], $overrides));
+}
+
 it('logs one warning naming the waiting types when a run has no api key', function (): void {
-    $harness = workerHarness(FakeHttpClient::respondingWith(200), [
-        'key' => '',
-        'internal_logging' => ['enabled' => true, 'level' => 'debug'],
-    ]);
+    $harness = loggingWorkerHarness(FakeHttpClient::respondingWith(200), ['key' => '']);
     seedBuffer($harness['buffer'], 'errors', 2);
     seedBuffer($harness['buffer'], 'logs', 1);
 
@@ -539,10 +547,7 @@ it('logs one warning naming the waiting types when a run has no api key', functi
  * always with an empty buffer, and must not get a log line per request.
  */
 it('logs nothing when a run without an api key finds nothing waiting', function (?string $type): void {
-    $harness = workerHarness(FakeHttpClient::respondingWith(200), [
-        'key' => '',
-        'internal_logging' => ['enabled' => true, 'level' => 'debug'],
-    ]);
+    $harness = loggingWorkerHarness(FakeHttpClient::respondingWith(200), ['key' => '']);
     seedBuffer($harness['buffer'], 'events', 1);
     $harness['buffer']->take('events', 1);
 
@@ -580,14 +585,6 @@ it('never throws when the buffer refuses to take items back', function (): void 
 
     expect($harness['pauses']->featurePause('errors')['reason'])->toBe('500');
 });
-
-/**
- * @return array{worker: Worker, buffer: ArrayBuffer, pauses: PauseStore, http: FakeHttpClient, config: Config, directory: string}
- */
-function loggingWorkerHarness(FakeHttpClient $http): array
-{
-    return workerHarness($http, ['internal_logging' => ['enabled' => true, 'level' => 'debug']]);
-}
 
 it('drops an item it cannot encode from the batch and sends the rest, never measuring it as zero bytes', function (): void {
     $harness = loggingWorkerHarness(FakeHttpClient::respondingWith(200));
@@ -692,10 +689,7 @@ it('sends a heartbeat when the last one is stamped in the future', function (): 
 });
 
 it('sends no heartbeat without an api key', function (string $key): void {
-    $harness = workerHarness(FakeHttpClient::respondingWith(200), [
-        'key' => $key,
-        'internal_logging' => ['enabled' => true, 'level' => 'debug'],
-    ]);
+    $harness = loggingWorkerHarness(FakeHttpClient::respondingWith(200), ['key' => $key]);
 
     $harness['worker']->heartbeat();
 
