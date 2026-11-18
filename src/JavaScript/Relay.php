@@ -122,7 +122,7 @@ final class Relay
 
     /**
      * Declare which URL path segment values hold secrets, so they are redacted
-     * from the reported URL. The Laravel relay resolved these from the router;
+     * from the reported URL. The Laravel relay resolves these from the router;
      * this SDK has no router, so a host that knows (a framework adapter) tells
      * us. Null means query-only URL scrubbing.
      *
@@ -222,7 +222,7 @@ final class Relay
 
     /**
      * Whether the request's origin is trusted. See the class docblock: this is
-     * the replacement for the CSRF token the Laravel relay relied on.
+     * the replacement for the CSRF token the Laravel relay relies on.
      *
      * @param  array<string, mixed>  $server
      */
