@@ -21,8 +21,8 @@ use Throwable;
  * The normalised result always carries the same five keys, including
  * `headers['retry-after']`. That key is `''` (not null) when a real response
  * omitted the header, mirroring the Laravel client and preserving the gotcha the
- * worker has to defend against: `(int) '' === 0`, so a bare cast would produce a
- * zero-second rate-limit pause. The floor lives in `Worker\Worker`.
+ * response policy defends against: `(int) '' === 0`, so a bare cast would
+ * produce a zero-second rate-limit pause. The floor lives in {@see ResponsePolicy}.
  *
  * @phpstan-type ApiResult array{status: int, success: bool, data: array<string, mixed>, headers: array{retry-after: ?string}, error: ?string}
  */
