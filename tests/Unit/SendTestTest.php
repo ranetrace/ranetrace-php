@@ -13,11 +13,12 @@ use Ranetrace\Php\Worker\TestResult;
 
 /**
  * An SDK on a temp spool and a fake transport, with the shutdown flush off so
- * no drain outlives the temp directory.
+ * no drain outlives the temp directory. Without $http the transport accepts
+ * both test items.
  *
  * @param  array<string, mixed>  $overrides
  */
-function sendTestSdk(string $directory, FakeHttpClient $http, array $overrides = []): Ranetrace
+function sendTestSdk(string $directory, ?FakeHttpClient $http = null, array $overrides = []): Ranetrace
 {
     return new Ranetrace(array_replace_recursive([
         'key' => 'test-api-key-12345',
@@ -25,7 +26,7 @@ function sendTestSdk(string $directory, FakeHttpClient $http, array $overrides =
         'environment' => 'testing',
         'flush_on_shutdown' => false,
         'internal_logging' => ['enabled' => false],
-    ], $overrides))->withHttpClient($http);
+    ], $overrides))->withHttpClient($http ?? new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)));
 }
 
 /**
@@ -93,7 +94,7 @@ it('sends one error and one event straight to the api, the way a drain sends the
 it('renders the whole report in the documented layout', function (): void {
     $directory = tempDirectory();
 
-    $output = sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)))
+    $output = sendTestSdk($directory)
         ->sendTest()
         ->render(fromEnvironment: true);
 
@@ -116,7 +117,7 @@ it('renders the whole report in the documented layout', function (): void {
 });
 
 it('names the key by its config key when the host configured it', function (): void {
-    $output = sendTestSdk(tempDirectory(), new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)))
+    $output = sendTestSdk(tempDirectory())
         ->sendTest()
         ->render();
 
@@ -327,7 +328,7 @@ it('lifts a global pause when a 200 shows the key is accepted, and sends while i
 });
 
 it('lifts the type\'s own pause that a 200 disproves', function (string $reason, string $wording): void {
-    $sdk = sendTestSdk(tempDirectory(), new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)));
+    $sdk = sendTestSdk(tempDirectory());
     $sdk->pauses()->pauseFeature('errors', 900, $reason);
 
     $output = $sdk->sendTest()->render();
@@ -341,7 +342,7 @@ it('lifts the type\'s own pause that a 200 disproves', function (string $reason,
 ]);
 
 it('names every pause it lifted, one line each', function (): void {
-    $sdk = sendTestSdk(tempDirectory(), new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)));
+    $sdk = sendTestSdk(tempDirectory());
     $sdk->pauses()->pauseGlobal(900, '401');
     $sdk->pauses()->pauseFeature('errors', 900, 'network');
 
@@ -353,7 +354,7 @@ it('names every pause it lifted, one line each', function (): void {
 });
 
 it('keeps a pause one accepted item says nothing about', function (string $reason): void {
-    $sdk = sendTestSdk(tempDirectory(), new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)));
+    $sdk = sendTestSdk(tempDirectory());
     $sdk->pauses()->pauseFeature('errors', 900, $reason);
 
     $output = $sdk->sendTest()->render();
@@ -364,7 +365,7 @@ it('keeps a pause one accepted item says nothing about', function (string $reaso
 })->with(['429', '413', '422']);
 
 it('only reports a pause on a type the test does not send', function (): void {
-    $sdk = sendTestSdk(tempDirectory(), new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)));
+    $sdk = sendTestSdk(tempDirectory());
     $sdk->pauses()->pauseFeature('logs', 40, 'network');
 
     $output = $sdk->sendTest()->render();
@@ -407,7 +408,7 @@ it('lifts nothing when no 200 came back', function (RawResponse $response): void
 
 it('does not claim a pause was lifted when clearing it could not take the lock', function (): void {
     $directory = tempDirectory();
-    $sdk = sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)), ['batch' => ['lock_wait' => 0]]);
+    $sdk = sendTestSdk($directory, overrides: ['batch' => ['lock_wait' => 0]]);
     $sdk->pauses()->pauseGlobal(900, '401');
 
     $lock = new FileLock($directory.'/pauses.lock', 0);
@@ -425,7 +426,7 @@ it('does not claim a pause was lifted when clearing it could not take the lock',
 });
 
 it('counts the items waiting, per type that holds any', function (): void {
-    $sdk = sendTestSdk(tempDirectory(), new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)));
+    $sdk = sendTestSdk(tempDirectory());
 
     foreach (['one', 'two', 'three'] as $message) {
         $sdk->buffer()->addItem('errors', ['message' => $message]);
@@ -440,7 +441,7 @@ it('says how long the oldest item has waited, and that nothing drained it when n
     $directory = tempDirectory();
     spoolItem($directory, 'logs', 'old', 15 * 60 + 5);
 
-    $output = sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)))->sendTest()->render();
+    $output = sendTestSdk($directory)->sendTest()->render();
 
     expect($output)->toContain(
         "  Waiting  1 log record\n"
@@ -451,7 +452,7 @@ it('says how long the oldest item has waited, and that nothing drained it when n
 it('does not blame the cron line for a wait while a pause is active', function (): void {
     $directory = tempDirectory();
     spoolItem($directory, 'logs', 'old', 15 * 60 + 5);
-    $sdk = sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)));
+    $sdk = sendTestSdk($directory);
     $sdk->pauses()->pauseFeature('logs', 900, '429');
 
     $output = $sdk->sendTest()->render();
@@ -464,7 +465,7 @@ it('says nothing about a wait under 10 minutes', function (): void {
     $directory = tempDirectory();
     spoolItem($directory, 'errors', 'old', 9 * 60);
 
-    $output = sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)))->sendTest()->render();
+    $output = sendTestSdk($directory)->sendTest()->render();
 
     expect($output)->toContain("  Waiting  1 error\n  Pauses   none\n")
         ->not->toContain('The oldest');
@@ -472,7 +473,7 @@ it('says nothing about a wait under 10 minutes', function (): void {
 
 it('says when this user cannot use the buffer, without changing the exit state', function (): void {
     $directory = tempDirectory();
-    $report = withForeignLockFile($directory, fn (): TestReport => sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)))->sendTest());
+    $report = withForeignLockFile($directory, fn (): TestReport => sendTestSdk($directory)->sendTest());
 
     expect($report->accepted())->toBeTrue()
         ->and($report->render())
