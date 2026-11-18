@@ -7,37 +7,6 @@ declare(strict_types=1);
  * bootstrap itself from the environment. Every run points at an unroutable base
  * URL, so the sends fail at connect time and nothing reaches a real host.
  *
- * The helpers are named for this file: Pest loads every test file into one
- * process, and `RanetraceFlushBinaryTest` has helpers of its own.
- *
- * @param  array<int, string>  $arguments
- * @param  array<string, string>  $environment
- * @return array{status: int, stdout: string, stderr: string}
- */
-function runTestBinary(array $arguments, array $environment): array
-{
-    $process = proc_open(
-        array_merge([PHP_BINARY, 'bin/ranetrace-test'], $arguments),
-        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-        $pipes,
-        dirname(__DIR__, 2),
-        array_merge(getenv(), $environment),
-    );
-
-    if (! is_resource($process)) {
-        return ['status' => 1, 'stdout' => '', 'stderr' => 'could not start subprocess'];
-    }
-
-    $stdout = (string) stream_get_contents($pipes[1]);
-    $stderr = (string) stream_get_contents($pipes[2]);
-
-    fclose($pipes[1]);
-    fclose($pipes[2]);
-
-    return ['status' => proc_close($process), 'stdout' => $stdout, 'stderr' => $stderr];
-}
-
-/**
  * @return array<string, string>
  */
 function testBinaryEnvironment(string $directory): array
@@ -59,7 +28,7 @@ it('exits 1 and names the base url it could not reach, leaving the spool and the
     ]);
     file_put_contents($directory.'/errors.json', $spooled);
 
-    $result = runTestBinary([], testBinaryEnvironment($directory));
+    $result = runPhp(['bin/ranetrace-test'], testBinaryEnvironment($directory));
 
     expect($result['status'])->toBe(1)
         ->and($result['stderr'])->toBe('')
@@ -76,14 +45,14 @@ it('exits 1 and names the base url it could not reach, leaving the spool and the
 });
 
 it('prints usage on help', function (string $flag): void {
-    $result = runTestBinary([$flag], testBinaryEnvironment(tempDirectory()));
+    $result = runPhp(['bin/ranetrace-test', $flag], testBinaryEnvironment(tempDirectory()));
 
     expect($result['status'])->toBe(0)
         ->and($result['stdout'])->toBe("Usage: ranetrace-test\n");
 })->with(['--help', '-h']);
 
 it('rejects an unknown argument', function (): void {
-    $result = runTestBinary(['--json'], testBinaryEnvironment(tempDirectory()));
+    $result = runPhp(['bin/ranetrace-test', '--json'], testBinaryEnvironment(tempDirectory()));
 
     expect($result['status'])->toBe(1)
         ->and($result['stdout'])->toBe('')
@@ -93,7 +62,7 @@ it('rejects an unknown argument', function (): void {
 it('says the key is missing from its environment and sends nothing', function (): void {
     $directory = tempDirectory();
 
-    $result = runTestBinary([], array_merge(testBinaryEnvironment($directory), ['RANETRACE_KEY' => '']));
+    $result = runPhp(['bin/ranetrace-test'], array_merge(testBinaryEnvironment($directory), ['RANETRACE_KEY' => '']));
 
     expect($result['status'])->toBe(1)
         ->and($result['stderr'])->toBe('')

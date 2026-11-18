@@ -254,3 +254,78 @@ function deepRecursionException(string $root, int $depth, string $padding = ''):
 
     throw new LogicException('The recursion did not throw.');
 }
+
+/**
+ * Run a PHP script of this package in a subprocess, from the package root.
+ * The subprocess sees this process's environment with $environment over it.
+ *
+ * @param  array<int, string>  $arguments  The script's path, then its arguments.
+ * @param  array<string, string>  $environment
+ * @return array{status: int, stdout: string, stderr: string}
+ */
+function runPhp(array $arguments, array $environment = []): array
+{
+    $process = proc_open(
+        array_merge([PHP_BINARY], $arguments),
+        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+        dirname(__DIR__),
+        array_merge(getenv(), $environment),
+    );
+
+    if (! is_resource($process)) {
+        return ['status' => 1, 'stdout' => '', 'stderr' => 'could not start subprocess'];
+    }
+
+    $stdout = (string) stream_get_contents($pipes[1]);
+    $stderr = (string) stream_get_contents($pipes[2]);
+
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+
+    return ['status' => proc_close($process), 'stdout' => $stdout, 'stderr' => $stderr];
+}
+
+/**
+ * Run $run against `tests/Doubles/fake-api.php` on PHP's built-in server, and
+ * return what it returned beside every request the server received.
+ *
+ * @param  callable(array<string, string>): mixed  $run  Given the environment that points a subprocess at the server.
+ * @param  array<string, string>  $serverEnvironment
+ * @return array{result: mixed, requests: list<array{path: string, user_agent: string, body: string}>}
+ */
+function againstFakeApi(callable $run, array $serverEnvironment = []): array
+{
+    $probe = stream_socket_server('tcp://127.0.0.1:0');
+    $port = (int) mb_substr((string) mb_strrchr((string) stream_socket_get_name($probe, false), ':'), 1);
+    fclose($probe);
+
+    $record = tempDirectory().'/requests.jsonl';
+
+    $server = proc_open(
+        [PHP_BINARY, '-S', "127.0.0.1:{$port}", 'tests/Doubles/fake-api.php'],
+        [1 => ['file', '/dev/null', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+        dirname(__DIR__),
+        array_merge(getenv(), ['FAKE_API_RECORD' => $record], $serverEnvironment),
+    );
+
+    try {
+        // The built-in server writes one line to stderr once it listens.
+        fgets($pipes[2]);
+
+        $result = $run(['RANETRACE_BASE_URL' => "http://127.0.0.1:{$port}/v1"]);
+    } finally {
+        if (is_resource($server)) {
+            proc_terminate($server);
+            proc_close($server);
+        }
+    }
+
+    $lines = is_file($record) ? array_filter(explode("\n", (string) file_get_contents($record))) : [];
+
+    return [
+        'result' => $result,
+        'requests' => array_values(array_map(static fn (string $line): array => json_decode($line, true), $lines)),
+    ];
+}

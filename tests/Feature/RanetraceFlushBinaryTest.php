@@ -12,34 +12,6 @@ declare(strict_types=1);
  * connect time. That failure is the assertion: a network error is logged and the
  * feature is paused, which is only possible if a drain actually ran.
  *
- * @param  array<int, string>  $command
- * @param  array<string, string>  $environment
- * @return array{status: int, stdout: string, stderr: string}
- */
-function runFlushSubprocess(array $command, array $environment): array
-{
-    $process = proc_open(
-        array_merge([PHP_BINARY], $command),
-        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-        $pipes,
-        dirname(__DIR__, 2),
-        array_merge(getenv(), $environment),
-    );
-
-    if (! is_resource($process)) {
-        return ['status' => 1, 'stdout' => '', 'stderr' => 'could not start subprocess'];
-    }
-
-    $stdout = (string) stream_get_contents($pipes[1]);
-    $stderr = (string) stream_get_contents($pipes[2]);
-
-    fclose($pipes[1]);
-    fclose($pipes[2]);
-
-    return ['status' => proc_close($process), 'stdout' => $stdout, 'stderr' => $stderr];
-}
-
-/**
  * @return array<string, string>
  */
 function flushEnvironment(string $directory): array
@@ -66,7 +38,7 @@ it('drains the buffer from the command line', function (): void {
     $directory = tempDirectory();
     seedSpool($directory);
 
-    $result = runFlushSubprocess(['bin/ranetrace-flush'], flushEnvironment($directory));
+    $result = runPhp(['bin/ranetrace-flush'], flushEnvironment($directory));
 
     expect($result['status'])->toBe(0)
         ->and($result['stderr'])->toBe('')
@@ -78,7 +50,7 @@ it('drains only the type it is given', function (): void {
     $directory = tempDirectory();
     seedSpool($directory);
 
-    $result = runFlushSubprocess(['bin/ranetrace-flush', '--type=events'], flushEnvironment($directory));
+    $result = runPhp(['bin/ranetrace-flush', '--type=events'], flushEnvironment($directory));
 
     // Events are empty, so nothing is sent and the spooled error is untouched.
     expect($result['status'])->toBe(0)
@@ -88,21 +60,21 @@ it('drains only the type it is given', function (): void {
 });
 
 it('rejects an unknown type', function (): void {
-    $result = runFlushSubprocess(['bin/ranetrace-flush', '--type=page_visits'], flushEnvironment(tempDirectory()));
+    $result = runPhp(['bin/ranetrace-flush', '--type=page_visits'], flushEnvironment(tempDirectory()));
 
     expect($result['status'])->toBe(1)
         ->and($result['stderr'])->toContain('unknown type [page_visits]');
 });
 
 it('rejects an unknown argument', function (): void {
-    $result = runFlushSubprocess(['bin/ranetrace-flush', '--wat'], flushEnvironment(tempDirectory()));
+    $result = runPhp(['bin/ranetrace-flush', '--wat'], flushEnvironment(tempDirectory()));
 
     expect($result['status'])->toBe(1)
         ->and($result['stderr'])->toContain('unknown argument [--wat]');
 });
 
 it('prints usage on help', function (): void {
-    $result = runFlushSubprocess(['bin/ranetrace-flush', '--help'], flushEnvironment(tempDirectory()));
+    $result = runPhp(['bin/ranetrace-flush', '--help'], flushEnvironment(tempDirectory()));
 
     expect($result['status'])->toBe(0)
         ->and($result['stdout'])->toContain('Usage: ranetrace-flush');
@@ -117,7 +89,7 @@ it('exits 1 and names the directory when the buffer belongs to another user', fu
     chmod($directory, 0550);
 
     try {
-        $result = runFlushSubprocess(['bin/ranetrace-flush'], flushEnvironment($directory));
+        $result = runPhp(['bin/ranetrace-flush'], flushEnvironment($directory));
         $after = (string) file_get_contents($directory.'/errors.json');
     } finally {
         chmod($directory, 0700);
@@ -140,7 +112,7 @@ it('exits 1 when only a lock file belongs to another user', function (): void {
     chmod($directory.'/errors.lock', 0444);
 
     try {
-        $result = runFlushSubprocess(['bin/ranetrace-flush'], flushEnvironment($directory));
+        $result = runPhp(['bin/ranetrace-flush'], flushEnvironment($directory));
     } finally {
         chmod($directory.'/errors.lock', 0600);
     }
@@ -155,7 +127,7 @@ it('drains on shutdown by default', function (): void {
     $directory = tempDirectory();
     seedSpool($directory);
 
-    $result = runFlushSubprocess(
+    $result = runPhp(
         ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
         flushEnvironment($directory),
     );
@@ -168,7 +140,7 @@ it('leaves the buffer alone on shutdown when the flush is disabled', function ()
     $directory = tempDirectory();
     seedSpool($directory);
 
-    $result = runFlushSubprocess(
+    $result = runPhp(
         ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
         array_merge(flushEnvironment($directory), ['RANETRACE_FLUSH_ON_SHUTDOWN' => 'false']),
     );
@@ -202,7 +174,7 @@ it('exits 1 with one line and leaves the spool and the pauses alone when items w
     seedSpool($directory);
     $before = (string) file_get_contents($directory.'/errors.json');
 
-    $result = runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_KEY' => $key]));
+    $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_KEY' => $key]));
 
     expect($result['status'])->toBe(1)
         ->and($result['stderr'])->toBe(missingKeyLine())
@@ -218,7 +190,7 @@ it('exits 1 with one line and leaves the spool and the pauses alone when items w
 ]);
 
 it('says the key is missing when the master switch is on and nothing waits', function (): void {
-    $result = runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment(tempDirectory()));
+    $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment(tempDirectory()));
 
     expect($result['status'])->toBe(1)
         ->and($result['stderr'])->toBe(missingKeyLine());
@@ -227,7 +199,7 @@ it('says the key is missing when the master switch is on and nothing waits', fun
 it('stays quiet without a key when the site is switched off and nothing waits', function (): void {
     $directory = tempDirectory();
 
-    $result = runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_ENABLED' => 'false']));
+    $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_ENABLED' => 'false']));
 
     expect($result['status'])->toBe(0)
         ->and($result['stderr'])->toBe('')
@@ -238,7 +210,7 @@ it('says the key is missing when the site is switched off but items wait', funct
     $directory = tempDirectory();
     seedSpool($directory);
 
-    $result = runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_ENABLED' => 'false']));
+    $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory, ['RANETRACE_ENABLED' => 'false']));
 
     expect($result['status'])->toBe(1)
         ->and($result['stderr'])->toBe(missingKeyLine())
@@ -249,7 +221,7 @@ it('says the key is missing when items of another type than the one named wait',
     $directory = tempDirectory();
     seedSpool($directory);
 
-    $result = runFlushSubprocess(
+    $result = runPhp(
         ['bin/ranetrace-flush', '--type=events'],
         keylessFlushEnvironment($directory, ['RANETRACE_ENABLED' => 'false']),
     );
@@ -262,8 +234,8 @@ it('sends at once on a keyed flush after a keyless one', function (): void {
     $directory = tempDirectory();
     seedSpool($directory);
 
-    runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment($directory));
-    $result = runFlushSubprocess(['bin/ranetrace-flush'], flushEnvironment($directory));
+    runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory));
+    $result = runPhp(['bin/ranetrace-flush'], flushEnvironment($directory));
 
     expect($result['status'])->toBe(0)
         ->and($result['stderr'])->toBe('')
@@ -275,7 +247,7 @@ it('leaves the spool and the pauses alone on a shutdown flush without a key', fu
     seedSpool($directory);
     $before = (string) file_get_contents($directory.'/errors.json');
 
-    $result = runFlushSubprocess(
+    $result = runPhp(
         ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
         keylessFlushEnvironment($directory),
     );
@@ -294,7 +266,7 @@ it('names the missing key before the buffer it cannot use', function (): void {
     chmod($directory.'/errors.lock', 0444);
 
     try {
-        $result = runFlushSubprocess(['bin/ranetrace-flush'], keylessFlushEnvironment($directory));
+        $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory));
     } finally {
         chmod($directory.'/errors.lock', 0600);
     }
@@ -307,56 +279,12 @@ it('names the missing key before the buffer it cannot use', function (): void {
         ->and($lines[1])->toStartWith("ranetrace-flush: cannot write to the buffer in [{$directory}]");
 })->skip(runsAsRoot(...), 'root ignores file modes');
 
-/**
- * Run $run against `tests/Doubles/fake-api.php` on PHP's built-in server, and
- * return what it returned beside every request the server received.
- *
- * @param  callable(array<string, string>): mixed  $run  Given the environment that points a subprocess at the server.
- * @param  array<string, string>  $serverEnvironment
- * @return array{result: mixed, requests: list<array{path: string, user_agent: string, body: string}>}
- */
-function flushAgainstFakeApi(callable $run, array $serverEnvironment = []): array
-{
-    $probe = stream_socket_server('tcp://127.0.0.1:0');
-    $port = (int) mb_substr((string) mb_strrchr((string) stream_socket_get_name($probe, false), ':'), 1);
-    fclose($probe);
-
-    $record = tempDirectory().'/requests.jsonl';
-
-    $server = proc_open(
-        [PHP_BINARY, '-S', "127.0.0.1:{$port}", 'tests/Doubles/fake-api.php'],
-        [1 => ['file', '/dev/null', 'w'], 2 => ['pipe', 'w']],
-        $pipes,
-        dirname(__DIR__, 2),
-        array_merge(getenv(), ['FAKE_API_RECORD' => $record], $serverEnvironment),
-    );
-
-    try {
-        // The built-in server writes one line to stderr once it listens.
-        fgets($pipes[2]);
-
-        $result = $run(['RANETRACE_BASE_URL' => "http://127.0.0.1:{$port}/v1"]);
-    } finally {
-        if (is_resource($server)) {
-            proc_terminate($server);
-            proc_close($server);
-        }
-    }
-
-    $lines = is_file($record) ? array_filter(explode("\n", (string) file_get_contents($record))) : [];
-
-    return [
-        'result' => $result,
-        'requests' => array_values(array_map(static fn (string $line): array => json_decode($line, true), $lines)),
-    ];
-}
-
 it('sends one heartbeat from the cron flush with an empty buffer, and none on a second run within five minutes', function (): void {
     $directory = tempDirectory();
 
-    $run = flushAgainstFakeApi(static fn (array $api): array => [
-        runFlushSubprocess(['bin/ranetrace-flush'], array_merge(flushEnvironment($directory), $api)),
-        runFlushSubprocess(['bin/ranetrace-flush'], array_merge(flushEnvironment($directory), $api)),
+    $run = againstFakeApi(static fn (array $api): array => [
+        runPhp(['bin/ranetrace-flush'], array_merge(flushEnvironment($directory), $api)),
+        runPhp(['bin/ranetrace-flush'], array_merge(flushEnvironment($directory), $api)),
     ]);
 
     expect($run['requests'])->toBe([[
@@ -373,7 +301,7 @@ it('sends the heartbeat after the drain', function (): void {
     $directory = tempDirectory();
     seedSpool($directory);
 
-    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+    $run = againstFakeApi(static fn (array $api): array => runPhp(
         ['bin/ranetrace-flush'],
         array_merge(flushEnvironment($directory), $api),
     ));
@@ -385,7 +313,7 @@ it('sends the heartbeat after the drain', function (): void {
 it('sends a heartbeat on a run that drains one named type', function (): void {
     $directory = tempDirectory();
 
-    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+    $run = againstFakeApi(static fn (array $api): array => runPhp(
         ['bin/ranetrace-flush', '--type=events'],
         array_merge(flushEnvironment($directory), $api),
     ));
@@ -404,7 +332,7 @@ it('never sends a heartbeat from the shutdown flush', function (bool $spooled, a
         seedSpool($directory);
     }
 
-    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+    $run = againstFakeApi(static fn (array $api): array => runPhp(
         ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
         array_merge(flushEnvironment($directory), $api),
     ));
@@ -419,7 +347,7 @@ it('never sends a heartbeat from the shutdown flush', function (bool $spooled, a
 it('sends no heartbeat without a key', function (): void {
     $directory = tempDirectory();
 
-    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+    $run = againstFakeApi(static fn (array $api): array => runPhp(
         ['bin/ranetrace-flush'],
         array_merge(keylessFlushEnvironment($directory), $api),
     ));
@@ -432,7 +360,7 @@ it('sends no heartbeat without a key', function (): void {
 it('sends no heartbeat while the master switch is off', function (): void {
     $directory = tempDirectory();
 
-    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+    $run = againstFakeApi(static fn (array $api): array => runPhp(
         ['bin/ranetrace-flush'],
         array_merge(flushEnvironment($directory), $api, ['RANETRACE_ENABLED' => 'false']),
     ));
@@ -448,7 +376,7 @@ it('sends no heartbeat while everything is paused', function (): void {
         'features' => [],
     ]));
 
-    $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+    $run = againstFakeApi(static fn (array $api): array => runPhp(
         ['bin/ranetrace-flush'],
         array_merge(flushEnvironment($directory), $api),
     ));
@@ -463,8 +391,8 @@ it('keeps the exit code, the spool and the pauses when the heartbeat is answered
     $before = (string) file_get_contents($directory.'/errors.json');
 
     // Only events are drained, so the spooled error is still there to compare.
-    $run = flushAgainstFakeApi(
-        static fn (array $api): array => runFlushSubprocess(
+    $run = againstFakeApi(
+        static fn (array $api): array => runPhp(
             ['bin/ranetrace-flush', '--type=events'],
             array_merge(flushEnvironment($directory), $api),
         ),
@@ -484,7 +412,7 @@ it('keeps the exit code, the spool and the pauses when the heartbeat is answered
 it('keeps the exit code and sets no pause when the heartbeat cannot reach the api', function (): void {
     $directory = tempDirectory();
 
-    $result = runFlushSubprocess(['bin/ranetrace-flush'], flushEnvironment($directory));
+    $result = runPhp(['bin/ranetrace-flush'], flushEnvironment($directory));
 
     $log = internalLogContents($directory);
 
@@ -506,7 +434,7 @@ it('sends no heartbeat when it cannot use the buffer', function (): void {
     chmod($directory.'/errors.lock', 0444);
 
     try {
-        $run = flushAgainstFakeApi(static fn (array $api): array => runFlushSubprocess(
+        $run = againstFakeApi(static fn (array $api): array => runPhp(
             ['bin/ranetrace-flush'],
             array_merge(flushEnvironment($directory), $api),
         ));
