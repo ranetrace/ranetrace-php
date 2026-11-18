@@ -78,10 +78,16 @@ function deleteTempDirectory(string $directory): void
 
     $entries = glob($directory.'/*') ?: [];
 
-    // A symlink is removed as itself: following one into a directory would
-    // empty its target and then fail to rmdir the link.
     foreach ($entries as $entry) {
-        is_dir($entry) && ! is_link($entry) ? deleteTempDirectory($entry) : @unlink($entry);
+        // A symlink is removed as itself: following one into a directory would
+        // empty its target and then fail to rmdir the link.
+        if (is_dir($entry) && ! is_link($entry)) {
+            deleteTempDirectory($entry);
+
+            continue;
+        }
+
+        @unlink($entry);
     }
 
     @rmdir($directory);
