@@ -167,11 +167,19 @@ it('sends a heartbeat through the injected transport when asked', function (): v
         ->and($http->requests[0]['url'])->toBe('https://api.ranetrace.com/v1/heartbeat');
 });
 
+/**
+ * The worker contains every failure of its own heartbeat, a throwing
+ * transport included, so only a worker that cannot be built reaches the
+ * facade's catch. A facade made without its constructor has no
+ * configuration, and building its worker throws an Error.
+ *
+ * Exception and Error are named apart because Pest reads a name that is not
+ * a class, such as the Throwable interface, as a message to look for.
+ */
 it('never lets a heartbeat throw', function (): void {
-    $http = FakeHttpClient::throwing();
-    $ranetrace = ranetraceFacade(tempDirectory())->withHttpClient($http);
+    $ranetrace = (new ReflectionClass(Ranetrace::class))->newInstanceWithoutConstructor();
 
-    $ranetrace->heartbeat();
-
-    expect($ranetrace->pauses()->isGloballyPaused())->toBeFalse();
+    expect(fn () => $ranetrace->heartbeat())
+        ->not->toThrow(Exception::class)
+        ->not->toThrow(Error::class);
 });
