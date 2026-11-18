@@ -35,8 +35,9 @@ final class WireContract
      * The item types the contract describes and this package does not send.
      * A page visit is sent by `ranetrace/ranetrace-laravel` only. Its fixture
      * lives here so that SDK and the backend test against one description of
-     * it, and it stays out of {@see ITEM_TYPES} because the buffer, the worker
-     * and the endpoint table of this package are built from that list.
+     * it, and it stays out of {@see ITEM_TYPES} because the buffers and the
+     * endpoint table of this package hold exactly those types. Each keeps its
+     * own list, and the contract suite holds them equal to this one.
      *
      * @var list<string>
      */
