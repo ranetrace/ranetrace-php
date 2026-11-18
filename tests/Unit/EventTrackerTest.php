@@ -595,7 +595,6 @@ test('an event over the endpoint limits reaches the buffer cut, and the general 
     $log = internalLogContents($directory);
 
     expect(array_keys($event))->toBe(EVENT_KEYS)
-        ->and($event)->not->toHaveKey('_truncated')
         ->and($event['properties'])->toBe([
             'note' => str_repeat('p', 485).'... (truncated)',
             'cart' => ['_truncated' => EventLimits::PROPERTY_REPLACED_REASON],
