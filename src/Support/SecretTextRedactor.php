@@ -264,24 +264,24 @@ final class SecretTextRedactor
      * the parts after it.
      */
     private const string PREFIXED_TOKEN = '~(?:(?<![\w$.\-])|(?<=%[0-9A-Fa-f]{2})(?<!%5[Ff]|%2[DdEe]))(?:'
-        .'[sr]k(?:_|%5[Ff])live(?:_|%5[Ff])[A-Za-z0-9]{6,}+'
+        .'[sr]k'.self::UNDERSCORE.'live'.self::UNDERSCORE.'[A-Za-z0-9]{6,}+'
         .'|A[KS]IA[A-Z0-9]{16}'
-        .'|gh[oprsu](?:_|%5[Ff])[A-Za-z0-9]{20,}+'
-        .'|github(?:_|%5[Ff])pat(?:_|%5[Ff])(?:\w|%5[Ff]){20,}+'
+        .'|gh[oprsu]'.self::UNDERSCORE.'[A-Za-z0-9]{20,}+'
+        .'|github'.self::UNDERSCORE.'pat'.self::UNDERSCORE.'(?:\w|%5[Ff]){20,}+'
         .'|'.self::SLACK_PREFIX.'(?:[A-Za-z0-9\-]|%2[Dd]){10,}+'
-        .'|'.self::GITLAB_PREFIX.'(?:[\w\-]|%5[Ff]|%2[Dd]){20,}+'.self::GITLAB_ROUTABLE_TAIL
-        .'|eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])(?:[\w\-]|%5[Ff]|%2[Dd])*+'
+        .'|'.self::GITLAB_PREFIX.self::TOKEN_CHARACTER.'{20,}+'.self::GITLAB_ROUTABLE_TAIL
+        .'|eyJ'.self::TOKEN_CHARACTER.'++'.self::JWT_AFTER_HEAD
         .')(?![\w$])'
-        .'|(?:[sr]k(?:_|%5[Ff])live|whsec)(?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
-        .'|sk(?:_|%5[Ff])org(?:_|%5[Ff])(?:live(?:_|%5[Ff]))?+[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|(?:[sr]k'.self::UNDERSCORE.'live|whsec)'.self::UNDERSCORE.'[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|sk'.self::UNDERSCORE.'org'.self::UNDERSCORE.'(?:live'.self::UNDERSCORE.')?+[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
         .'|'.self::GITHUB_INSTALLATION_JWT
-        .'|gh[oprsu](?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
-        .'|github(?:_|%5[Ff])pat(?:_|%5[Ff])[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+(?:(?:_|%5[Ff])[A-Za-z0-9]++)*+'
+        .'|gh[oprsu]'.self::UNDERSCORE.'[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'|github'.self::UNDERSCORE.'pat'.self::UNDERSCORE.'[A-Za-z0-9]{'.self::MIN_GLUED_TOKEN_BODY.',}+(?:'.self::UNDERSCORE.'[A-Za-z0-9]++)*+'
         .'|'.self::SLACK_PREFIX.'(?:[A-Za-z0-9\-]|%2[Dd]){'.self::MIN_GLUED_TOKEN_BODY.',}+'
-        .'|'.self::GITLAB_PREFIX.'(?:[\w\-]|%5[Ff]|%2[Dd]){'.self::MIN_GLUED_TOKEN_BODY.',}+'.self::GITLAB_ROUTABLE_TAIL
+        .'|'.self::GITLAB_PREFIX.self::TOKEN_CHARACTER.'{'.self::MIN_GLUED_TOKEN_BODY.',}+'.self::GITLAB_ROUTABLE_TAIL
         .'|(?:(?<![A-Za-z0-9$])|(?<=%5[Ff])|(?<=%2[DdEe])|(?<=\\\\[nrt])|(?<=\\\\u[0-9A-Fa-f]{4}))(?:'
         .'A[KS]IA[A-Z0-9]{16}(?![A-Za-z0-9])'
-        .'|eyJ(?:[\w\-]|%5[Ff]|%2[Dd]){1,'.self::MAX_GLUED_JWT_HEAD.'}+(?:\.|%2[Ee])eyJ(?:[\w\-]|%5[Ff]|%2[Dd])++(?:\.|%2[Ee])(?:[\w\-]|%5[Ff]|%2[Dd])*+'
+        .'|eyJ'.self::TOKEN_CHARACTER.'{1,'.self::MAX_GLUED_JWT_HEAD.'}+'.self::JWT_AFTER_HEAD
         .')~';
 
     /**
@@ -290,6 +290,28 @@ final class SecretTextRedactor
      * 20 or more, a legacy Stripe key 24, and every other shape more.
      */
     private const int MIN_GLUED_TOKEN_BODY = 20;
+
+    /** A `_` in {@see PREFIXED_TOKEN}, also read percent-encoded as `%5F`. */
+    private const string UNDERSCORE = '(?:_|%5[Ff])';
+
+    /** A `.` in {@see PREFIXED_TOKEN}, also read percent-encoded as `%2E`. */
+    private const string DOT = '(?:\.|%2[Ee])';
+
+    /** A `-` in {@see PREFIXED_TOKEN}, also read percent-encoded as `%2D`. */
+    private const string HYPHEN = '(?:-|%2[Dd])';
+
+    /**
+     * One character of a token body in {@see PREFIXED_TOKEN}: a word
+     * character or a `-`, with the `_` and `-` also read percent-encoded.
+     */
+    private const string TOKEN_CHARACTER = '(?:[\w\-]|%5[Ff]|%2[Dd])';
+
+    /**
+     * What follows the first part of a JWT in {@see PREFIXED_TOKEN}: a `.`,
+     * the second part, which starts with `eyJ`, then a `.` and the signature,
+     * which is empty when the token is unsigned.
+     */
+    private const string JWT_AFTER_HEAD = self::DOT.'eyJ'.self::TOKEN_CHARACTER.'++'.self::DOT.self::TOKEN_CHARACTER.'*+';
 
     /**
      * What a Slack token starts with in {@see PREFIXED_TOKEN}, up to the `-`
@@ -302,8 +324,8 @@ final class SecretTextRedactor
      * can start or end an identifier, as in `xapp-settings-panel` and
      * `linuxapp-1-westeurope`.
      */
-    private const string SLACK_PREFIX = '(?:xoxe(?:\.|%2[Ee]))?+'
-        .'(?:xox[abepr]|xapp(?:-|%2[Dd])(?:\d++(?:-|%2[Dd]))?+A[A-Z0-9]++)(?:-|%2[Dd])';
+    private const string SLACK_PREFIX = '(?:xoxe'.self::DOT.')?+'
+        .'(?:xox[abepr]|xapp'.self::HYPHEN.'(?:\d++'.self::HYPHEN.')?+A[A-Z0-9]++)'.self::HYPHEN;
 
     /**
      * What a GitLab token starts with in {@see PREFIXED_TOKEN}: every prefix
@@ -314,7 +336,7 @@ final class SecretTextRedactor
      * (`glagent-`), workspace (`glwt-`), SCIM (`glsoat-`) and feature flags
      * client (`glffct-`) tokens.
      */
-    private const string GITLAB_PREFIX = 'gl(?:pat|oas|dt|rtr?+|cbt|ptt|ft|imt|agent|wt|soat|ffct)(?:-|%2[Dd])';
+    private const string GITLAB_PREFIX = 'gl(?:pat|oas|dt|rtr?+|cbt|ptt|ft|imt|agent|wt|soat|ffct)'.self::HYPHEN;
 
     /**
      * What a routable GitLab token ends in after its body, which the body's
@@ -323,7 +345,7 @@ final class SecretTextRedactor
      * together, each part behind a `.`. Read this exactly, so that the
      * `.json` of `glpat-….json` and the full stop of a sentence stay.
      */
-    private const string GITLAB_ROUTABLE_TAIL = '(?:(?:(?:\.|%2[Ee])[0-9a-z]{2}(?=\.|%2[Ee]))?+(?:\.|%2[Ee])[0-9a-z]{9}(?![A-Za-z0-9]))?+';
+    private const string GITLAB_ROUTABLE_TAIL = '(?:(?:'.self::DOT.'[0-9a-z]{2}(?=\.|%2[Ee]))?+'.self::DOT.'[0-9a-z]{9}(?![A-Za-z0-9]))?+';
 
     /**
      * A GitHub App installation token in the format GitHub issues since
@@ -334,8 +356,8 @@ final class SecretTextRedactor
      * the parts after it are taken with it. Each part is asked to hold a
      * character, so the full stop that ends a sentence stays.
      */
-    private const string GITHUB_INSTALLATION_JWT = 'ghs(?:_|%5[Ff])\d++(?:_|%5[Ff])(?:[\w\-]|%5[Ff]|%2[Dd]){'.self::MIN_GLUED_TOKEN_BODY.',}+'
-        .'(?:(?:\.|%2[Ee])(?:[\w\-]|%5[Ff]|%2[Dd])++)*+';
+    private const string GITHUB_INSTALLATION_JWT = 'ghs'.self::UNDERSCORE.'\d++'.self::UNDERSCORE.self::TOKEN_CHARACTER.'{'.self::MIN_GLUED_TOKEN_BODY.',}+'
+        .'(?:'.self::DOT.self::TOKEN_CHARACTER.'++)*+';
 
     /**
      * The longest first part of a JWT that is read glued to the text before
