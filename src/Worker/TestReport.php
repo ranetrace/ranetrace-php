@@ -138,7 +138,7 @@ final readonly class TestReport
         return $minutes === 1 ? '1 more minute' : "{$minutes} more minutes";
     }
 
-    private static function count(string $type, int $count): string
+    private static function countPhrase(string $type, int $count): string
     {
         [$one, $many] = match ($type) {
             'errors' => ['error', 'errors'],
@@ -222,7 +222,7 @@ final readonly class TestReport
         $parts = [];
 
         foreach ($this->waiting as $type => $count) {
-            $parts[] = self::count($type, $count);
+            $parts[] = self::countPhrase($type, $count);
         }
 
         return implode(', ', $parts);
