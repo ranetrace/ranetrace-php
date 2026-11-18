@@ -634,8 +634,8 @@ test('a sale with a products list too large for the endpoint arrives with its or
 });
 
 /**
- * The events endpoint takes a `url` of at most 2,000 characters and refuses
- * the event otherwise, so a longer one is cut, as an error's is.
+ * The event a web request to $requestUri on shop.test buffers, or an empty
+ * array when none was buffered.
  *
  * @return array<string, mixed>
  */
@@ -643,12 +643,16 @@ function eventTrackedAt(string $requestUri): array
 {
     $buffer = new ArrayBuffer;
     $tracker = eventTracker($buffer);
-    $tracker->setServerContext(['HTTP_HOST' => 'shop.test', 'REQUEST_URI' => $requestUri], false);
+    $tracker->setServerContext(['HTTP_HOST' => 'shop.test', 'REQUEST_URI' => $requestUri], console: false);
     $tracker->track('search_performed');
 
     return $buffer->payloads('events')[0] ?? [];
 }
 
+/**
+ * The events endpoint takes a `url` of at most 2,000 characters and refuses
+ * the event otherwise, so a longer one is cut, as an error's is.
+ */
 test('an event from a url over 2,000 characters arrives with the url cut to 2,000, the suffix included', function (): void {
     $url = eventTrackedAt('/'.str_repeat('a', 6_000))['url'];
 
