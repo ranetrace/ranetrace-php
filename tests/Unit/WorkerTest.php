@@ -911,7 +911,7 @@ it('sends no heartbeat when its time cannot be written, and says so in the inter
     expect($harness['http']->requests)->toBe([])
         ->and(internalLogContents($harness['directory']))
         ->toContain('ranetrace_internal.WARNING: Heartbeat not sent, its time could not be written to the state file');
-})->skip(fn (): bool => ! function_exists('posix_geteuid') || posix_geteuid() === 0, 'root ignores file modes');
+})->skip(runsAsRoot(...), 'root ignores file modes');
 
 /**
  * A new install whose cron job runs before anything was captured: the buffer

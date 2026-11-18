@@ -108,15 +108,6 @@ it('prints usage on help', function (): void {
         ->and($result['stdout'])->toContain('Usage: ranetrace-flush');
 });
 
-/**
- * A second user is emulated by taking this process's access away by mode,
- * which root ignores.
- */
-function flushRunsAsRoot(): bool
-{
-    return ! function_exists('posix_geteuid') || posix_geteuid() === 0;
-}
-
 it('exits 1 and names the directory when the buffer belongs to another user', function (): void {
     $directory = tempDirectory();
     seedSpool($directory);
@@ -138,7 +129,7 @@ it('exits 1 and names the directory when the buffer belongs to another user', fu
         ->and($result['stderr'])->toContain('Run this command as the user your web server runs as.')
         ->and(mb_substr_count($result['stderr'], "\n"))->toBe(1)
         ->and($after)->toBe($before);
-})->skip(flushRunsAsRoot(...), 'root ignores file modes');
+})->skip(runsAsRoot(...), 'root ignores file modes');
 
 it('exits 1 when only a lock file belongs to another user', function (): void {
     $directory = tempDirectory();
@@ -158,7 +149,7 @@ it('exits 1 when only a lock file belongs to another user', function (): void {
         ->and($result['stderr'])->toContain("[{$directory}]")
         ->and($result['stderr'])->toContain('errors.lock')
         ->and((string) file_get_contents($directory.'/errors.json'))->toBe($before);
-})->skip(flushRunsAsRoot(...), 'root ignores file modes');
+})->skip(runsAsRoot(...), 'root ignores file modes');
 
 it('drains on shutdown by default', function (): void {
     $directory = tempDirectory();
@@ -314,7 +305,7 @@ it('names the missing key before the buffer it cannot use', function (): void {
         ->and($lines)->toHaveCount(2)
         ->and($lines[0]."\n")->toBe(missingKeyLine())
         ->and($lines[1])->toStartWith("ranetrace-flush: cannot write to the buffer in [{$directory}]");
-})->skip(flushRunsAsRoot(...), 'root ignores file modes');
+})->skip(runsAsRoot(...), 'root ignores file modes');
 
 /**
  * Run $run against `tests/Doubles/fake-api.php` on PHP's built-in server, and
@@ -525,4 +516,4 @@ it('sends no heartbeat when it cannot use the buffer', function (): void {
 
     expect($run['requests'])->toBe([])
         ->and($run['result']['status'])->toBe(1);
-})->skip(flushRunsAsRoot(...), 'root ignores file modes');
+})->skip(runsAsRoot(...), 'root ignores file modes');

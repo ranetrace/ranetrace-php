@@ -480,15 +480,6 @@ it('says nothing about a wait under 10 minutes', function (): void {
         ->not->toContain('The oldest');
 });
 
-/**
- * Another user is emulated by taking this process's access away by mode, which
- * root ignores.
- */
-function sendTestRunsAsRoot(): bool
-{
-    return ! function_exists('posix_geteuid') || posix_geteuid() === 0;
-}
-
 it('says when this user cannot use the buffer, without changing the exit state', function (): void {
     $directory = tempDirectory();
     touch($directory.'/errors.lock');
@@ -504,7 +495,7 @@ it('says when this user cannot use the buffer, without changing the exit state',
         ->and($report->render())
         ->toContain("  Buffer   {$directory}\n           This user cannot use it: the lock file errors.lock is not writable. Run the cron flush as the user your web server runs as.\n  Pauses   none\n")
         ->not->toContain('Waiting');
-})->skip(sendTestRunsAsRoot(...), 'root ignores file modes');
+})->skip(runsAsRoot(...), 'root ignores file modes');
 
 it('never throws when the transport throws', function (): void {
     $directory = tempDirectory();

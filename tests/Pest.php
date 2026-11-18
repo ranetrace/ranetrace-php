@@ -44,6 +44,16 @@ uses()->afterEach(function (): void {
 })->in('Unit', 'Feature', 'Contract');
 
 /**
+ * Whether this process runs as root, or cannot tell. A test that emulates
+ * another user by taking this process's access away by file mode skips then,
+ * because root ignores modes.
+ */
+function runsAsRoot(): bool
+{
+    return ! function_exists('posix_geteuid') || posix_geteuid() === 0;
+}
+
+/**
  * Set an environment variable for the duration of one test.
  */
 function withEnv(string $name, ?string $value): void

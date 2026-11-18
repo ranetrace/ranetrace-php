@@ -382,15 +382,6 @@ it('clears a type on request', function (): void {
     expect($buffer->count('errors'))->toBe(0);
 });
 
-/**
- * Emulates a buffer that another user created: this process loses access by
- * mode, which root ignores.
- */
-function runsAsRoot(): bool
-{
-    return ! function_exists('posix_geteuid') || posix_geteuid() === 0;
-}
-
 it('sees no access problem in a buffer directory that does not exist yet, and creates nothing', function (): void {
     $directory = tempDirectory().'/absent';
 
