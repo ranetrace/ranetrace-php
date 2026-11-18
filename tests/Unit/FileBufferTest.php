@@ -425,7 +425,7 @@ it('reports a buffer path that is not a directory', function (): void {
 
 it('reports a buffer directory this process cannot write to', function (): void {
     $directory = tempDirectory();
-    $buffer = fileBuffer($directory, ['internal_logging' => ['stderr_fallback' => false]]);
+    $buffer = fileBuffer($directory);
     $buffer->addItem('errors', ['message' => 'boom']);
 
     chmod($directory, 0550);
