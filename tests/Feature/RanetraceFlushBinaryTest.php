@@ -27,6 +27,17 @@ function flushEnvironment(string $directory): array
     ];
 }
 
+/**
+ * The arguments for a PHP process that boots the SDK and ends, so its shutdown
+ * flush is the only drain that runs.
+ *
+ * @return list<string>
+ */
+function shutdownFlushCommand(): array
+{
+    return ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'];
+}
+
 it('drains the buffer from the command line', function (): void {
     $directory = tempDirectory();
     spoolItem($directory);
@@ -113,10 +124,7 @@ it('drains on shutdown by default', function (): void {
     $directory = tempDirectory();
     spoolItem($directory);
 
-    $result = runPhp(
-        ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
-        flushEnvironment($directory),
-    );
+    $result = runPhp(shutdownFlushCommand(), flushEnvironment($directory));
 
     expect($result['status'])->toBe(0)
         ->and(internalLogContents($directory))->toContain('Network error during batch send');
@@ -127,7 +135,7 @@ it('leaves the buffer alone on shutdown when the flush is disabled', function ()
     spoolItem($directory);
 
     $result = runPhp(
-        ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
+        shutdownFlushCommand(),
         array_merge(flushEnvironment($directory), ['RANETRACE_FLUSH_ON_SHUTDOWN' => 'false']),
     );
 
@@ -233,10 +241,7 @@ it('leaves the spool and the pauses alone on a shutdown flush without a key', fu
     spoolItem($directory);
     $before = (string) file_get_contents($directory.'/errors.json');
 
-    $result = runPhp(
-        ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
-        keylessFlushEnvironment($directory),
-    );
+    $result = runPhp(shutdownFlushCommand(), keylessFlushEnvironment($directory));
 
     expect($result['status'])->toBe(0)
         ->and($result['stderr'])->toBe('')
@@ -312,7 +317,7 @@ it('never sends a heartbeat from the shutdown flush', function (bool $spooled, a
     }
 
     $run = againstFakeApi(static fn (array $api): array => runPhp(
-        ['-r', 'require "vendor/autoload.php"; Ranetrace\Php\Ranetrace::init([]);'],
+        shutdownFlushCommand(),
         array_merge(flushEnvironment($directory), $api),
     ));
 
