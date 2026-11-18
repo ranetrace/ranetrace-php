@@ -548,8 +548,6 @@ it('logs one warning naming the waiting types when a run has no api key', functi
  */
 it('logs nothing when a run without an api key finds nothing waiting', function (?string $type): void {
     $harness = loggingWorkerHarness(FakeHttpClient::respondingWith(200), ['key' => '']);
-    seedBuffer($harness['buffer'], 'events', 1);
-    $harness['buffer']->take('events', 1);
 
     $harness['worker']->run($type);
 
