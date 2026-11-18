@@ -526,7 +526,7 @@ it('logs one warning naming the waiting types when a run has no api key', functi
 
     $harness['worker']->run();
 
-    $log = workerLogContents($harness['directory']);
+    $log = internalLogContents($harness['directory']);
 
     expect(mb_substr_count($log, "\n"))->toBe(1)
         ->and($log)->toContain('ranetrace_internal.WARNING: Skipping run, no API key is configured {"types":["errors","logs"]}');
@@ -546,7 +546,7 @@ it('logs nothing when a run without an api key finds nothing waiting', function 
 
     $harness['worker']->run($type);
 
-    expect(workerLogContents($harness['directory']))->toBe('');
+    expect(internalLogContents($harness['directory']))->toBe('');
 })->with([
     'every type' => [null],
     'the named type' => ['errors'],
@@ -591,13 +591,6 @@ function loggingWorkerHarness(FakeHttpClient $http): array
     return workerHarness($http, ['internal_logging' => ['enabled' => true, 'level' => 'debug']]);
 }
 
-function workerLogContents(string $directory): string
-{
-    $files = glob($directory.'/internal-*.log') ?: [];
-
-    return implode('', array_map(static fn (string $file): string => (string) file_get_contents($file), $files));
-}
-
 it('drops an item it cannot encode from the batch and sends the rest, never measuring it as zero bytes', function (): void {
     $harness = loggingWorkerHarness(FakeHttpClient::respondingWith(200));
     $harness['buffer']->addItem('logs', ['message' => 'before']);
@@ -610,7 +603,7 @@ it('drops an item it cannot encode from the batch and sends the rest, never meas
         ->and(array_column($harness['http']->payload()['logs'], 'message'))->toBe(['before', 'after'])
         ->and($harness['buffer']->count('logs'))->toBe(0)
         ->and($harness['pauses']->featurePause('logs'))->toBeNull()
-        ->and(workerLogContents($harness['directory']))
+        ->and(internalLogContents($harness['directory']))
         ->toContain('Dropped items that could not be encoded as JSON')
         ->toContain('"type":"logs"')
         ->toContain('"dropped":1');
@@ -710,7 +703,7 @@ it('sends no heartbeat without an api key', function (string $key): void {
 
     expect($harness['http']->requests)->toBe([])
         ->and($harness['worker']->lastHeartbeatAt())->toBeNull()
-        ->and(workerLogContents($harness['directory']))->toBe('');
+        ->and(internalLogContents($harness['directory']))->toBe('');
 })->with([
     'no key' => [''],
     'a key of whitespace' => ["  \t"],
@@ -828,7 +821,7 @@ it('writes one line to the internal log for a heartbeat that failed', function (
 
     $harness['worker']->heartbeat();
 
-    $log = workerLogContents($harness['directory']);
+    $log = internalLogContents($harness['directory']);
 
     expect(mb_substr_count($log, "\n"))->toBe(1)
         ->and($log)->toContain($line);
@@ -852,7 +845,7 @@ it('writes one debug line for a heartbeat the api accepted', function (): void {
 
     $harness['worker']->heartbeat();
 
-    $log = workerLogContents($harness['directory']);
+    $log = internalLogContents($harness['directory']);
 
     expect(mb_substr_count($log, "\n"))->toBe(1)
         ->and($log)->toContain('ranetrace_internal.DEBUG: Heartbeat sent {"status":200}');
@@ -916,7 +909,7 @@ it('sends no heartbeat when its time cannot be written, and says so in the inter
     }
 
     expect($harness['http']->requests)->toBe([])
-        ->and(workerLogContents($harness['directory']))
+        ->and(internalLogContents($harness['directory']))
         ->toContain('ranetrace_internal.WARNING: Heartbeat not sent, its time could not be written to the state file');
 })->skip(fn (): bool => ! function_exists('posix_geteuid') || posix_geteuid() === 0, 'root ignores file modes');
 

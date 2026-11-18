@@ -777,10 +777,7 @@ test('a resolver that throws costs the browser error its user id, never the erro
         'user_resolver' => static fn (): array => throw $failure,
     ])->handleRequest(relayServer(), relayPayload());
 
-    $log = implode('', array_map(
-        static fn (string $file): string => (string) file_get_contents($file),
-        glob($directory.'/internal-*.log') ?: [],
-    ));
+    $log = internalLogContents($directory);
 
     expect($response->status)->toBe(200)
         ->and($response->body)->toBe(['success' => true, 'message' => 'Error received'])
@@ -805,10 +802,7 @@ test('a rejected buffer write logs the message as it was built, invalid bytes re
         'internal_logging' => ['enabled' => true, 'level' => 'debug'],
     ])->handleRequest(relayServer(), relayPayload(['message' => "Bad \xB1 input"]));
 
-    $log = implode('', array_map(
-        static fn (string $file): string => (string) file_get_contents($file),
-        glob($directory.'/internal-*.log') ?: [],
-    ));
+    $log = internalLogContents($directory);
 
     expect($log)->toContain('JavaScript error could not be buffered')
         ->toContain('"message":"Bad \\ufffd input"');

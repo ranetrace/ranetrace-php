@@ -547,10 +547,7 @@ test('it still reports the error when the host user resolver throws', function (
         'user_resolver' => static fn (): array => throw new LogicException('No auth here'),
     ]);
 
-    $log = implode('', array_map(
-        static fn (string $file): string => (string) file_get_contents($file),
-        glob($directory.'/internal-*.log') ?: [],
-    ));
+    $log = internalLogContents($directory);
 
     expect($payload)->not->toBeEmpty()
         ->and($payload['user'])->toBeNull()

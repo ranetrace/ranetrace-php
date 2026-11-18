@@ -213,10 +213,7 @@ test('a resolver that throws costs the event its user, never the event', functio
         'user_resolver' => static fn (): array => throw $failure,
     ])->track('page_view');
 
-    $log = implode('', array_map(
-        static fn (string $file): string => (string) file_get_contents($file),
-        glob($directory.'/internal-*.log') ?: [],
-    ));
+    $log = internalLogContents($directory);
 
     expect($buffer->count('events'))->toBe(1)
         ->and(firstEvent($buffer)['user'])->toBeNull()
@@ -607,10 +604,7 @@ test('an event over the endpoint limits reaches the buffer cut, and the general 
     ]);
 
     $event = firstEvent($buffer);
-    $log = implode('', array_map(
-        static fn (string $file): string => (string) file_get_contents($file),
-        glob($directory.'/internal-*.log') ?: [],
-    ));
+    $log = internalLogContents($directory);
 
     expect(array_keys($event))->toBe(EVENT_KEYS)
         ->and($event)->not->toHaveKey('_truncated')

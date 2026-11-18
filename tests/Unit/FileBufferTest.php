@@ -15,13 +15,6 @@ function fileBuffer(string $directory, array $overrides = []): FileBuffer
     return new FileBuffer($config, new InternalLogger($config));
 }
 
-function internalLogContents(string $directory): string
-{
-    $files = glob($directory.'/internal-*.log') ?: [];
-
-    return implode('', array_map(static fn (string $file): string => (string) file_get_contents($file), $files));
-}
-
 it('lists the four buffer types it spools', function (): void {
     expect(fileBuffer(tempDirectory())->types())->toBe(['errors', 'events', 'logs', 'javascript_errors']);
 });

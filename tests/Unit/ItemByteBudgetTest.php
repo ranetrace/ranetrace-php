@@ -20,13 +20,6 @@ function itemBudget(string $directory): ItemByteBudget
     ])));
 }
 
-function budgetLogContents(string $directory): string
-{
-    $files = glob($directory.'/internal-*.log') ?: [];
-
-    return implode('', array_map(static fn (string $file): string => (string) file_get_contents($file), $files));
-}
-
 /**
  * An item comfortably over the per-item budget, built from string fields that
  * are each over the per-field budget, so shrinking them can bring it back
@@ -48,7 +41,7 @@ test('an item within the budget is returned byte for byte', function (): void {
     $item = ['message' => 'Payment gateway timed out', 'context' => ['order' => 42]];
 
     expect(itemBudget($directory)->cap('logs', $item))->toBe($item)
-        ->and(budgetLogContents($directory))->toBe('');
+        ->and(internalLogContents($directory))->toBe('');
 });
 
 test('an oversize string field is cut to the field budget and marked with the truncation suffix', function (): void {
@@ -89,7 +82,7 @@ test('a shrunk item is recorded in the internal log', function (): void {
 
     itemBudget($directory)->cap('logs', shrinkableItem());
 
-    expect(budgetLogContents($directory))
+    expect(internalLogContents($directory))
         ->toContain('Captured item exceeded the per-item byte budget and was shrunk')
         ->toContain('"type":"logs"')
         ->toContain('"max_bytes":71680');
@@ -107,7 +100,7 @@ test('an irreducibly oversize item is dropped instead of buffered', function ():
     }
 
     expect(itemBudget($directory)->cap('errors', $item))->toBeNull()
-        ->and(budgetLogContents($directory))
+        ->and(internalLogContents($directory))
         ->toContain('Captured item exceeded the per-item byte budget and was dropped')
         ->toContain('"type":"errors"')
         ->not->toContain('was shrunk');
@@ -142,7 +135,7 @@ test('an item JSON cannot encode counts as over budget, so its unencodable array
         'channel' => 'app',
     ])
         ->and(json_encode($item))->not->toBeFalse()
-        ->and(budgetLogContents($directory))
+        ->and(internalLogContents($directory))
         ->toContain('Captured item could not be encoded as JSON and a field was removed')
         ->toContain('"type":"logs"');
 });
@@ -151,7 +144,7 @@ test('an item still unencodable after the shrink pass is dropped, never measured
     $directory = tempDirectory();
 
     expect(itemBudget($directory)->cap('javascript_errors', ['message' => 'boom', 'line' => NAN]))->toBeNull()
-        ->and(budgetLogContents($directory))
+        ->and(internalLogContents($directory))
         ->toContain('Captured item could not be encoded as JSON and was dropped')
         ->toContain('"type":"javascript_errors"')
         ->not->toContain('byte budget');

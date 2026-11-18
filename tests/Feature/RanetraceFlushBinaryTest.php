@@ -55,13 +55,6 @@ function flushEnvironment(string $directory): array
     ];
 }
 
-function subprocessInternalLog(string $directory): string
-{
-    $files = glob($directory.'/internal-*.log') ?: [];
-
-    return implode('', array_map(static fn (string $file): string => (string) file_get_contents($file), $files));
-}
-
 function seedSpool(string $directory): void
 {
     file_put_contents($directory.'/errors.json', (string) json_encode([
@@ -77,7 +70,7 @@ it('drains the buffer from the command line', function (): void {
 
     expect($result['status'])->toBe(0)
         ->and($result['stderr'])->toBe('')
-        ->and(subprocessInternalLog($directory))->toContain('Network error during batch send')
+        ->and(internalLogContents($directory))->toContain('Network error during batch send')
         ->and(json_decode((string) file_get_contents($directory.'/pauses.json'), true)['features']['errors']['reason'])->toBe('network');
 });
 
@@ -90,7 +83,7 @@ it('drains only the type it is given', function (): void {
     // Events are empty, so nothing is sent and the spooled error is untouched.
     expect($result['status'])->toBe(0)
         ->and($result['stderr'])->toBe('')
-        ->and(subprocessInternalLog($directory))->not->toContain('Network error during batch send')
+        ->and(internalLogContents($directory))->not->toContain('Network error during batch send')
         ->and(json_decode((string) file_get_contents($directory.'/errors.json'), true))->toHaveCount(1);
 });
 
@@ -177,7 +170,7 @@ it('drains on shutdown by default', function (): void {
     );
 
     expect($result['status'])->toBe(0)
-        ->and(subprocessInternalLog($directory))->toContain('Network error during batch send');
+        ->and(internalLogContents($directory))->toContain('Network error during batch send');
 });
 
 it('leaves the buffer alone on shutdown when the flush is disabled', function (): void {
@@ -190,7 +183,7 @@ it('leaves the buffer alone on shutdown when the flush is disabled', function ()
     );
 
     expect($result['status'])->toBe(0)
-        ->and(subprocessInternalLog($directory))->not->toContain('Network error during batch send');
+        ->and(internalLogContents($directory))->not->toContain('Network error during batch send');
 });
 
 function missingKeyLine(): string
@@ -225,7 +218,7 @@ it('exits 1 with one line and leaves the spool and the pauses alone when items w
         ->and($result['stdout'])->toBe('')
         ->and((string) file_get_contents($directory.'/errors.json'))->toBe($before)
         ->and(is_file($directory.'/pauses.json'))->toBeFalse()
-        ->and(subprocessInternalLog($directory))
+        ->and(internalLogContents($directory))
         ->toContain('Skipping run, no API key is configured')
         ->not->toContain('Network error during batch send');
 })->with([
@@ -247,7 +240,7 @@ it('stays quiet without a key when the site is switched off and nothing waits', 
 
     expect($result['status'])->toBe(0)
         ->and($result['stderr'])->toBe('')
-        ->and(subprocessInternalLog($directory))->toBe('');
+        ->and(internalLogContents($directory))->toBe('');
 });
 
 it('says the key is missing when the site is switched off but items wait', function (): void {
@@ -283,7 +276,7 @@ it('sends at once on a keyed flush after a keyless one', function (): void {
 
     expect($result['status'])->toBe(0)
         ->and($result['stderr'])->toBe('')
-        ->and(subprocessInternalLog($directory))->toContain('Network error during batch send');
+        ->and(internalLogContents($directory))->toContain('Network error during batch send');
 });
 
 it('leaves the spool and the pauses alone on a shutdown flush without a key', function (): void {
@@ -487,7 +480,7 @@ it('keeps the exit code, the spool and the pauses when the heartbeat is answered
         ['FAKE_API_HEARTBEAT_STATUS' => '500'],
     );
 
-    $log = subprocessInternalLog($directory);
+    $log = internalLogContents($directory);
 
     expect(array_column($run['requests'], 'path'))->toBe(['/v1/heartbeat'])
         ->and($run['result'])->toBe(['status' => 0, 'stdout' => '', 'stderr' => ''])
@@ -502,7 +495,7 @@ it('keeps the exit code and sets no pause when the heartbeat cannot reach the ap
 
     $result = runFlushSubprocess(['bin/ranetrace-flush'], flushEnvironment($directory));
 
-    $log = subprocessInternalLog($directory);
+    $log = internalLogContents($directory);
 
     expect($result)->toBe(['status' => 0, 'stdout' => '', 'stderr' => ''])
         ->and(is_file($directory.'/pauses.json'))->toBeFalse()

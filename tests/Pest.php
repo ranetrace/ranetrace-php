@@ -70,6 +70,17 @@ function tempDirectory(string $prefix = 'ranetrace-test-'): string
     return $directory;
 }
 
+/**
+ * Everything the internal logger wrote into $directory: every `internal-*.log`
+ * file there, joined in name order.
+ */
+function internalLogContents(string $directory): string
+{
+    $files = glob($directory.'/internal-*.log') ?: [];
+
+    return implode('', array_map(static fn (string $file): string => (string) file_get_contents($file), $files));
+}
+
 function deleteTempDirectory(string $directory): void
 {
     if (! is_dir($directory)) {
@@ -196,9 +207,7 @@ function framePayload(Ranetrace\Php\Errors\PayloadBuilder $builder, Throwable $t
  */
 function frameDiagnostics(string $root): string
 {
-    $files = glob($root.'/diagnostics/internal-*.log') ?: [];
-
-    return implode('', array_map(static fn (string $file): string => (string) file_get_contents($file), $files));
+    return internalLogContents($root.'/diagnostics');
 }
 
 /**
