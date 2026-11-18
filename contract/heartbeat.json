@@ -31,7 +31,7 @@
         "conditions": [
             "An API key is set.",
             "The master switch is on.",
-            "Nothing is globally paused. A global pause means a rejected key or a pause the API asked for, and silence is right there: the application did stop reporting.",
+            "Nothing is globally paused. A global pause means a rejected key, and silence is right there: the application did stop reporting.",
             "The last heartbeat this application tried to send is at least `interval_seconds` old."
         ]
     },

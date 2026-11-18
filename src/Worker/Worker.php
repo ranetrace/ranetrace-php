@@ -187,9 +187,8 @@ final class Worker
      * visitors, and the API would then call a quiet site stopped.
      *
      * Nothing is sent without a key, with the master switch off, or while
-     * everything is paused. A global pause means a rejected key or a pause the
-     * API asked for, and staying silent is right there: the application did
-     * stop reporting.
+     * everything is paused. A global pause means a rejected key, and staying
+     * silent is right there: the application did stop reporting.
      *
      * The attempt is stamped before it is sent, and the answer changes
      * nothing: no pause, no retry, and the next attempt is one interval later
