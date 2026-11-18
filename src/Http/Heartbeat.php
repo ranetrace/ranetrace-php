@@ -108,6 +108,6 @@ final readonly class Heartbeat
      */
     public function userAgent(): string
     {
-        return 'Ranetrace-'.$this->sdk.'/'.self::FEATURE.'/'.EndpointTable::USER_AGENT_VERSION;
+        return EndpointTable::userAgent($this->sdk, self::FEATURE);
     }
 }

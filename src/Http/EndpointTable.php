@@ -30,6 +30,17 @@ final class EndpointTable
     private function __construct(private readonly array $endpoints) {}
 
     /**
+     * The User-Agent every request carries, e.g. `Ranetrace-PHP/Errors/1.0`.
+     *
+     * @param  string  $sdk  The `{SDK}` segment, e.g. `PHP` or `Laravel`.
+     * @param  string  $feature  The `{Feature}` segment, e.g. `Errors` or `Heartbeat`.
+     */
+    public static function userAgent(string $sdk, string $feature): string
+    {
+        return 'Ranetrace-'.$sdk.'/'.$feature.'/'.self::USER_AGENT_VERSION;
+    }
+
+    /**
      * The four types `contract/endpoints.json` names, in contract order.
      */
     public static function contract(): self

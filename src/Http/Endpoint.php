@@ -40,6 +40,6 @@ final readonly class Endpoint
      */
     public function userAgent(string $sdk): string
     {
-        return 'Ranetrace-'.$sdk.'/'.$this->feature.'/'.EndpointTable::USER_AGENT_VERSION;
+        return EndpointTable::userAgent($sdk, $this->feature);
     }
 }
