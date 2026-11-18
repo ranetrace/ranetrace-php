@@ -211,7 +211,7 @@ it('says the key is missing when the site is switched off but items wait', funct
         ->and(json_decode((string) file_get_contents($directory.'/errors.json'), true))->toHaveCount(1);
 });
 
-it('says the key is missing when items of another type than the one named wait', function (): void {
+it('says the key is missing when the site is switched off and items of another type than the one named wait', function (): void {
     $directory = tempDirectory();
     spoolItem($directory);
 
