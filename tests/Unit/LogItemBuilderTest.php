@@ -143,7 +143,7 @@ test('an invalid byte outside the project root is still repaired once the root i
 });
 
 test('a root strip that cannot run costs the strip, never the log record or its secret scrub', function (): void {
-    $config = testConfig(['project_root' => str_repeat('/segment', 10_000), 'internal_logging' => ['enabled' => false]]);
+    $config = testConfig(['project_root' => uncompilableRoot(), 'internal_logging' => ['enabled' => false]]);
     $builder = new LogItemBuilder($config, new SecretScrubber($config, new InternalLogger($config)));
 
     set_error_handler(static function (int $level, string $message): never {

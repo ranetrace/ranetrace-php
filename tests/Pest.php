@@ -258,6 +258,15 @@ function frameDiagnostics(string $root): string
 }
 
 /**
+ * A root of so many segments that PCRE refuses to compile the pattern built
+ * from it: the stand-in for any PCRE build that rejects the pattern.
+ */
+function uncompilableRoot(): string
+{
+    return str_repeat('/segment', 10_000);
+}
+
+/**
  * Run $callback in a project file that recurses $depth times before throwing,
  * and return what it threw.
  */

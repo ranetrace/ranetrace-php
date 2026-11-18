@@ -143,15 +143,6 @@ test('a root holding pattern characters is matched literally', function (): void
         ->toBe('src/Foo.php and /srv/app (v2)/src');
 });
 
-/**
- * A root of so many segments that PCRE refuses to compile the pattern built
- * from it: the stand-in for any PCRE build that rejects the pattern.
- */
-function uncompilableRoot(): string
-{
-    return str_repeat('/segment', 10_000);
-}
-
 test('a pattern PCRE cannot compile leaves the text as written, also when the host throws on the warning', function (): void {
     $warnings = 0;
     set_error_handler(static function (int $level, string $message) use (&$warnings): never {

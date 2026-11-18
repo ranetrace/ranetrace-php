@@ -250,10 +250,9 @@ test('the root is taken off the message before it is cut to length, so a cut can
 });
 
 test('a root strip that cannot run costs the strip, never the error report or its secret scrub', function (): void {
-    // A root PCRE cannot build a pattern from, on a host that throws on the
-    // warning PCRE raises for it.
+    // On a host that throws on the warning PCRE raises for it.
     $root = frameProject();
-    $builder = frameBuilder($root, ['project_root' => str_repeat('/segment', 10_000)]);
+    $builder = frameBuilder($root, ['project_root' => uncompilableRoot()]);
 
     set_error_handler(static function (int $level, string $message): never {
         throw new ErrorException($message, 0, $level);
