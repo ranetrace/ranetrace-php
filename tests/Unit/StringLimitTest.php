@@ -16,6 +16,15 @@ test('a value within the limit comes back unchanged from every cut', function (s
     'multibyte, twenty bytes in ten characters' => [str_repeat('é', 10), 20],
 ]);
 
+test('the character cuts count characters, not bytes, so twenty two-byte characters fit a limit of twenty', function (string $method): void {
+    $value = str_repeat('é', 20);
+
+    expect(StringLimit::{$method}($value, 20))->toBe($value);
+})->with([
+    'cut' => ['cut'],
+    'cutWithSuffix' => ['cutWithSuffix'],
+]);
+
 test('the plain cut keeps the first characters, counted as characters, and adds no suffix', function (string $value, int $limit, string $expected): void {
     expect(StringLimit::cut($value, $limit))->toBe($expected);
 })->with([
