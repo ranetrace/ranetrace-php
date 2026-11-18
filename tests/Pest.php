@@ -54,6 +54,23 @@ function runsAsRoot(): bool
 }
 
 /**
+ * Run $run while the `errors.lock` file in $directory is read-only, as one that
+ * another user owns, and return what it returned. The file is created when
+ * missing and made writable again afterwards, so it can be cleaned up.
+ */
+function withForeignLockFile(string $directory, callable $run): mixed
+{
+    touch($directory.'/errors.lock');
+    chmod($directory.'/errors.lock', 0444);
+
+    try {
+        return $run();
+    } finally {
+        chmod($directory.'/errors.lock', 0600);
+    }
+}
+
+/**
  * Set an environment variable for the duration of one test.
  */
 function withEnv(string $name, ?string $value): void

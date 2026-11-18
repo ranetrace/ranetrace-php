@@ -482,14 +482,7 @@ it('says nothing about a wait under 10 minutes', function (): void {
 
 it('says when this user cannot use the buffer, without changing the exit state', function (): void {
     $directory = tempDirectory();
-    touch($directory.'/errors.lock');
-    chmod($directory.'/errors.lock', 0444);
-
-    try {
-        $report = sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)))->sendTest();
-    } finally {
-        chmod($directory.'/errors.lock', 0600);
-    }
+    $report = withForeignLockFile($directory, fn (): TestReport => sendTestSdk($directory, new FakeHttpClient(sendTestResponse(200), sendTestResponse(200)))->sendTest());
 
     expect($report->accepted())->toBeTrue()
         ->and($report->render())

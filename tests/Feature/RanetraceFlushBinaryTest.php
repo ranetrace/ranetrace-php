@@ -108,14 +108,7 @@ it('exits 1 when only a lock file belongs to another user', function (): void {
     seedSpool($directory);
     $before = (string) file_get_contents($directory.'/errors.json');
 
-    touch($directory.'/errors.lock');
-    chmod($directory.'/errors.lock', 0444);
-
-    try {
-        $result = runPhp(['bin/ranetrace-flush'], flushEnvironment($directory));
-    } finally {
-        chmod($directory.'/errors.lock', 0600);
-    }
+    $result = withForeignLockFile($directory, fn (): array => runPhp(['bin/ranetrace-flush'], flushEnvironment($directory)));
 
     expect($result['status'])->toBe(1)
         ->and($result['stderr'])->toContain("[{$directory}]")
@@ -262,14 +255,7 @@ it('names the missing key before the buffer it cannot use', function (): void {
     $directory = tempDirectory();
     seedSpool($directory);
 
-    touch($directory.'/errors.lock');
-    chmod($directory.'/errors.lock', 0444);
-
-    try {
-        $result = runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory));
-    } finally {
-        chmod($directory.'/errors.lock', 0600);
-    }
+    $result = withForeignLockFile($directory, fn (): array => runPhp(['bin/ranetrace-flush'], keylessFlushEnvironment($directory)));
 
     $lines = explode("\n", mb_rtrim($result['stderr'], "\n"));
 
@@ -430,17 +416,10 @@ it('sends no heartbeat when it cannot use the buffer', function (): void {
     $directory = tempDirectory();
     seedSpool($directory);
 
-    touch($directory.'/errors.lock');
-    chmod($directory.'/errors.lock', 0444);
-
-    try {
-        $run = againstFakeApi(static fn (array $api): array => runPhp(
-            ['bin/ranetrace-flush'],
-            array_merge(flushEnvironment($directory), $api),
-        ));
-    } finally {
-        chmod($directory.'/errors.lock', 0600);
-    }
+    $run = withForeignLockFile($directory, fn (): array => againstFakeApi(static fn (array $api): array => runPhp(
+        ['bin/ranetrace-flush'],
+        array_merge(flushEnvironment($directory), $api),
+    )));
 
     expect($run['requests'])->toBe([])
         ->and($run['result']['status'])->toBe(1);
