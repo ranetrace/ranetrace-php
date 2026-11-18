@@ -6,9 +6,9 @@ use Ranetrace\Php\Logging\LogItemBuilder;
 use Ranetrace\Php\Support\InternalLogger;
 use Ranetrace\Php\Support\SecretScrubber;
 
-function logItem(array $context = [], array $extra = [], array|callable|null $sensitivePathValues = null, string $message = 'Reset mail sent'): array
+function logItem(array $context = [], array $extra = [], array|callable|null $sensitivePathValues = null, string $message = 'Reset mail sent', array $config = []): array
 {
-    $config = testConfig();
+    $config = testConfig($config);
 
     return (new LogItemBuilder($config, new SecretScrubber($config, new InternalLogger($config))))->build(
         'error',
@@ -83,16 +83,13 @@ test('a logged exception whose message holds a telegram api url loses the bot to
 test('a log record names a file under the project root by its relative path, in its message, context and extra', function (): void {
     // A logged throwable is the usual carrier: Monolog hands it over as an
     // object, and its string form holds the file and the whole text trace.
-    $config = testConfig(['project_root' => '/var/www/app']);
     $exception = new RuntimeException('Could not read /var/www/app/storage/import.csv');
 
-    $item = (new LogItemBuilder($config, new SecretScrubber($config, new InternalLogger($config))))->build(
-        'error',
-        'Import failed for /var/www/app/storage/import.csv',
+    $item = logItem(
         ['file' => '/var/www/app/storage/import.csv', 'exception' => $exception, 'rows' => 12],
-        'stack',
-        '2026-08-19T10:00:00+00:00',
         ['script' => '/var/www/app/artisan'],
+        message: 'Import failed for /var/www/app/storage/import.csv',
+        config: ['project_root' => '/var/www/app'],
     );
 
     expect($item['message'])->toBe('Import failed for storage/import.csv')
