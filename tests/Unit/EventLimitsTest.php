@@ -145,17 +145,24 @@ test('an event that fits unescaped but not escaped is still cut', function (stri
     'non-ascii' => [str_repeat('é', 225), JSON_UNESCAPED_UNICODE],
 ]);
 
-test('an event of many small properties has its properties replaced as a whole', function (): void {
+test('an event of many small properties has its properties replaced as a whole, and its warning says so', function (): void {
+    $log = new RecordingDiagnostics;
     $properties = [];
 
     foreach (range(1, 600) as $index) {
         $properties["p{$index}"] = 1;
     }
 
-    $fitted = (new EventLimits(new RecordingDiagnostics))->fit(limitedEvent($properties));
+    $fitted = (new EventLimits($log))->fit(limitedEvent($properties, name: 'bulk_import'));
 
     expect($fitted['properties'])->toBe(['_truncated' => EventLimits::PROPERTIES_REPLACED_REASON])
-        ->and(serverMeasuredBytes($fitted))->toBeLessThanOrEqual(EventLimits::MAX_ITEM_BYTES);
+        ->and(serverMeasuredBytes($fitted))->toBeLessThanOrEqual(EventLimits::MAX_ITEM_BYTES)
+        ->and($log->records)->toHaveCount(1)
+        ->and($log->records[0]['context'])->toBe([
+            'event_name' => 'bulk_import',
+            'all_properties_replaced' => true,
+            'max_item_bytes' => EventLimits::MAX_ITEM_BYTES,
+        ]);
 });
 
 test('an event over the limit with nothing left to replace is dropped and says so', function (): void {
@@ -191,24 +198,6 @@ test('a cut writes one warning naming the event, the properties and the limits t
             'max_item_bytes' => EventLimits::MAX_ITEM_BYTES,
         ],
     ]]);
-});
-
-test('the whole-properties fallback is named in its warning', function (): void {
-    $log = new RecordingDiagnostics;
-    $properties = [];
-
-    foreach (range(1, 600) as $index) {
-        $properties["p{$index}"] = 1;
-    }
-
-    (new EventLimits($log))->fit(limitedEvent($properties, name: 'bulk_import'));
-
-    expect($log->records)->toHaveCount(1)
-        ->and($log->records[0]['context'])->toBe([
-            'event_name' => 'bulk_import',
-            'all_properties_replaced' => true,
-            'max_item_bytes' => EventLimits::MAX_ITEM_BYTES,
-        ]);
 });
 
 // Hardening: shapes a host can hand over that the tests above do not.
