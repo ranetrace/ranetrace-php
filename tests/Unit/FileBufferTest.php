@@ -437,30 +437,19 @@ it('reports a buffer directory this process cannot write to', function (): void 
     }
 })->skip(runsAsRoot(...), 'root ignores file modes');
 
-it('reports a lock file this process cannot open for writing', function (): void {
+it('reports a spool file this process cannot use', function (string $type, array $item, string $file, int $mode, string $problem): void {
     $directory = tempDirectory();
     $buffer = fileBuffer($directory);
-    $buffer->addItem('errors', ['message' => 'boom']);
+    $buffer->addItem($type, $item);
 
-    chmod($directory.'/errors.lock', 0444);
-
-    try {
-        expect($buffer->accessProblem())->toBe('the lock file errors.lock is not writable');
-    } finally {
-        chmod($directory.'/errors.lock', 0600);
-    }
-})->skip(runsAsRoot(...), 'root ignores file modes');
-
-it('reports a buffer file this process cannot read', function (): void {
-    $directory = tempDirectory();
-    $buffer = fileBuffer($directory);
-    $buffer->addItem('events', ['event_name' => 'signup']);
-
-    chmod($directory.'/events.json', 0200);
+    chmod("{$directory}/{$file}", $mode);
 
     try {
-        expect($buffer->accessProblem())->toBe('the buffer file events.json is not readable');
+        expect($buffer->accessProblem())->toBe($problem);
     } finally {
-        chmod($directory.'/events.json', 0600);
+        chmod("{$directory}/{$file}", 0600);
     }
-})->skip(runsAsRoot(...), 'root ignores file modes');
+})->with([
+    'a lock file it cannot open for writing' => ['errors', ['message' => 'boom'], 'errors.lock', 0444, 'the lock file errors.lock is not writable'],
+    'a buffer file it cannot read' => ['events', ['event_name' => 'signup'], 'events.json', 0200, 'the buffer file events.json is not readable'],
+])->skip(runsAsRoot(...), 'root ignores file modes');
