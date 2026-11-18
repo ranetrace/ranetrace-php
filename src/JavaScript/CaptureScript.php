@@ -35,7 +35,8 @@ use RuntimeException;
  * read here, because this body is inlined into every page view of every site that
  * installs either SDK, where its comments and indentation would be downloaded by
  * every visitor on the critical path of a page they are waiting for. Minified it
- * is about 4.3 KB instead of 13.4 KB, 1.7 KB instead of 4.0 KB over the wire.
+ * is under a third of the source's size, and under half once gzipped;
+ * `composer build-js` prints the current figures.
  *
  * The twin is committed rather than built on install because a PHP package is
  * installed by Composer, which runs no JavaScript toolchain. A consumer must
