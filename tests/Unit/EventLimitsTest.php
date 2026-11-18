@@ -282,7 +282,7 @@ test('a dropped event with a sink that throws is still dropped without throwing'
         ->toBeNull();
 });
 
-test('an item without a properties key is never given one', function (): void {
+test('an item over the limit without a properties key is dropped', function (): void {
     $item = limitedEvent([], 'https://shop.test/'.str_repeat('é', 1_900));
     unset($item['properties']);
 
