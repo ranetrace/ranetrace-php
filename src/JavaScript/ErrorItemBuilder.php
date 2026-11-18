@@ -112,7 +112,24 @@ final class ErrorItemBuilder
      * @param  string|null  $sessionId  Already hashed. Never the raw session id: a leaked payload must not be replayable as a session.
      * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues  Path segment values to redact from the reported URL and from any URL inside the breadcrumbs or context: a fixed list, or a per-URL resolver for a host with a router.
      * @param  string|null  $timestampFallback  Used when the payload names no timestamp. Null reads this process's clock, which a host with a freezable clock of its own will not want.
-     * @return array<string, mixed>
+     * @return array{
+     *     id: string,
+     *     message: string,
+     *     stack: string|null,
+     *     type: string,
+     *     filename: string|null,
+     *     line: int|null,
+     *     column: int|null,
+     *     user_agent: string|null,
+     *     url: string,
+     *     timestamp: string,
+     *     environment: string,
+     *     user_id: int|string|null,
+     *     session_id: string|null,
+     *     breadcrumbs: list<array{timestamp: mixed, category: mixed, message: mixed, data: array<array-key, mixed>}>,
+     *     context: array<array-key, mixed>,
+     *     browser_info: array<string, mixed>,
+     * }
      */
     public function build(
         array $payload,
@@ -165,7 +182,7 @@ final class ErrorItemBuilder
      *
      * @param  mixed  $breadcrumbs  Validated to be an array or absent by this point.
      * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues
-     * @return array<int, array{timestamp: mixed, category: mixed, message: mixed, data: array<array-key, mixed>}>
+     * @return list<array{timestamp: mixed, category: mixed, message: mixed, data: array<array-key, mixed>}>
      */
     private function breadcrumbs(mixed $breadcrumbs, array|callable|null $sensitivePathValues): array
     {
