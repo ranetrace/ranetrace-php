@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use Ranetrace\Php\Errors\ErrorContext;
-use Ranetrace\Php\Errors\PayloadBuilder;
 use Ranetrace\Php\Events\EventItemBuilder;
 use Ranetrace\Php\JavaScript\ErrorItemBuilder;
 use Ranetrace\Php\Logging\LogItemBuilder;
@@ -23,10 +22,7 @@ use Ranetrace\Php\Support\StringLimit;
  */
 function utf8ErrorItem(Throwable $throwable, ?ErrorContext $context = null, array $overrides = []): array
 {
-    $config = testConfig(array_replace_recursive(['internal_logging' => ['enabled' => false]], $overrides));
-    $log = new InternalLogger($config);
-
-    return (new PayloadBuilder($config, new SecretScrubber($config, $log), $log))
+    return errorBuilder($overrides)
         ->build($throwable, $context ?? ErrorContext::provided(isConsole: true));
 }
 

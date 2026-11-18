@@ -3,9 +3,6 @@
 declare(strict_types=1);
 
 use Ranetrace\Php\Errors\ErrorContext;
-use Ranetrace\Php\Errors\PayloadBuilder;
-use Ranetrace\Php\Support\InternalLogger;
-use Ranetrace\Php\Support\SecretScrubber;
 use Ranetrace\Php\Support\StringLimit;
 
 /**
@@ -17,22 +14,8 @@ use Ranetrace\Php\Support\StringLimit;
  * plain-PHP reporter can never reach it: it has no router to resolve a path
  * secret from and no clock but its own.
  */
-
-/**
- * @param  array<string, mixed>  $overrides
- */
-function contextBuilder(array $overrides = []): PayloadBuilder
-{
-    $config = testConfig(array_replace_recursive(
-        ['internal_logging' => ['enabled' => false]],
-        $overrides,
-    ));
-
-    return new PayloadBuilder($config, new SecretScrubber($config, new InternalLogger($config)), new InternalLogger($config));
-}
-
 test('a host that states its own request has that request shaped, not a superglobal', function (): void {
-    $payload = contextBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
+    $payload = errorBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
         isConsole: false,
         headers: ['host' => ['app.test'], 'user-agent' => ['Mozilla/5.0'], 'cookie' => ['session=abc']],
         url: 'https://app.test/orders/42?api_key=sk-live',
@@ -55,7 +38,7 @@ test('a host that states its own request has that request shaped, not a superglo
  * beside it stays plaintext.
  */
 test('the client IP chain is masked rather than captured', function (): void {
-    $payload = contextBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
+    $payload = errorBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
         isConsole: false,
         headers: [
             'x-forwarded-for' => ['203.0.113.7, 198.51.100.2'],
@@ -73,7 +56,7 @@ test('the client IP chain is masked rather than captured', function (): void {
  * about the URL is rewritten.
  */
 test('the path segment values the host declared secret are redacted from the URL', function (): void {
-    $payload = contextBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
+    $payload = errorBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
         isConsole: false,
         url: 'http://app.test/reset-password/live-reset-token-xyz789?page=2',
         sensitivePathValues: ['live-reset-token-xyz789'],
@@ -90,7 +73,7 @@ test('the path segment values the host declared secret are redacted from the URL
 test('a referer is redacted from the path values the host resolves for that url', function (): void {
     $asked = [];
 
-    $payload = contextBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
+    $payload = errorBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
         isConsole: false,
         headers: ['referer' => ['http://app.test/invitations/invite-token-abc?token=live']],
         url: 'http://app.test/dashboard',
@@ -107,7 +90,7 @@ test('a referer is redacted from the path values the host resolves for that url'
 });
 
 test('a host that pins the capture time gets its value, not the builder clock', function (): void {
-    $payload = contextBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
+    $payload = errorBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
         isConsole: true,
         timestamp: '2026-08-19T09:30:45+00:00',
     ));
@@ -116,7 +99,7 @@ test('a host that pins the capture time gets its value, not the builder clock', 
 });
 
 test('a host that states its console command line has it scrubbed and bounded', function (): void {
-    $payload = contextBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
+    $payload = errorBuilder()->build(new RuntimeException('Something broke'), ErrorContext::provided(
         isConsole: true,
         consoleCommand: 'artisan queue:work --token=sk-live-secret',
         consoleArguments: ['artisan', 'queue:work', '--token=sk-live-secret'],
@@ -142,7 +125,7 @@ test('an over-long source line is capped inside the preview and keeps its newlin
     (new ReflectionProperty(Exception::class, 'file'))->setValue($exception, $file);
     (new ReflectionProperty(Exception::class, 'line'))->setValue($exception, 2);
 
-    $lines = explode("\n", (string) contextBuilder()->build($exception, ErrorContext::provided(isConsole: true))['context']);
+    $lines = explode("\n", (string) errorBuilder()->build($exception, ErrorContext::provided(isConsole: true))['context']);
 
     expect($lines[0])->toBe('short line')
         ->and(mb_strlen($lines[1]))->toBe(2_000 + mb_strlen(StringLimit::SUFFIX))

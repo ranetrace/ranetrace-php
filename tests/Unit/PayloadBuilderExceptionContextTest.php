@@ -3,9 +3,6 @@
 declare(strict_types=1);
 
 use Ranetrace\Php\Errors\ErrorContext;
-use Ranetrace\Php\Errors\PayloadBuilder;
-use Ranetrace\Php\Support\InternalLogger;
-use Ranetrace\Php\Support\SecretScrubber;
 use Ranetrace\Php\Support\StringLimit;
 
 /**
@@ -14,19 +11,13 @@ use Ranetrace\Php\Support\StringLimit;
  * refuses an item whose context is past 100 keys, 5 levels or 16,384 bytes,
  * so these tests pin the tighter bounds the SDK holds it to.
  */
-function exceptionContextBuilder(): PayloadBuilder
-{
-    $config = testConfig(['internal_logging' => ['enabled' => false]]);
-
-    return new PayloadBuilder($config, new SecretScrubber($config, new InternalLogger($config)), new InternalLogger($config));
-}
 
 /**
  * @return array<string, mixed>
  */
 function exceptionContextPayload(Throwable $throwable, ?ErrorContext $context = null): array
 {
-    return exceptionContextBuilder()->build($throwable, $context ?? ErrorContext::provided(isConsole: true));
+    return errorBuilder()->build($throwable, $context ?? ErrorContext::provided(isConsole: true));
 }
 
 /**

@@ -240,6 +240,20 @@ function frameBuilder(string $root, array $overrides = [], array $mappers = [], 
 }
 
 /**
+ * A PayloadBuilder with internal logging off, for tests that read only the
+ * item. $log, when given, receives what the builder itself reports.
+ *
+ * @param  array<string, mixed>  $overrides  Merged recursively over the quiet defaults.
+ */
+function errorBuilder(array $overrides = [], ?Ranetrace\Php\Support\Diagnostics $log = null): Ranetrace\Php\Errors\PayloadBuilder
+{
+    $config = testConfig(array_replace_recursive(['internal_logging' => ['enabled' => false]], $overrides));
+    $internal = new Ranetrace\Php\Support\InternalLogger($config);
+
+    return new Ranetrace\Php\Errors\PayloadBuilder($config, new Ranetrace\Php\Support\SecretScrubber($config, $internal), $log ?? $internal);
+}
+
+/**
  * The item a frame-test builder makes of $throwable, in a console context.
  *
  * @return array<string, mixed>

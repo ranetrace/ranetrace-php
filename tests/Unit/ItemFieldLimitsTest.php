@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use Ranetrace\Php\Errors\ErrorContext;
-use Ranetrace\Php\Errors\PayloadBuilder;
 use Ranetrace\Php\JavaScript\ErrorItemBuilder;
 use Ranetrace\Php\JavaScript\Relay;
 use Ranetrace\Php\Logging\LogItemBuilder;
@@ -29,13 +28,7 @@ use Ranetrace\Php\Tests\Doubles\RecordingDiagnostics;
  */
 function limitsErrorItem(array $overrides = [], ?ErrorContext $context = null, ?Diagnostics $log = null): array
 {
-    $config = testConfig(array_replace_recursive([
-        'internal_logging' => ['enabled' => false],
-        'errors' => ['capture_source' => false],
-    ], $overrides));
-    $internal = new InternalLogger($config);
-
-    return (new PayloadBuilder($config, new SecretScrubber($config, $internal), $log ?? $internal))
+    return errorBuilder(array_replace_recursive(['errors' => ['capture_source' => false]], $overrides), $log)
         ->build(new RuntimeException('Something broke'), $context ?? ErrorContext::provided(isConsole: true));
 }
 
