@@ -447,6 +447,55 @@ test('it redacts host declared sensitive path segments from the reported url', f
     expect(firstJavascriptError($buffer)['url'])->toBe('https://app.test/reset/[REDACTED]?page=2');
 });
 
+test('it scrubs the query string of the script address, as it does that of the reported url', function (): void {
+    $buffer = new ArrayBuffer;
+
+    relay($buffer)->handleRequest(relayServer(), relayPayload([
+        'filename' => 'https://cdn.test/app.js?token=secret&v=3',
+    ]));
+
+    expect(firstJavascriptError($buffer)['filename'])->toBe('https://cdn.test/app.js?token=[REDACTED]&v=3');
+});
+
+test('it redacts host declared sensitive path segments from the script address, which is the page itself for an inline script', function (): void {
+    $buffer = new ArrayBuffer;
+
+    $relay = relay($buffer);
+    $relay->setSensitivePathValues(['abc123']);
+    $relay->handleRequest(relayServer(), relayPayload(['filename' => 'https://app.test/reset/abc123']));
+
+    expect(firstJavascriptError($buffer)['filename'])->toBe('https://app.test/reset/[REDACTED]');
+});
+
+test('a script address with nothing to redact arrives as the browser reported it', function (string $filename): void {
+    $buffer = new ArrayBuffer;
+
+    $relay = relay($buffer);
+    $relay->setSensitivePathValues(['abc123']);
+    $relay->handleRequest(relayServer(), relayPayload(['filename' => $filename]));
+
+    expect(firstJavascriptError($buffer)['filename'])->toBe($filename);
+})->with([
+    'a versioned asset' => ['https://app.test/build/app.js?v=3&id=abc1234'],
+    'a relative name' => ['app.js'],
+    'an anonymous script' => ['<anonymous>'],
+    'a bundler scheme' => ['webpack-internal:///./src/app.js'],
+    'an extension script' => ['chrome-extension://abcdefgh/content.js#section'],
+]);
+
+test('a script address the scrub lengthens is still cut to the 500 characters the endpoint takes', function (): void {
+    $buffer = new ArrayBuffer;
+    $filename = 'https://cdn.test/'.str_repeat('a', 470).'.js?token=abc';
+
+    relay($buffer)->handleRequest(relayServer(), relayPayload(['filename' => $filename]));
+
+    $sent = firstJavascriptError($buffer)['filename'];
+
+    expect(mb_strlen($filename))->toBe(500)
+        ->and(mb_strlen($sent))->toBe(500)
+        ->and($sent)->not->toContain('token=abc');
+});
+
 test('it redacts host declared sensitive path segments from breadcrumb and context URLs', function (): void {
     // Otherwise the same payload redacts the secret in the top-level url field
     // and ships it in a breadcrumb the tracker recorded from the same page.

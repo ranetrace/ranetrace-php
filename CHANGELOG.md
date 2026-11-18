@@ -6,6 +6,9 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+### Fixed
+- **A secret in the address of the script a JavaScript error came from no longer leaves the host.** The `filename` of a browser error was cut to length and sent as the browser reported it, while the message, the stack and the page URL were scrubbed. A script loaded from `https://cdn.example.com/app.js?token=...` therefore arrived with its token readable, and so did the page's own address for an error in an inline script, which the browser reports as the file. The filename is now scrubbed as the page URL is: its query string, and the path segments the host declared sensitive. A name with nothing to redact, such as `app.js` or `<anonymous>`, arrives as before. The Laravel SDK builds its item through the same class, so it gets the fix with this release. Nothing to do on upgrade
+
 ## [1.8.0] - 2026-11-18
 
 ### Added

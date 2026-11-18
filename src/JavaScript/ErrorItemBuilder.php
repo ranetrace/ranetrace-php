@@ -80,7 +80,8 @@ final class ErrorItemBuilder
 
     /**
      * The backend's bounds on the name fields, in characters. A name is cut
-     * to its first characters with no suffix.
+     * to its first characters with no suffix. The filename is a script
+     * address, so it is scrubbed as a URL first, see {@see scrubbedUrl()}.
      */
     public const int MAX_TYPE_LENGTH = 100;
 
@@ -110,7 +111,7 @@ final class ErrorItemBuilder
      * @param  string|null  $userAgent  Observed by the host, never read from the payload.
      * @param  int|string|null  $userId  The authenticated user, as the host knows them. A string the backend would reject for its length is sent as null.
      * @param  string|null  $sessionId  Already hashed. Never the raw session id: a leaked payload must not be replayable as a session.
-     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues  Path segment values to redact from the reported URL and from any URL inside the breadcrumbs or context: a fixed list, or a per-URL resolver for a host with a router.
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues  Path segment values to redact from the reported URL, the script address and any URL inside the breadcrumbs or context: a fixed list, or a per-URL resolver for a host with a router.
      * @param  string|null  $timestampFallback  Used when the payload names no timestamp. Null reads this process's clock, which a host with a freezable clock of its own will not want.
      * @return array{
      *     id: string,
@@ -148,18 +149,13 @@ final class ErrorItemBuilder
             'message' => StringLimit::cutWithSuffix($this->scrubber->scrubString(Utf8::repair($message)), self::MAX_MESSAGE_LENGTH),
             'stack' => is_string($stack) ? StringLimit::cutWithSuffix($this->scrubber->scrubString(Utf8::repair($stack)), self::MAX_STACK_LENGTH) : null,
             'type' => isset($payload['type']) && is_string($payload['type']) ? StringLimit::cut(Utf8::repair($payload['type']), self::MAX_TYPE_LENGTH) : 'Error',
-            'filename' => isset($payload['filename']) && is_string($payload['filename']) ? StringLimit::cut(Utf8::repair($payload['filename']), self::MAX_FILENAME_LENGTH) : null,
+            'filename' => isset($payload['filename']) && is_string($payload['filename'])
+                ? StringLimit::cut($this->scrubbedUrl(Utf8::repair($payload['filename']), $sensitivePathValues), self::MAX_FILENAME_LENGTH)
+                : null,
             'line' => $this->intOrNull($payload['line'] ?? null),
             'column' => $this->intOrNull($payload['column'] ?? null),
             'user_agent' => Utf8::repairNullable($userAgent),
-            // The reported URL is the page the error happened on, not the
-            // endpoint it was posted to, so it gets scrubbed on its own terms:
-            // query first, then whichever path segments the host declared
-            // secret-bearing for THAT url.
-            'url' => StringLimit::cutWithSuffix(
-                (string) $this->scrubber->scrubUrlPath($this->scrubber->scrubUrl(Utf8::repair($url)), $sensitivePathValues),
-                self::MAX_URL_LENGTH,
-            ),
+            'url' => StringLimit::cutWithSuffix($this->scrubbedUrl(Utf8::repair($url), $sensitivePathValues), self::MAX_URL_LENGTH),
             'timestamp' => $this->timestamp($payload, $timestampFallback),
             'environment' => EnvironmentName::fromConfig($this->config->get('environment')),
             'user_id' => UserId::accepted($userId),
@@ -172,6 +168,24 @@ final class ErrorItemBuilder
             ),
             'browser_info' => $this->browserInfo($payload['browser_info'] ?? [], $userAgent),
         ];
+    }
+
+    /**
+     * A URL the browser reported, scrubbed on its own terms: the query first,
+     * then whichever path segments the host declared secret-bearing for that
+     * URL. The page the error happened on is not the endpoint it was posted
+     * to, so the current request says nothing about either.
+     *
+     * The script address goes through it as the page URL does: a script can be
+     * loaded from a signed address, and for an inline script the browser
+     * reports the page itself as the file. A name that is not a URL, such as
+     * `<anonymous>`, has no query or declared segment and comes back as it is.
+     *
+     * @param  array<int, string>|(callable(string): (array<int, string>|null))|null  $sensitivePathValues
+     */
+    private function scrubbedUrl(string $url, array|callable|null $sensitivePathValues): string
+    {
+        return (string) $this->scrubber->scrubUrlPath($this->scrubber->scrubUrl($url), $sensitivePathValues);
     }
 
     /**
