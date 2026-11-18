@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace Ranetrace\Php\Support;
 
 /**
- * Cuts a string to a length limit, the one way every builder in the package
- * does it.
+ * Cuts a string to a length limit, the cut every builder uses for a field
+ * held inside its limit. A source line and the item byte budget add their
+ * suffix past their limit, and cut where they are.
  *
  * Free text that was cut ends in {@see SUFFIX}, so a reader can tell a cut
  * message from one that happened to end there. A name, such as a version, a
