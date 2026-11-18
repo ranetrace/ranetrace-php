@@ -6,6 +6,8 @@ This file starts here, so releases before it are not recorded; the git history i
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-18
+
 ### Added
 - **`Http\Heartbeat` reads the API's answer to a heartbeat.** `Heartbeat::accepted()` says whether the API took one, any 2xx as `contract/heartbeat.json` states, and `Heartbeat::answerLine()` gives the line the release check prints for the answer. The worker and `bin/release-check` each decided this in their own place. Both methods take the result of either SDK's client, so the Laravel SDK can read a heartbeat answer the same way. Nothing changes in what is sent, logged or printed
 
