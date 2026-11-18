@@ -2308,7 +2308,7 @@ function longTokensGluedToTheTextBefore(): array
         'a dollar sign' => '$',
         'the escaped newline of a json string' => 'keys:\n',
         'the escaped tab of a json string' => 'keys:\t',
-        'the escaped character of a json string' => '“',
+        'a curly quote' => '“',
     ];
 
     $cases = [];
