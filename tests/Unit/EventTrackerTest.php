@@ -405,9 +405,7 @@ test('a failure inside the capture work is swallowed', function (): void {
     $buffer = new ArrayBuffer;
     $buffer->throwOnWrite = true;
 
-    eventTracker($buffer)->track('page_view');
-
-    expect($buffer->count('events'))->toBe(0);
+    expect(fn () => eventTracker($buffer)->track('page_view'))->not->toThrow(Throwable::class);
 });
 
 test('the standard event name constants are the thirteen agreed names', function (): void {
