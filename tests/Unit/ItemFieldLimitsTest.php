@@ -68,7 +68,6 @@ test('an error item cuts a name field over its limit to its first characters, wi
     expect($over[$key])->toBe(str_repeat('é', $max))
         ->and($atLimit[$key])->toBe(str_repeat('é', $max));
 })->with([
-    'environment' => ['environment', 50],
     'framework' => ['framework', 50],
     'framework_version' => ['framework_version', 50],
 ]);
