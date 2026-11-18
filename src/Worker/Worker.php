@@ -240,9 +240,7 @@ final class Worker
      */
     public function lastHeartbeatAt(): ?int
     {
-        $stamp = $this->readState()[self::HEARTBEAT_STATE_KEY] ?? null;
-
-        return is_int($stamp) ? $stamp : null;
+        return $this->stampOf(self::HEARTBEAT_STATE_KEY);
     }
 
     /**
@@ -252,9 +250,7 @@ final class Worker
      */
     public function lastBatchAt(string $type): ?int
     {
-        $stamp = $this->readState()[$type] ?? null;
-
-        return is_int($stamp) ? $stamp : null;
+        return $this->stampOf($type);
     }
 
     /**
@@ -554,6 +550,17 @@ final class Worker
         $state[$key] = $time;
 
         return JsonFile::write($this->stateFile(), $state);
+    }
+
+    /**
+     * One timestamp from `state.json`, or null when it is missing or not an
+     * integer.
+     */
+    private function stampOf(string $key): ?int
+    {
+        $stamp = $this->readState()[$key] ?? null;
+
+        return is_int($stamp) ? $stamp : null;
     }
 
     /**
