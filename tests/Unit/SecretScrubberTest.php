@@ -2138,8 +2138,47 @@ test('it leaves a url without a password readable', function (string $value): vo
     'an email address' => ['mail rutger@example.com: sent'],
 ]);
 
+/*
+ * Tokens of a real length. Each is joined from two parts, so that this file
+ * holds no string a secret scanner takes for a live key.
+ */
+const LONG_STRIPE_KEY = 'sk_'.'live_51HabcDEF0123456789abcdefgh';
+
+const LONG_GITHUB_TOKEN = 'gh'.'p_1234567890abcdefABCDEF1234567890abcd';
+
+const LONG_SLACK_TOKEN = 'xox'.'b-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx';
+
+const LONG_AWS_KEY_ID = 'AK'.'IAIOSFODNN7EXAMPLE';
+
+const LONG_JWT = 'eyJhbGciOiJIUzI1NiJ9'.'.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+
+const LONG_GITHUB_APP_TOKEN = 'gh'.'s_1234567890abcdefABCDEF1234567890abcd';
+
+/**
+ * A GitHub App installation token in the format issued since 2026: the id
+ * of the app and a JWT after the prefix.
+ */
+const LONG_GITHUB_APP_JWT_TOKEN = 'gh'.'s_123456_'.LONG_JWT;
+
+const LONG_STRIPE_WEBHOOK_SECRET = 'whs'.'ec_AbCdEf0123456789AbCdEf0123456789';
+
+const LONG_STRIPE_ORGANIZATION_KEY = 'sk_'.'org_live_51HabcDEF0123456789abcdefgh';
+
+const LONG_SLACK_REFRESH_TOKEN = 'xox'.'e-1-My0xLTEyMzQ1Njc4OTAxMi0xMjM0NTY3ODkwMTIzLWFiY2RlZg';
+
+const LONG_SLACK_ROTATED_TOKEN = 'xox'.'e.xoxp-1-Mi0yLTEyMzQ1Njc4OTAxMi0xMjM0NTY3ODkwMTIzLWFiY2RlZg';
+
+const LONG_SLACK_APP_TOKEN = 'xap'.'p-1-A0123456789-1234567890123-0123456789abcdef0123456789abcdef';
+
+/**
+ * A GitLab personal access token in the routable format, without the
+ * version and checksum it ends in.
+ */
+const ROUTABLE_GITLAB_TOKEN = 'glp'.'at-YzowCm86MQp1OjFSDdqkLmVS337oi4qlKHnlEA';
+
 test('scrubString redacts a token whose prefix says what it is', function (string $value, string $expected): void {
-    expect(scrubber()->scrubString($value))->toBe($expected);
+    expect(scrubber()->scrubString($value))->toBe($expected)
+        ->and(scrubber()->scrubDeep(['v' => $value]))->toBe(['v' => $expected]);
 })->with([
     'stripe secret key' => ['charge failed with sk_live_abc123', 'charge failed with [REDACTED]'],
     'stripe restricted key' => ['key rk_live_51HabcDEF0123456789', 'key [REDACTED]'],
@@ -2157,6 +2196,23 @@ test('scrubString redacts a token whose prefix says what it is', function (strin
     ],
     'unsigned jwt' => ['token eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0. was refused', 'token [REDACTED] was refused'],
     'quoted in json' => ['{"key":"sk_live_abc123","ok":false}', '{"key":"[REDACTED]","ok":false}'],
+    'a github app installation token' => ['clone failed with '.LONG_GITHUB_APP_TOKEN, 'clone failed with [REDACTED]'],
+    'a github app user token' => ['gh'.'u_1234567890abcdefABCDEF1234567890abcd expired', '[REDACTED] expired'],
+    'a github app refresh token' => [
+        'gh'.'r_1234567890abcdefABCDEF1234567890abcd1234567890abcdefABCDEF1234567890abcd was refused',
+        '[REDACTED] was refused',
+    ],
+    'a github app installation token with a jwt' => ['clone failed with '.LONG_GITHUB_APP_JWT_TOKEN.' today', 'clone failed with [REDACTED] today'],
+    'a github app installation token with a jwt before a full stop' => ['refused '.LONG_GITHUB_APP_JWT_TOKEN.'.', 'refused [REDACTED].'],
+    'a stripe webhook signing secret' => ['no signature matched '.LONG_STRIPE_WEBHOOK_SECRET, 'no signature matched [REDACTED]'],
+    'a stripe organization key' => ['charge failed with '.LONG_STRIPE_ORGANIZATION_KEY, 'charge failed with [REDACTED]'],
+    'a stripe organization key without a mode' => ['charge failed with sk_'.'org_51HabcDEF0123456789abcdefgh', 'charge failed with [REDACTED]'],
+    'a slack refresh token' => ['slack said no to '.LONG_SLACK_REFRESH_TOKEN.'.', 'slack said no to [REDACTED].'],
+    'a rotated slack user token' => ['slack said no to '.LONG_SLACK_ROTATED_TOKEN.'.', 'slack said no to [REDACTED].'],
+    'a rotated slack bot token' => ['xox'.'e.xoxb-1-MS0xLTEyMzQ1Njc4OTAxMi0xMjM0NTY3ODkwMTIz expired', '[REDACTED] expired'],
+    'a slack app-level token' => ['socket closed for '.LONG_SLACK_APP_TOKEN, 'socket closed for [REDACTED]'],
+    'a rotated slack app-level token' => ['socket closed for xoxe.'.LONG_SLACK_APP_TOKEN, 'socket closed for [REDACTED]'],
+    'a slack app-level token without a version' => ['socket closed for xap'.'p-A0123456789-1234567890123-0123456789abcdef', 'socket closed for [REDACTED]'],
 ]);
 
 test('scrubSource redacts a token whose prefix says what it is', function (string $line, string $expected): void {
@@ -2230,44 +2286,6 @@ test('it leaves a look-alike of an encoded prefixed token readable', function (s
     'an identifier that goes on after an encoded underscore' => ['/flags/sk%5Flive%5Fmode'],
     'a short body after an encoded dash' => ['/x/launch%2Dsk_live_abc123'],
 ]);
-
-/*
- * Tokens of a real length. Each is joined from two parts, so that this file
- * holds no string a secret scanner takes for a live key.
- */
-const LONG_STRIPE_KEY = 'sk_'.'live_51HabcDEF0123456789abcdefgh';
-
-const LONG_GITHUB_TOKEN = 'gh'.'p_1234567890abcdefABCDEF1234567890abcd';
-
-const LONG_SLACK_TOKEN = 'xox'.'b-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx';
-
-const LONG_AWS_KEY_ID = 'AK'.'IAIOSFODNN7EXAMPLE';
-
-const LONG_JWT = 'eyJhbGciOiJIUzI1NiJ9'.'.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
-
-const LONG_GITHUB_APP_TOKEN = 'gh'.'s_1234567890abcdefABCDEF1234567890abcd';
-
-/**
- * A GitHub App installation token in the format issued since 2026: the id
- * of the app and a JWT after the prefix.
- */
-const LONG_GITHUB_APP_JWT_TOKEN = 'gh'.'s_123456_'.LONG_JWT;
-
-const LONG_STRIPE_WEBHOOK_SECRET = 'whs'.'ec_AbCdEf0123456789AbCdEf0123456789';
-
-const LONG_STRIPE_ORGANIZATION_KEY = 'sk_'.'org_live_51HabcDEF0123456789abcdefgh';
-
-const LONG_SLACK_REFRESH_TOKEN = 'xox'.'e-1-My0xLTEyMzQ1Njc4OTAxMi0xMjM0NTY3ODkwMTIzLWFiY2RlZg';
-
-const LONG_SLACK_ROTATED_TOKEN = 'xox'.'e.xoxp-1-Mi0yLTEyMzQ1Njc4OTAxMi0xMjM0NTY3ODkwMTIzLWFiY2RlZg';
-
-const LONG_SLACK_APP_TOKEN = 'xap'.'p-1-A0123456789-1234567890123-0123456789abcdef0123456789abcdef';
-
-/**
- * A GitLab personal access token in the routable format, without the
- * version and checksum it ends in.
- */
-const ROUTABLE_GITLAB_TOKEN = 'glp'.'at-YzowCm86MQp1OjFSDdqkLmVS337oi4qlKHnlEA';
 
 /**
  * Every token whose body is its own evidence, 20 characters or more, glued to
@@ -2346,29 +2364,6 @@ test('a token of a real length is redacted whatever stands right after it', func
     'a stripe organization key before an underscore' => ['x '.LONG_STRIPE_ORGANIZATION_KEY.'_old', 'x [REDACTED]_old'],
     'a slack refresh token before an underscore' => ['x '.LONG_SLACK_REFRESH_TOKEN.'_old', 'x [REDACTED]_old'],
     'a slack app-level token before an underscore' => ['x '.LONG_SLACK_APP_TOKEN.'_old', 'x [REDACTED]_old'],
-]);
-
-test('scrubString redacts each token a github app, a stripe webhook or organization and a rotating slack app is issued', function (string $value, string $expected): void {
-    expect(scrubber()->scrubString($value))->toBe($expected)
-        ->and(scrubber()->scrubDeep(['v' => $value]))->toBe(['v' => $expected]);
-})->with([
-    'a github app installation token' => ['clone failed with '.LONG_GITHUB_APP_TOKEN, 'clone failed with [REDACTED]'],
-    'a github app user token' => ['gh'.'u_1234567890abcdefABCDEF1234567890abcd expired', '[REDACTED] expired'],
-    'a github app refresh token' => [
-        'gh'.'r_1234567890abcdefABCDEF1234567890abcd1234567890abcdefABCDEF1234567890abcd was refused',
-        '[REDACTED] was refused',
-    ],
-    'a github app installation token with a jwt' => ['clone failed with '.LONG_GITHUB_APP_JWT_TOKEN.' today', 'clone failed with [REDACTED] today'],
-    'a github app installation token with a jwt before a full stop' => ['refused '.LONG_GITHUB_APP_JWT_TOKEN.'.', 'refused [REDACTED].'],
-    'a stripe webhook signing secret' => ['no signature matched '.LONG_STRIPE_WEBHOOK_SECRET, 'no signature matched [REDACTED]'],
-    'a stripe organization key' => ['charge failed with '.LONG_STRIPE_ORGANIZATION_KEY, 'charge failed with [REDACTED]'],
-    'a stripe organization key without a mode' => ['charge failed with sk_'.'org_51HabcDEF0123456789abcdefgh', 'charge failed with [REDACTED]'],
-    'a slack refresh token' => ['slack said no to '.LONG_SLACK_REFRESH_TOKEN.'.', 'slack said no to [REDACTED].'],
-    'a rotated slack user token' => ['slack said no to '.LONG_SLACK_ROTATED_TOKEN.'.', 'slack said no to [REDACTED].'],
-    'a rotated slack bot token' => ['xox'.'e.xoxb-1-MS0xLTEyMzQ1Njc4OTAxMi0xMjM0NTY3ODkwMTIz expired', '[REDACTED] expired'],
-    'a slack app-level token' => ['socket closed for '.LONG_SLACK_APP_TOKEN, 'socket closed for [REDACTED]'],
-    'a rotated slack app-level token' => ['socket closed for xoxe.'.LONG_SLACK_APP_TOKEN, 'socket closed for [REDACTED]'],
-    'a slack app-level token without a version' => ['socket closed for xap'.'p-A0123456789-1234567890123-0123456789abcdef', 'socket closed for [REDACTED]'],
 ]);
 
 test('scrubString redacts a gitlab token of every prefix gitlab issues', function (string $prefix): void {
