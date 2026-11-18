@@ -245,6 +245,7 @@ test('the root is taken off the message before it is cut to length, so a cut can
     $payload = framePayload(frameBuilder($root), new RuntimeException(str_repeat("{$root}/storage/file.txt ", 700)));
 
     expect($payload['message'])->toEndWith('... (truncated)')
+        ->and(mb_strlen($payload['message']))->toBe(10_000)
         ->and($payload['message'])->toStartWith('storage/file.txt storage/file.txt ')
         ->and($payload['message'])->not->toContain(mb_substr($root, 0, 12));
 });
