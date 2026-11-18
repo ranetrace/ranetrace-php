@@ -499,13 +499,7 @@ it('says when this user cannot use the buffer, without changing the exit state',
 
 it('never throws when the transport throws', function (): void {
     $directory = tempDirectory();
-    $http = new class extends FakeHttpClient
-    {
-        public function post(string $url, array $headers, string $body, int $connectTimeout, int $timeout): RawResponse
-        {
-            throw new RuntimeException('transport exploded');
-        }
-    };
+    $http = FakeHttpClient::throwing();
 
     $report = sendTestSdk($directory, $http)->sendTest();
 

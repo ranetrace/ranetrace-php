@@ -188,13 +188,7 @@ it('turns a transport failure into a status zero result', function (): void {
 });
 
 it('never lets a throwing transport escape', function (): void {
-    $http = new class extends FakeHttpClient
-    {
-        public function post(string $url, array $headers, string $body, int $connectTimeout, int $timeout): RawResponse
-        {
-            throw new RuntimeException('transport exploded');
-        }
-    };
+    $http = FakeHttpClient::throwing();
 
     $result = apiClient($http)->sendBatch('/errors/store', 'errors', 'Ranetrace-PHP/Errors/1.0', 10, [['message' => 'boom']]);
 
@@ -261,13 +255,7 @@ it('turns a heartbeat the transport could not deliver into a status zero result'
 });
 
 it('never lets a transport that throws on a heartbeat escape', function (): void {
-    $http = new class extends FakeHttpClient
-    {
-        public function post(string $url, array $headers, string $body, int $connectTimeout, int $timeout): RawResponse
-        {
-            throw new RuntimeException('transport exploded');
-        }
-    };
+    $http = FakeHttpClient::throwing();
 
     $result = apiClient($http)->sendHeartbeat(new Heartbeat('PHP', 'v1.7.0'));
 

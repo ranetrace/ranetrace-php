@@ -852,13 +852,7 @@ it('writes one debug line for a heartbeat the api accepted', function (): void {
 });
 
 it('never throws when the transport throws on a heartbeat', function (): void {
-    $http = new class extends FakeHttpClient
-    {
-        public function post(string $url, array $headers, string $body, int $connectTimeout, int $timeout): RawResponse
-        {
-            throw new RuntimeException('transport exploded');
-        }
-    };
+    $http = FakeHttpClient::throwing();
     $harness = workerHarness($http);
 
     $harness['worker']->heartbeat();

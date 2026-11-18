@@ -402,13 +402,8 @@ test('a rejected buffer write is a silent drop, never an exception into the host
 });
 
 test('a failure inside the capture work is swallowed', function (): void {
-    $buffer = new class extends ArrayBuffer
-    {
-        public function addItems(string $type, array $items): bool
-        {
-            throw new RuntimeException('buffer exploded');
-        }
-    };
+    $buffer = new ArrayBuffer;
+    $buffer->throwOnWrite = true;
 
     eventTracker($buffer)->track('page_view');
 

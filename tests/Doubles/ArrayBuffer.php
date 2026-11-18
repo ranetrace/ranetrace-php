@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ranetrace\Php\Tests\Doubles;
 
 use Ranetrace\Php\Buffer\BufferInterface;
+use RuntimeException;
 
 /**
  * In-memory buffer for feature tests: same contract as the file buffer, none
@@ -17,6 +18,9 @@ class ArrayBuffer implements BufferInterface
 
     public bool $rejectWrites = false;
 
+    /** Makes every write throw a RuntimeException, as a buffer failing in a way it does not report would. */
+    public bool $throwOnWrite = false;
+
     public function addItem(string $type, array $data): bool
     {
         return $this->addItems($type, [$data]);
@@ -24,6 +28,10 @@ class ArrayBuffer implements BufferInterface
 
     public function addItems(string $type, array $items): bool
     {
+        if ($this->throwOnWrite) {
+            throw new RuntimeException('buffer exploded');
+        }
+
         if ($this->rejectWrites) {
             return false;
         }

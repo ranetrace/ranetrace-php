@@ -671,13 +671,8 @@ test('a rejected buffer write is acknowledged, because the browser cannot fix it
 });
 
 test('an unexpected failure becomes a 500 body rather than an exception into the host', function (): void {
-    $buffer = new class extends ArrayBuffer
-    {
-        public function addItems(string $type, array $items): bool
-        {
-            throw new RuntimeException('buffer exploded');
-        }
-    };
+    $buffer = new ArrayBuffer;
+    $buffer->throwOnWrite = true;
 
     $response = relay($buffer)->handleRequest(relayServer(), relayPayload());
 

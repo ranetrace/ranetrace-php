@@ -138,13 +138,7 @@ it('never lets a shutdown flush throw', function (): void {
 });
 
 it('contains a transport that throws instead of surfacing it', function (): void {
-    $http = new class extends FakeHttpClient
-    {
-        public function post(string $url, array $headers, string $body, int $connectTimeout, int $timeout): RawResponse
-        {
-            throw new RuntimeException('transport exploded');
-        }
-    };
+    $http = FakeHttpClient::throwing();
 
     $ranetrace = ranetraceFacade(tempDirectory())->withHttpClient($http);
     $ranetrace->buffer()->addItem('errors', ['message' => 'boom']);
@@ -177,13 +171,7 @@ it('sends a heartbeat through the injected transport when asked, and never from 
 });
 
 it('never lets a heartbeat throw', function (): void {
-    $http = new class extends FakeHttpClient
-    {
-        public function post(string $url, array $headers, string $body, int $connectTimeout, int $timeout): RawResponse
-        {
-            throw new RuntimeException('transport exploded');
-        }
-    };
+    $http = FakeHttpClient::throwing();
     $ranetrace = ranetraceFacade(tempDirectory())->withHttpClient($http);
 
     $ranetrace->heartbeat();

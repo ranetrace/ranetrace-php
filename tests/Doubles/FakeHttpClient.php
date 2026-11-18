@@ -6,6 +6,7 @@ namespace Ranetrace\Php\Tests\Doubles;
 
 use Ranetrace\Php\Http\HttpClientInterface;
 use Ranetrace\Php\Http\RawResponse;
+use RuntimeException;
 
 /**
  * Records every request and replays queued responses. The transport seam is
@@ -20,6 +21,8 @@ class FakeHttpClient implements HttpClientInterface
     /** @var array<int, RawResponse> */
     public array $responses = [];
 
+    private ?string $throws = null;
+
     public function __construct(RawResponse ...$responses)
     {
         $this->responses = $responses;
@@ -33,8 +36,24 @@ class FakeHttpClient implements HttpClientInterface
         return new self(new RawResponse($status, is_string($body) ? $body : (string) json_encode($body), $headers));
     }
 
+    /**
+     * A transport whose every request throws a RuntimeException with $message,
+     * before anything is recorded.
+     */
+    public static function throwing(string $message = 'transport exploded'): self
+    {
+        $client = new self;
+        $client->throws = $message;
+
+        return $client;
+    }
+
     public function post(string $url, array $headers, string $body, int $connectTimeout, int $timeout): RawResponse
     {
+        if ($this->throws !== null) {
+            throw new RuntimeException($this->throws);
+        }
+
         $this->requests[] = [
             'url' => $url,
             'headers' => $headers,
