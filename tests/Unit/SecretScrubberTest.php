@@ -1715,7 +1715,6 @@ test('scrubString redacts the whole value when PCRE gives up, and says so in the
     }
 
     expect($result)->toBe('[REDACTED]')
-        ->and($result)->not->toBe($value)
         ->and(scrubberInternalLog($directory))->toContain('WARNING')
         ->toContain('Backtrack limit');
 });
