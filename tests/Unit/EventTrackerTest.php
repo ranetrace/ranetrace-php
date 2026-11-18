@@ -579,7 +579,7 @@ test('customUnsafe skips validation', function (): void {
  * event is held to them first and the general budget has nothing left to do:
  * the internal log holds the event's own line and not the budget's.
  */
-test('an event over the endpoint limits reaches the buffer cut, and the general budget has nothing left to do', function (): void {
+test('an event over the endpoint limits is buffered cut to them, and the per-item budget logs nothing', function (): void {
     $directory = tempDirectory();
     $buffer = new ArrayBuffer;
 
