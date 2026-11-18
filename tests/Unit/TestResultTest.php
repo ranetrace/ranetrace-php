@@ -7,9 +7,9 @@ use Ranetrace\Php\Worker\TestResult;
 
 /**
  * The wording of every outcome, the pauses a 200 lifts and the closing
- * sentence are pinned through `vendor/bin/ranetrace-test`'s output in
- * SendTestTest. What is left here is what that test cannot reach: a result in
- * the shape the Laravel client returns, which this package's client never
+ * sentence are pinned through the rendered report of `Ranetrace::sendTest()`
+ * in SendTestTest. What is left here is what that test cannot reach: a result
+ * in the shape the Laravel client returns, which this package's client never
  * produces, and the rules as the other SDK calls them.
  */
 it('reads a result in the laravel client\'s shape, with empty headers and no error key', function (array $result, TestOutcome $outcome, int $status, string $message, int $seconds): void {
