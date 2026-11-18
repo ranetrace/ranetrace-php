@@ -100,7 +100,7 @@ final class ItemByteBudget
      */
     public function cap(string $type, array $payload): ?array
     {
-        $bytes = self::encodedBytes($payload);
+        $bytes = PayloadSizer::encodedBytes($payload);
 
         if ($bytes !== null && $bytes <= self::MAX_ITEM_BYTES) {
             return $payload;
@@ -111,7 +111,7 @@ final class ItemByteBudget
 
         if ($isError) {
             $payload = ErrorItemShedder::shed($payload, self::MAX_ITEM_BYTES);
-            $shedBytes = self::encodedBytes($payload);
+            $shedBytes = PayloadSizer::encodedBytes($payload);
 
             if ($encodable && $shedBytes !== null && $shedBytes <= self::MAX_ITEM_BYTES) {
                 $this->log->warning('Captured item exceeded the per-item byte budget and was shrunk', [
@@ -139,7 +139,7 @@ final class ItemByteBudget
             }
         }
 
-        $bytes = self::encodedBytes($payload);
+        $bytes = PayloadSizer::encodedBytes($payload);
 
         if ($bytes === null) {
             $this->log->warning('Captured item could not be encoded as JSON and was dropped', ['type' => $type]);
@@ -168,20 +168,5 @@ final class ItemByteBudget
         ]);
 
         return $payload;
-    }
-
-    /**
-     * Byte size, measured with `mb_strlen(..., '8bit')` (NOT `strlen`: the
-     * repo's Pint `mb_str_functions` rule would rewrite `strlen` to a
-     * char-counting `mb_strlen`, breaking the budget on multibyte data). Null
-     * when the payload cannot be encoded at all.
-     *
-     * @param  array<string, mixed>  $payload
-     */
-    private static function encodedBytes(array $payload): ?int
-    {
-        $encoded = json_encode($payload);
-
-        return $encoded === false ? null : mb_strlen($encoded, '8bit');
     }
 }

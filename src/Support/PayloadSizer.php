@@ -29,25 +29,38 @@ final class PayloadSizer
      * marker with {@see UNENCODABLE_REASON}. Measured as zero bytes it would be
      * kept, and then fail the encode of its item or of the batch it is sent in.
      *
-     * Byte size is measured with `mb_strlen(..., '8bit')` (NOT `strlen`: the
-     * repo's Pint `mb_str_functions` rule would rewrite `strlen` to a
-     * char-counting `mb_strlen`, breaking the byte budget on multibyte data).
-     *
      * @param  array<array-key, mixed>  $data
      * @return array<array-key, mixed>
      */
     public static function capBytes(array $data, int $maxBytes, string $reason): array
     {
-        $encoded = json_encode($data);
+        $bytes = self::encodedBytes($data);
 
-        if ($encoded === false) {
+        if ($bytes === null) {
             return ['_truncated' => self::UNENCODABLE_REASON];
         }
 
-        if (mb_strlen($encoded, '8bit') > $maxBytes) {
+        if ($bytes > $maxBytes) {
             return ['_truncated' => $reason];
         }
 
         return $data;
+    }
+
+    /**
+     * The byte length of PHP's default JSON encoding of the value, or null when
+     * it cannot be encoded at all. That is how the endpoints measure: they
+     * decode the batch and encode each item again, so escaped slashes and
+     * `\uXXXX` count.
+     *
+     * Measured with `mb_strlen(..., '8bit')` rather than `strlen`, which the
+     * repo's Pint `mb_str_functions` rule would rewrite to a character count,
+     * breaking every byte budget on multibyte data.
+     */
+    public static function encodedBytes(mixed $value): ?int
+    {
+        $encoded = json_encode($value);
+
+        return $encoded === false ? null : mb_strlen($encoded, '8bit');
     }
 }

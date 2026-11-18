@@ -86,21 +86,6 @@ final class EventLimits
     }
 
     /**
-     * The byte length of PHP's default JSON encoding, which is how the
-     * endpoint measures: it decodes the batch and encodes each item again, so
-     * escaped slashes and `\uXXXX` count. Measured with `mb_strlen(..., '8bit')`
-     * rather than `strlen`, which the repo's Pint `mb_str_functions` rule
-     * would rewrite to a character count. Null when the value cannot be
-     * encoded at all.
-     */
-    private static function encodedBytes(mixed $value): ?int
-    {
-        $encoded = json_encode($value);
-
-        return $encoded === false ? null : mb_strlen($encoded, '8bit');
-    }
-
-    /**
      * @param  array<string, mixed>  $item
      * @return array<string, mixed>|null
      */
@@ -115,12 +100,12 @@ final class EventLimits
 
         [$item, $replacedProperties] = $this->replaceLargestProperties($item);
         $allPropertiesReplaced = false;
-        $bytes = self::encodedBytes($item);
+        $bytes = PayloadSizer::encodedBytes($item);
 
         if (($bytes === null || $bytes > self::MAX_ITEM_BYTES) && $this->replaceable($item)) {
             $item['properties'] = ['_truncated' => self::PROPERTIES_REPLACED_REASON];
             $allPropertiesReplaced = true;
-            $bytes = self::encodedBytes($item);
+            $bytes = PayloadSizer::encodedBytes($item);
         }
 
         if ($bytes === null || $bytes > self::MAX_ITEM_BYTES) {
@@ -186,18 +171,18 @@ final class EventLimits
     private function replaceLargestProperties(array $item): array
     {
         $properties = $item['properties'] ?? null;
-        $bytes = self::encodedBytes($item);
+        $bytes = PayloadSizer::encodedBytes($item);
 
         if (! is_array($properties) || ($bytes !== null && $bytes <= self::MAX_ITEM_BYTES)) {
             return [$item, []];
         }
 
         $marker = ['_truncated' => self::PROPERTY_REPLACED_REASON];
-        $markerBytes = (int) self::encodedBytes($marker);
+        $markerBytes = (int) PayloadSizer::encodedBytes($marker);
         $sizes = [];
 
         foreach ($properties as $key => $value) {
-            $sizes[$key] = self::encodedBytes($value) ?? PHP_INT_MAX;
+            $sizes[$key] = PayloadSizer::encodedBytes($value) ?? PHP_INT_MAX;
         }
 
         arsort($sizes);
@@ -215,7 +200,7 @@ final class EventLimits
             $properties[$key] = $marker;
             $replaced[] = $key;
             $item['properties'] = $properties;
-            $bytes = $bytes === null ? self::encodedBytes($item) : $bytes - $size + $markerBytes;
+            $bytes = $bytes === null ? PayloadSizer::encodedBytes($item) : $bytes - $size + $markerBytes;
         }
 
         return [$item, $replaced];
@@ -233,9 +218,9 @@ final class EventLimits
             return false;
         }
 
-        $bytes = self::encodedBytes($item['properties']) ?? PHP_INT_MAX;
+        $bytes = PayloadSizer::encodedBytes($item['properties']) ?? PHP_INT_MAX;
 
-        return $bytes > (int) self::encodedBytes(['_truncated' => self::PROPERTIES_REPLACED_REASON]);
+        return $bytes > (int) PayloadSizer::encodedBytes(['_truncated' => self::PROPERTIES_REPLACED_REASON]);
     }
 
     /**

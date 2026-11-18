@@ -47,3 +47,11 @@ test('data JSON cannot encode is replaced by the marker with its own reason, nev
         ->toBe(['_truncated' => PayloadSizer::UNENCODABLE_REASON])
         ->and(json_encode(PayloadSizer::capBytes(['ratio' => NAN], 51_200, 'too big')))->not->toBeFalse();
 });
+
+test('the encoded size of any value counts the bytes of its escapes, and an unencodable value has none', function (): void {
+    // `"\u00e9\/"`: one character and a slash take eight bytes between the quotes.
+    expect(PayloadSizer::encodedBytes('é/'))->toBe(10)
+        ->and(PayloadSizer::encodedBytes(42))->toBe(2)
+        ->and(PayloadSizer::encodedBytes(['a' => 'b']))->toBe(9)
+        ->and(PayloadSizer::encodedBytes(INF))->toBeNull();
+});
