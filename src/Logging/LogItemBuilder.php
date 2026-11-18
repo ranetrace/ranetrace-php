@@ -83,10 +83,6 @@ final class LogItemBuilder
         return [
             'level' => mb_strtolower(Utf8::repair($level)),
             'message' => $this->message($message),
-            // Sanitize for serialization, redact secrets (by sensitive key name,
-            // plus tokens inside URL-shaped string values), then cap size,
-            // replacing mid-structure rather than truncating, since partial JSON
-            // is not JSON.
             'context' => PayloadSizer::capBytes(
                 (array) $this->scrubber->scrubDeep($this->withoutProjectRoot($context), $sensitivePathValues),
                 self::MAX_CONTEXT_BYTES,
