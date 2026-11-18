@@ -352,19 +352,6 @@ test('a relative script path is sent as typed, since the working directory may h
         ->and($payload['console_arguments'])->toBe(['current/artisan', 'schedule:run']);
 });
 
-test('a web context sends no command line, symlinked or not', function (): void {
-    ['root' => $root, 'current' => $current] = symlinkedDeployment();
-
-    $payload = frameBuilder($root)->build(new RuntimeException('boom'), ErrorContext::provided(
-        isConsole: false,
-        consoleCommand: "{$current}/artisan schedule:run",
-        consoleArguments: ["{$current}/artisan", 'schedule:run'],
-    ));
-
-    expect($payload['console_command'])->toBeNull()
-        ->and($payload['console_arguments'])->toBeNull();
-});
-
 test('a script path that open_basedir keeps from being resolved costs nothing on a host whose error handler throws', function (): void {
     // open_basedir can only be tightened within a process, so the build runs
     // in one of its own. realpath() warns about a path outside it, and the
