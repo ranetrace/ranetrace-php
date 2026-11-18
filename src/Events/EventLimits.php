@@ -91,7 +91,6 @@ final class EventLimits
      */
     private function cut(array $item): ?array
     {
-        $original = $item;
         $cutProperties = [];
 
         if (is_array($item['properties'] ?? null)) {
@@ -118,7 +117,7 @@ final class EventLimits
         }
 
         if ($cutProperties === [] && $replacedProperties === [] && ! $allPropertiesReplaced) {
-            return $original;
+            return $item;
         }
 
         $this->warn('Event exceeded the events endpoint limits and was cut', $this->cutContext(
